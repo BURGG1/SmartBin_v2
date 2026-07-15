@@ -72,7 +72,10 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
 
     if (!isOpen) return null;
 
-    const emptyRows = Math.max(0, REWARD_LIMIT - logs.length);
+    // Only pad the table to a fixed height once there's more than one
+    // page — a single page of results just renders at its natural height.
+    const totalPages = Math.max(1, Math.ceil(total / REWARD_LIMIT));
+    const emptyRows = totalPages > 1 ? Math.max(0, REWARD_LIMIT - logs.length) : 0;
 
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -139,7 +142,9 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                                             </tr>
                                         ))
                                     )}
-                                    {/* Pad remaining slots so table height stays constant at REWARD_LIMIT rows */}
+                                    {/* Pad remaining slots so table height stays constant at
+                                        REWARD_LIMIT rows, but only once there's more than one
+                                        page — a single page just renders at its natural height. */}
                                     {logs.length > 0 &&
                                         Array.from({ length: emptyRows }).map((_, i) => (
                                             <tr key={`reward-empty-${i}`} aria-hidden="true">

@@ -335,10 +335,10 @@ export default function BinMonitoring() {
   // backend and, on failure, rolls back BOTH the bin's local schedule and
   // the collector's assignedBins entry we optimistically added — otherwise
   // the UI would show an assignment that was never actually saved.
-  const persistSchedule = useCallback(async (binId, mongoId, schedule, collectorId) => {
+  const persistSchedule = useCallback(async (binId, schedule, collectorId) => {
     try {
       const token = sessionStorage.getItem("token");
-      const res = await fetch(`${SCHEDULE_API}/${mongoId}/schedule`, {  // ✅ use mongoId
+      const res = await fetch(`${SCHEDULE_API}/${binId}/schedule`, {  // ✅ binId string matches router's :binId
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -352,10 +352,23 @@ export default function BinMonitoring() {
       });
 
       if (!res.ok) throw new Error(`Server responded ${res.status}`);
-      console.log("Schedule saved for bin:", binId); // ✅ add this to confirm
+      console.log("Schedule saved for bin:", binId);
     } catch (err) {
       console.error("Failed to persist schedule, rolling back:", err);
-      // ... rollback logic stays the same
+
+      setBins((prev) =>
+        prev.map((b) => (b.id === binId ? { ...b, schedule: null } : b))
+      );
+
+      setCollectors((prev) => {
+        const next = prev.map((c) =>
+          c.id === collectorId
+            ? { ...c, assignedBins: c.assignedBins.filter((id) => id !== binId) }
+            : c
+        );
+        collectorsRef.current = next;
+        return next;
+      });
     }
   }, []);
 
@@ -387,12 +400,7 @@ export default function BinMonitoring() {
             auto: true,
           };
 
-          pendingPersists.push({
-            binId: bin.id,      // local state key
-            mongoId: bin._id,   // MongoDB _id for API
-            schedule,
-            collectorId: collector.id
-          });
+          pendingPersists.push({ binId: bin.id, schedule, collectorId: collector.id });
 
           return {
             ...bin,
@@ -407,8 +415,8 @@ export default function BinMonitoring() {
     // Persist outside the setBins updater — updater functions can run
     // more than once (e.g. under StrictMode double-invoke) and shouldn't
     // have side effects like network calls inside them.
-    pendingPersists.forEach(({ binId, mongoId, schedule, collectorId }) => {
-      persistSchedule(binId, mongoId, schedule, collectorId);
+    pendingPersists.forEach(({ binId, schedule, collectorId }) => {
+      persistSchedule(binId, schedule, collectorId);
     });
   }, [assignCollector, persistSchedule]);
 

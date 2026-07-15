@@ -7,6 +7,7 @@ import BASE_URL from "../config";
 
 const DISPOSAL_LIMIT = 5;
 const ACTIVITY_LIMIT = 5;
+const VIOLATION_LIMIT = 5;
 
 function computeAge(birthday) {
     if (!birthday) return null;
@@ -54,7 +55,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     const [violationError, setViolationError] = useState("");
     const [violationPage, setViolationPage] = useState(1);
     const [violationTotal, setViolationTotal] = useState(0);
-    const VIOLATION_LIMIT = 3;
+    const violationAbortRef = useRef(null);
 
     const fetchHousehold = useCallback(async () => {
         if (!householdProp?._id) return;
@@ -68,6 +69,19 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     }, [householdProp?._id]);
 
     // ── Fetch a single page of disposal logs from the server ─────────────────
+    // KNOWN BACKEND GAP: unlike the activity/violations routes, the
+    // `/api/rfid/logs/:rfid` endpoint may not actually apply `page`/`limit`
+    // server-side yet — some deployments of this route just filter by
+    // action/date and hand back the full match set. If that happens here,
+    // trusting the response as "already paginated" would render every
+    // disposal record on one page and break `disposalTotal`.
+    //
+    // As a safety net (not a substitute for fixing the backend route):
+    // if what comes back is bigger than DISPOSAL_LIMIT, treat it as an
+    // unpaginated payload and slice/paginate it client-side instead. Once
+    // the backend route is confirmed to paginate correctly, this branch
+    // simply never triggers (filtered.length will already be <= limit)
+    // and can be deleted.
     const fetchDisposalLogs = useCallback(async (pageArg = 1) => {
         if (!householdProp?.rfid) return;
 
@@ -93,8 +107,24 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
 
             if (data.success) {
                 // Safety net in case the backend ever returns mixed actions
-                setDisposalLogs(data.data.filter((log) => log.action === "dispose"));
-                setDisposalTotal(data.pagination?.total ?? data.data.length);
+                const filtered = data.data.filter((log) => log.action === "dispose");
+                const serverTotal = data.pagination?.total ?? filtered.length;
+
+                if (filtered.length > DISPOSAL_LIMIT) {
+                    // The backend handed back more than one page's worth —
+                    // it isn't slicing server-side, so slice here instead.
+                    console.warn(
+                        "/api/rfid/logs/:rfid returned more than one page of results — " +
+                        "falling back to client-side pagination. Check that the backend " +
+                        "route applies `page`/`limit` like the activity/violations routes do."
+                    );
+                    const start = (pageArg - 1) * DISPOSAL_LIMIT;
+                    setDisposalLogs(filtered.slice(start, start + DISPOSAL_LIMIT));
+                    setDisposalTotal(filtered.length);
+                } else {
+                    setDisposalLogs(filtered);
+                    setDisposalTotal(serverTotal);
+                }
                 setDisposalPage(pageArg);
             } else {
                 setLogsError("Failed to load disposal logs.");
@@ -142,8 +172,18 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         }
     }, [householdProp?._id, fromDate, toDate]);
 
+    // ── Fetch a single page of violation logs from the server ────────────────
+    // Request-limited the same way as disposal/activity: an in-flight
+    // request is aborted before starting a new one, so a slow older
+    // response can't land after a newer one and overwrite it with stale
+    // violation data.
     const fetchViolationLogs = useCallback(async (pageArg = 1) => {
         if (!householdProp?._id) return;
+
+        violationAbortRef.current?.abort();
+        const controller = new AbortController();
+        violationAbortRef.current = controller;
+
         setViolationLoading(true);
         setViolationError("");
         try {
@@ -151,6 +191,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
             const params = new URLSearchParams({ page: pageArg, limit: VIOLATION_LIMIT });
             const res = await fetch(`${BASE_URL}/api/households/${householdProp._id}/violations?${params}`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
+                signal: controller.signal,
             });
             const data = await res.json();
             if (data.success) {
@@ -160,10 +201,10 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
             } else {
                 setViolationError("Failed to load violation logs.");
             }
-        } catch {
-            setViolationError("Network error.");
+        } catch (err) {
+            if (err.name !== "AbortError") setViolationError("Network error.");
         } finally {
-            setViolationLoading(false);
+            if (violationAbortRef.current === controller) setViolationLoading(false);
         }
     }, [householdProp?._id]);
 
@@ -194,6 +235,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     useEffect(() => () => {
         disposalAbortRef.current?.abort();
         activityAbortRef.current?.abort();
+        violationAbortRef.current?.abort();
     }, []);
 
     // ── Called after points are awarded ──────────────────────────────────────
@@ -217,8 +259,19 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     const violation = household.violation ?? 0;
     const suffix = ["st", "nd", "rd"];
 
-    const disposalEmptyRows = Math.max(0, DISPOSAL_LIMIT - disposalLogs.length);
-    const activityEmptyRows = Math.max(0, ACTIVITY_LIMIT - activityLogs.length);
+    // Only pad each tab's table to a fixed height once that tab actually
+    // spans more than one page — a single page just renders at its
+    // natural height.
+    const disposalTotalPages = Math.max(1, Math.ceil(disposalTotal / DISPOSAL_LIMIT));
+    const activityTotalPages = Math.max(1, Math.ceil(activityTotal / ACTIVITY_LIMIT));
+    const violationTotalPages = Math.max(1, Math.ceil(violationTotal / VIOLATION_LIMIT));
+
+    const disposalEmptyRows =
+        disposalTotalPages > 1 ? Math.max(0, DISPOSAL_LIMIT - disposalLogs.length) : 0;
+    const activityEmptyRows =
+        activityTotalPages > 1 ? Math.max(0, ACTIVITY_LIMIT - activityLogs.length) : 0;
+    const violationEmptyRows =
+        violationTotalPages > 1 ? Math.max(0, VIOLATION_LIMIT - violationLogs.length) : 0;
 
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -303,6 +356,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                 setActiveTab(tab.id);
                                 if (tab.id === "reward") fetchActivityLogs(1);
                                 if (tab.id === "disposal") fetchDisposalLogs(1);
+                                if (tab.id === "violations") fetchViolationLogs(1);
                             }}
                             className={`flex items-center m-0 justify-center md:justify-between cursor-pointer gap-2 px-4 py-1 whitespace-nowrap transition ${activeTab === tab.id
                                 ? "bg-white rounded-tr-3xl rounded-tl-3xl text-gray-800"
@@ -364,7 +418,9 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                                 );
                                             })
                                         )}
-                                        {/* Pad remaining slots so table height stays constant at DISPOSAL_LIMIT rows */}
+                                        {/* Pad remaining slots so table height stays constant at
+                                            DISPOSAL_LIMIT rows, but only once there's more than one
+                                            page — a single page just renders at its natural height. */}
                                         {disposalLogs.length > 0 &&
                                             Array.from({ length: disposalEmptyRows }).map((_, i) => (
                                                 <tr key={`disposal-empty-${i}`} aria-hidden="true">
@@ -428,7 +484,9 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                                 </tr>
                                             ))
                                         )}
-                                        {/* Pad remaining slots so table height stays constant at ACTIVITY_LIMIT rows */}
+                                        {/* Pad remaining slots so table height stays constant at
+                                            ACTIVITY_LIMIT rows, but only once there's more than one
+                                            page — a single page just renders at its natural height. */}
                                         {activityLogs.length > 0 &&
                                             Array.from({ length: activityEmptyRows }).map((_, i) => (
                                                 <tr key={`activity-empty-${i}`} aria-hidden="true">
@@ -491,8 +549,12 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                                 </tr>
                                             ))
                                         )}
+                                        {/* Pad remaining slots so table height stays constant at
+                                            VIOLATION_LIMIT rows, but only once there's more than
+                                            one page — a single page just renders at its natural
+                                            height. */}
                                         {violationLogs.length > 0 &&
-                                            Array.from({ length: Math.max(0, VIOLATION_LIMIT - violationLogs.length) }).map((_, i) => (
+                                            Array.from({ length: violationEmptyRows }).map((_, i) => (
                                                 <tr key={`v-empty-${i}`} aria-hidden="true">
                                                     <td className="py-3" colSpan="7">&nbsp;</td>
                                                 </tr>

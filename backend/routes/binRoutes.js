@@ -1,8 +1,8 @@
-const express    = require("express");
-const router     = express.Router();
-const Bin        = require("../models/Bin");
+const express = require("express");
+const router = express.Router();
+const Bin = require("../models/Bin");
 const BinSchedule = require("../models/BinSchedule");
-const Collector  = require("../models/Collector");
+const Collector = require("../models/Collector");
 const {
     checkAndAutoSchedule,
     findBestCollector,
@@ -19,8 +19,8 @@ const {
 } = require("../controllers/binController");
 
 // ── No-param routes FIRST (before /:id) ──────────────────────────────────────
-router.post("/heartbeat",     heartbeat);
-router.post("/dispose",       dispose);
+router.post("/heartbeat", heartbeat);
+router.post("/dispose", dispose);
 router.post("/auto-schedule", async (req, res) => {
     try {
         const count = await checkAndAutoSchedule();
@@ -53,9 +53,9 @@ router.post("/update-location", async (req, res) => {
     }
 });
 
-router.get("/",       getAllBins);
-router.post("/",      createBin);
-router.get("/count",  getBinCount);
+router.get("/", getAllBins);
+router.post("/", createBin);
+router.get("/count", getBinCount);
 
 router.get("/schedules", async (req, res) => {
     try {
@@ -132,29 +132,42 @@ router.post("/:binId/schedule", async (req, res) => {
             return res.status(400).json({ success: false, message: "No available collectors." });
         }
 
-        const schedule = await BinSchedule.create({
-            bin:            bin._id,
-            binId,
-            collector:      collector._id,
-            collectorName:  collector.name,
-            fillAtSchedule: bin.fill,
-            scheduledAt:    date ? new Date(date) : new Date(),
-            triggeredBy:    "manual",
-        });
-
-        await Collector.findByIdAndUpdate(
+        // Update the collector's load FIRST. assignedBins stores bin ID strings
+        // (e.g. "BIN-001") — the same value unassignBinFromCollector and the
+        // frontend both expect. If this fails, bail before ever creating a
+        // BinSchedule doc, so we never leave an orphaned "pending" schedule
+        // with no collector behind it.
+        const updatedCollector = await Collector.findByIdAndUpdate(
             collector._id,
-            { $addToSet: { assignedBins: binId } }
+            { $addToSet: { assignedBins: binId } },
+            { new: true }
         );
+        if (!updatedCollector) {
+            return res.status(500).json({ success: false, message: "Failed to update collector assignment." });
+        }
+
+        let schedule;
+        try {
+            schedule = await BinSchedule.create({
+                bin: bin._id,
+                binId,
+                collector: collector._id,
+                collectorName: collector.name,
+                fillAtSchedule: bin.fill,
+                scheduledAt: date ? new Date(date) : new Date(),
+                triggeredBy: "manual",
+            });
+        } catch (err) {
+            // Schedule failed after the collector was already updated — undo
+            // the assignment so the collector's load doesn't drift out of sync.
+            await Collector.findByIdAndUpdate(collector._id, { $pull: { assignedBins: binId } });
+            throw err;
+        }
 
         res.json({
-            success:  true,
-            message:  `${binId} scheduled for ${collector.name}`,
-            data: {
-                collector: collector.name,
-                date:      schedule.scheduledAt,
-                binId,
-            },
+            success: true,
+            message: `${binId} scheduled for ${collector.name}`,
+            data: { collector: collector.name, date: schedule.scheduledAt, binId },
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });

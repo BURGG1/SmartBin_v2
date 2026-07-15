@@ -1,5 +1,5 @@
-const Bin         = require("../models/Bin");
-const Collector   = require("../models/Collector");
+const Bin = require("../models/Bin");
+const Collector = require("../models/Collector");
 const BinSchedule = require("../models/BinSchedule");
 
 const FILL_THRESHOLD = 75;
@@ -22,7 +22,7 @@ const findBestCollector = async () => {
 const autoScheduleBin = async (bin) => {
     // Skip if already has a pending schedule for this bin
     const existing = await BinSchedule.findOne({
-        binId:  bin.binId,
+        binId: bin.binId,
         status: "pending",
     });
     if (existing) return null;
@@ -33,25 +33,38 @@ const autoScheduleBin = async (bin) => {
         return null;
     }
 
-    // Create the schedule
-    const schedule = await BinSchedule.create({
-        bin:            bin._id,
-        binId:          bin.binId,
-        collector:      collector._id,
-        collectorName:  collector.name,
-        fillAtSchedule: bin.fill,
-        triggeredBy:    "auto",
-    });
+    const scheduledAt = new Date();
+    scheduledAt.setDate(scheduledAt.getDate() + 1);
 
-    // Add binId to collector's assignedBins if not already there
-    await Collector.findByIdAndUpdate(
-        collector._id,
-        { $addToSet: { assignedBins: bin.binId } }
-    );
+    // Update the collector's load first.
+    try {
+        await Collector.findByIdAndUpdate(
+            collector._id,
+            { $addToSet: { assignedBins: bin.binId } }
+        );
+    } catch (err) {
+        console.error(`[AutoSchedule] Failed to update collector ${collector.name}'s assignedBins for ${bin.binId}:`, err.message);
+        throw err;
+    }
 
-    console.log(
-        `[AutoSchedule] ${bin.binId} (${bin.fill}%) → assigned to ${collector.name} (${(collector.assignedBins?.length ?? 0) + 1} bins)`
-    );
+    let schedule;
+    try {
+        schedule = await BinSchedule.create({
+            bin: bin._id,
+            binId: bin.binId,
+            collector: collector._id,
+            collectorName: collector.name,
+            fillAtSchedule: bin.fill,
+            triggeredBy: "auto",
+            scheduledAt,
+            status: "pending",
+        });
+    } catch (err) {
+        // Roll back the collector update since the schedule never actually landed.
+        await Collector.findByIdAndUpdate(collector._id, { $pull: { assignedBins: bin.binId } });
+        console.error(`[AutoSchedule] Failed to create schedule for ${bin.binId}, rolled back collector ${collector.name}:`, err.message);
+        throw err;
+    }
 
     return schedule;
 };

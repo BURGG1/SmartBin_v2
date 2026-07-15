@@ -78,7 +78,12 @@ function RequestTab() {
         if (requestPage > totalPages) setRequestPage(totalPages);
     }, [requestTotal, requestPage]);
 
-    const requestEmptyRows = Math.max(0, REQUESTS_PER_PAGE - requests.length);
+    // Only pad the table out to a fixed number of rows once there's more
+    // than one page — on a single page, let the table hug its real content.
+    const requestTotalPages = Math.max(1, Math.ceil(requestTotal / REQUESTS_PER_PAGE));
+    const requestEmptyRows = requestTotalPages > 1
+        ? Math.max(0, REQUESTS_PER_PAGE - requests.length)
+        : 0;
 
     const handleApprove = (item) => {
         setSelectedRequest(item);
@@ -352,7 +357,12 @@ export default function HouseholdInfo() {
         setopenRFIDmodal(true);
     };
 
-    const householdEmptyRows = Math.max(0, HOUSEHOLDS_PER_PAGE - householdRecords.length);
+    // Only pad the table out to a fixed number of rows once there's more
+    // than one page — on a single page, let the table hug its real content.
+    const householdTotalPages = Math.max(1, Math.ceil(householdTotal / HOUSEHOLDS_PER_PAGE));
+    const householdEmptyRows = householdTotalPages > 1
+        ? Math.max(0, HOUSEHOLDS_PER_PAGE - householdRecords.length)
+        : 0;
 
     return (
         <div className="flex-1">

@@ -277,7 +277,12 @@ export default function WasteBin() {
         if (editingId && inputRef.current) inputRef.current.focus();
     }, [editingId]);
 
-    const binEmptyRows = Math.max(0, BINS_PER_PAGE - binsData.length);
+    // Only pad the table out to a fixed number of rows once there's more
+    // than one page — on a single page, let the table hug its real content.
+    const binTotalPages = Math.max(1, Math.ceil(binsTotal / BINS_PER_PAGE));
+    const binEmptyRows = binTotalPages > 1
+        ? Math.max(0, BINS_PER_PAGE - binsData.length)
+        : 0;
 
     return (
         <div className="flex-1">

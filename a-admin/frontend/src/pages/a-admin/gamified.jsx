@@ -241,10 +241,22 @@ export default function Gamified() {
 
     // Placeholder counts so each paginated section keeps a constant number
     // of slots (cards/rows) on screen, regardless of how many real items
-    // land on the current page.
-    const rewardEmptySlots = Math.max(0, REWARDS_PER_PAGE - rewards.length);
-    const ruleEmptySlots = Math.max(0, RULES_PER_PAGE - rules.length);
-    const logEmptyRows = Math.max(0, LOGS_PER_PAGE - rewardLogs.length);
+    // land on the current page — but only once there's more than one page.
+    // On a single page, let each section hug its real content height.
+    const rewardTotalPages = Math.max(1, Math.ceil(rewardsTotal / REWARDS_PER_PAGE));
+    const rewardEmptySlots = rewardTotalPages > 1
+        ? Math.max(0, REWARDS_PER_PAGE - rewards.length)
+        : 0;
+
+    const ruleTotalPages = Math.max(1, Math.ceil(rulesTotal / RULES_PER_PAGE));
+    const ruleEmptySlots = ruleTotalPages > 1
+        ? Math.max(0, RULES_PER_PAGE - rules.length)
+        : 0;
+
+    const logTotalPages = Math.max(1, Math.ceil(rewardLogsTotal / LOGS_PER_PAGE));
+    const logEmptyRows = logTotalPages > 1
+        ? Math.max(0, LOGS_PER_PAGE - rewardLogs.length)
+        : 0;
 
     return (
         <div className="flex-1">

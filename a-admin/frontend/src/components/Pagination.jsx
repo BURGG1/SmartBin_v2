@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 export default function Pagination({ currentPage, totalItems, itemsPerPage, onPageChange }) {
     const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
 
-    // if (totalPages <= 1) return null;
+    if (totalPages <= 1) return null;
 
     return (
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t">

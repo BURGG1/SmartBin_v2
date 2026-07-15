@@ -166,7 +166,6 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
         return next;
     };
 
-    // ── Actual submission, only called after user confirms ──
     const submitRequest = async (normalizedContact: string) => {
         if (submittingRef.current) return;
         submittingRef.current = true;

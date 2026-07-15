@@ -9,7 +9,7 @@ const householdSchema = new mongoose.Schema(
       houseNo: { type: String, trim: true, default: null },
       street: { type: String, trim: true, default: null },
     },
-    contactNumber: { type: String, required: [true, "Contact number is required"], trim: true, sparse: true, },
+    contactNumber: { type: String, required: [true, "Contact number is required"], trim: true, sparse: true },
     email: {
       type: String,
       lowercase: true,
@@ -22,22 +22,22 @@ const householdSchema = new mongoose.Schema(
     password: { type: String, default: null },
     isActive: { type: Boolean, default: true },
 
-    // ── Points tracking ──────────────────────────────
     points: {
       total: { type: Number, default: 0 },
       thisMonth: { type: Number, default: 0 },
     },
 
-    // ── Streak tracking ──────────────────────────────
     streak: {
-      currentStreak: { type: Number, default: 0 },        // consecutive disposal days
-      lastDisposalDate: { type: Date, default: null },     // last day they disposed
-      lastWeeklyAward: { type: Date, default: null },      // last weekly award date
-      lastMonthlyAward: { type: Date, default: null },     // last monthly award date
-      awardedStreaks: [{ type: Number }],                  // streakDays already awarded (e.g. [10, 30])
+      currentStreak: { type: Number, default: 0 },
+      lastDisposalDate: { type: Date, default: null },
+      lastWeeklyAward: { type: Date, default: null },
+      lastMonthlyAward: { type: Date, default: null },
+      awardedStreaks: [{ type: Number }],
     },
 
-    // ── Password reset fields (new) ──────────────────
+    // ── Violation tracking ───────────────────────────
+    violation: { type: Number, default: 0, min: 0 }, // 0 = no offense, resets after 3rd
+
     resetPasswordCodeHash: { type: String, default: null },
     resetPasswordExpires: { type: Date, default: null },
     resetPasswordAttempts: { type: Number, default: 0 },

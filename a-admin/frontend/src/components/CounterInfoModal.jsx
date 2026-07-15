@@ -8,14 +8,14 @@ const LOGS_LIMIT = 7;
 
 export default function CounterInfoModal({ isOpen, onClose, bin }) {
 
-    const [openModal, setOpenModal]   = useState(false);
-    const [activeHH, setActiveHH]     = useState(null);
-    const [fromDate, setFromDate]     = useState("");
+    const [openModal, setOpenModal] = useState(false);
+    const [activeHH, setActiveHH] = useState(null);
+    const [fromDate, setFromDate] = useState("");
     const [disposalLogs, setDisposalLogs] = useState([]);
-    const [total, setTotal]           = useState(0);
-    const [loading, setLoading]       = useState(false);
-    const [error, setError]           = useState("");
-    const [page, setPage]             = useState(1);
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [page, setPage] = useState(1);
 
     const abortRef = useRef(null);
 
@@ -40,7 +40,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 ...(fromDate && { date: fromDate }),
             });
 
-            const res  = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
+            const res = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
             const data = await res.json();
 
             if (data.success) {
@@ -141,8 +141,8 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                 ) : (
                                     disposalLogs.map((log) => {
                                         const scannedAt = new Date(log.scannedAt);
-                                        const date      = scannedAt.toISOString().split("T")[0];
-                                        const time      = scannedAt.toLocaleTimeString("en-US", {
+                                        const date = scannedAt.toISOString().split("T")[0];
+                                        const time = scannedAt.toLocaleTimeString("en-US", {
                                             hour: "2-digit", minute: "2-digit", second: "2-digit",
                                         });
                                         const hh = log.household;
@@ -208,7 +208,12 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
             <ViolationModal
                 isOpen={openModal}
                 onClose={() => setOpenModal(false)}
-                household={activeHH}
+                household={activeHH}        // already passes the log (which has household nested)
+                onPenalized={() => {
+                    setOpenModal(false);
+                    // Optionally re-fetch logs to reflect any changes
+                    fetchLogs(page);
+                }}
             />
         </div>
     );

@@ -12,6 +12,8 @@ const {
   awardPoints,
   getHouseholdActivity,
   getLeaderboard,
+  penalizeHousehold,
+  getViolationLogs,
 } = require("../controllers/householdController");
 const { protect, allowRoles } = require("../middleware/authMiddleware");
 
@@ -24,6 +26,9 @@ router.get("/count", getHouseholdCount);
 router.get("/check-email", checkEmailExists);      
 router.get("/check-contact", checkContactExists); 
 router.get("/leaderboard", getLeaderboard);
+
+router.post("/:id/penalize",    penalizeHousehold);
+router.get("/:id/violations",   getViolationLogs);
 
 
 router.route("/:id")

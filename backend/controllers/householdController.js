@@ -2,8 +2,16 @@ const Household = require("../models/Household");
 const RfidLog = require("../models/RfidLog");
 const PointLog = require("../models/PointLog");
 const RewardLog = require("../models/RewardLog");
+const ViolationLog = require("../models/ViolationLog");
 const { sendPasswordEmail } = require("../config/mailer");
 const bcrypt = require("bcryptjs");
+
+// ── Penalty config — single source of truth ──────────────────────────────────
+const PENALTY_CONFIG = {
+  1: { type: "Point Deduction", pointsDeducted: 500, fineAmount: 0, communityService: null },
+  2: { type: "Fine", pointsDeducted: 0, fineAmount: 300, communityService: null },
+  3: { type: "Fine + Community Service", pointsDeducted: 0, fineAmount: 800, communityService: "15 Days Community Service" },
+};
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PH_MOBILE_REGEX = /^09\d{9}$/;
@@ -527,7 +535,7 @@ const getLeaderboard = async (req, res) => {
       },
       {
         $group: {
-          _id:   "$household",
+          _id: "$household",
           count: { $sum: 1 },
         },
       },
@@ -539,14 +547,14 @@ const getLeaderboard = async (req, res) => {
     });
 
     const ranked = households.map((hh, index) => ({
-      _id:       hh._id,
-      fullname:  hh.fullname,
-      address:   [hh.address?.houseNo, hh.address?.street].filter(Boolean).join(", ") || "—",
-      points:    hh.points?.total ?? 0,
+      _id: hh._id,
+      fullname: hh.fullname,
+      address: [hh.address?.houseNo, hh.address?.street].filter(Boolean).join(", ") || "—",
+      points: hh.points?.total ?? 0,
       thisMonth: hh.points?.thisMonth ?? 0,
       disposals: countMap[hh._id.toString()] ?? 0,
-      streak:    hh.streak?.currentStreak ?? 0,
-      rank:      index + 1,
+      streak: hh.streak?.currentStreak ?? 0,
+      rank: index + 1,
     }));
 
     res.json({ success: true, data: ranked });
@@ -555,10 +563,107 @@ const getLeaderboard = async (req, res) => {
   }
 };
 
+// POST /api/households/:id/penalize
+const penalizeHousehold = async (req, res) => {
+  try {
+    const { note, issuedBy } = req.body;
+
+    const household = await Household.findById(req.params.id);
+    if (!household) {
+      return res.status(404).json({ success: false, message: "Household not found." });
+    }
+    if (!household.isActive) {
+      return res.status(400).json({ success: false, message: "Cannot penalize an inactive household." });
+    }
+
+    // Compute new offense number (cycles: 0→1→2→3→1→2→3→...)
+    const prevViolation = household.violation ?? 0;
+    const newViolation = prevViolation >= 3 ? 1 : prevViolation + 1;
+    const penalty = PENALTY_CONFIG[newViolation];
+
+    // Apply point deduction (points can't go below 0)
+    if (penalty.pointsDeducted > 0) {
+      household.points.total = Math.max(0, (household.points.total ?? 0) - penalty.pointsDeducted);
+      household.points.thisMonth = Math.max(0, (household.points.thisMonth ?? 0) - penalty.pointsDeducted);
+    }
+
+    household.violation = newViolation;
+    await household.save();
+
+    // Log the violation
+    const log = await ViolationLog.create({
+      household: household._id,
+      offenseNumber: newViolation,
+      penaltyType: penalty.type,
+      pointsDeducted: penalty.pointsDeducted,
+      fineAmount: penalty.fineAmount,
+      communityService: penalty.communityService,
+      note: note || null,
+      issuedBy: issuedBy || "Admin",
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Penalty applied: ${penalty.type} (Offense #${newViolation})`,
+      data: {
+        household: {
+          _id: household._id,
+          fullname: household.fullname,
+          violation: household.violation,
+          points: household.points,
+        },
+        penalty: {
+          offenseNumber: newViolation,
+          penaltyType: penalty.type,
+          pointsDeducted: penalty.pointsDeducted,
+          fineAmount: penalty.fineAmount,
+          communityService: penalty.communityService,
+        },
+        log,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET /api/households/:id/violations  — violation history
+const getViolationLogs = async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [logs, total] = await Promise.all([
+      ViolationLog.find({ household: req.params.id })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean(),
+      ViolationLog.countDocuments({ household: req.params.id }),
+    ]);
+
+    res.json({
+      success: true,
+      data: logs,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
 module.exports = {
   getAllHouseholds,
   getHouseholdById,
   createHousehold,
+  penalizeHousehold,
+  getViolationLogs,
   getLeaderboard,
   updateHousehold,
   deleteHousehold,

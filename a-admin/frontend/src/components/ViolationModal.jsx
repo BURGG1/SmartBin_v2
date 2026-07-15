@@ -1,81 +1,78 @@
+// components/ViolationModal.jsx
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ConfirmationModal from "./confirmationModal";
 import SuccessToast from "../assets/Toast";
+import BASE_URL from "../config";
 
 const PROVISION = {
-    id: 4,
     title: "Mixing of segregated waste once it has already been separated",
 };
 
-// 🧠 MOCK DATABASE (temporary)
-const mockHouseholds = [
-    { id: 1, name: "Household A", violations: [] },
-    { id: 2, name: "Household B", violations: [1, 2] }, // already 2 violations
-];
+const PENALTY_CONFIG = {
+    1: { type: "Point Deduction", pointsDeducted: 500, fineAmount: 0, communityService: null },
+    2: { type: "Fine", pointsDeducted: 0, fineAmount: 300, communityService: null },
+    3: { type: "Fine + Community Service", pointsDeducted: 0, fineAmount: 800, communityService: "15 Days Community Service" },
+};
 
-export default function ViolationModal({ isOpen, onClose, householdId = 2 }) {
+export default function ViolationModal({ isOpen, onClose, household, onPenalized }) {
     const [active, setActive] = useState(false);
     const [showToast, setShowToast] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [resultPenalty, setResultPenalty] = useState(null);
 
-    // 🧠 simulate DB lookup
-    const [households, setHouseholds] = useState(mockHouseholds);
-
-    const household = households.find(h => h.id === householdId);
+    // Reset state whenever modal opens
+    useEffect(() => {
+        if (isOpen) {
+            setActive(false);
+            setError("");
+            setResultPenalty(null);
+        }
+    }, [isOpen]);
 
     if (!isOpen || !household) return null;
 
-    // ✅ AUTO OFFENSE COUNT
-    const offenseCount = household.violations.length + 1;
+    // Compute what offense this WILL be (same logic as backend)
+    const currentViolation = household?.household?.violation ?? household?.violation ?? 0;
+    const nextOffense = currentViolation >= 3 ? 1 : currentViolation + 1;
+    const penalty = PENALTY_CONFIG[nextOffense];
 
-    // ✅ PENALTY LOGIC (clean)
-    const getPenalty = (offense) => {
-        if (offense === 1) {
-            return {
-                type: "Point Deduction",
-                points: 500,
-                fine: 0,
-                service: ""
-            };
-        }
+    const handleConfirm = async () => {
+        setLoading(true);
+        setError("");
+        try {
+            const token = sessionStorage.getItem("token");
+            const householdId = household?.household?._id ?? household?._id;
 
-        if (offense === 2) {
-            return {
-                type: "Fine",
-                points: 0,
-                fine: 300,
-                service: ""
-            };
-        }
+            const res = await fetch(`${BASE_URL}/api/households/${householdId}/penalize`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ issuedBy: "Admin" }),
+            });
 
-        return {
-            type: "Fine + Community Service",
-            points: 0,
-            fine: 800,
-            service: "15 Days Community Service"
-        };
-    };
-
-    const penalty = getPenalty(offenseCount);
-
-    // ✅ APPLY PENALTY (updates mock DB)
-    const handleConfirm = () => {
-        const updated = households.map(h => {
-            if (h.id === household.id) {
-                return {
-                    ...h,
-                    violations: [...h.violations, PROVISION.id]
-                };
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || "Failed to apply penalty.");
             }
-            return h;
-        });
 
-        setHouseholds(updated);
-        setActive(false);
-        setShowToast(true);
-        onClose();
+            setResultPenalty(data.data.penalty);
+            setActive(false);
+            setShowToast(true);
 
-        console.log("Updated Household:", updated);
+            // Notify parent to refresh household data
+            if (onPenalized) onPenalized(data.data.household);
+
+            setTimeout(() => onClose(), 1800);
+        } catch (err) {
+            setError(err.message);
+            setActive(false);
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -84,10 +81,8 @@ export default function ViolationModal({ isOpen, onClose, householdId = 2 }) {
 
                 {/* HEADER */}
                 <div className="flex justify-between items-center px-6 py-4 border-b">
-                    <h2 className="text-xl font-bold">
-                        {household.name}
-                    </h2>
-                    <button onClick={onClose}>
+                    <h2 className="text-xl font-bold">{household.household?.fullname ?? household.fullname ?? "Household"}</h2>
+                    <button onClick={onClose} disabled={loading}>
                         <X className="cursor-pointer text-gray-500 hover:text-gray-800" />
                     </button>
                 </div>
@@ -101,62 +96,67 @@ export default function ViolationModal({ isOpen, onClose, householdId = 2 }) {
                         <p className="text-gray-600">{PROVISION.title}</p>
                     </div>
 
-                    {/* AUTO OFFENSE DISPLAY */}
+                    {/* Offense level */}
                     <div className="bg-blue-50 p-4 rounded-lg border">
-                        <p className="font-semibold">
-                            Offense Level: {offenseCount}
-                        </p>
+                        <p className="font-semibold">Offense Level: {nextOffense}</p>
                         <p className="text-sm text-gray-600">
-                            (Automatically calculated from previous violations)
+                            Current violations: {currentViolation} — this will be offense #{nextOffense}
+                            {currentViolation >= 3 && (
+                                <span className="ml-1 text-orange-600 font-medium">(reset from 3rd offense)</span>
+                            )}
                         </p>
                     </div>
 
-                    {/* PENALTY */}
+                    {/* Penalty */}
                     <div className="bg-red-100 p-4 rounded-lg border border-red-200">
-                        <h3 className="font-semibold text-red-700 mb-3">
-                            Penalty Details
-                        </h3>
-
+                        <h3 className="font-semibold text-red-700 mb-3">Penalty Details</h3>
                         <div className="flex flex-col gap-2 text-sm">
                             <p><strong>Type:</strong> {penalty.type}</p>
-
-                            {penalty.points > 0 && (
-                                <p><strong>Points:</strong> -{penalty.points}</p>
+                            {penalty.pointsDeducted > 0 && (
+                                <p><strong>Points Deducted:</strong> -{penalty.pointsDeducted}</p>
                             )}
-
-                            {penalty.fine > 0 && (
-                                <p><strong>Fine:</strong> ₱{penalty.fine}</p>
+                            {penalty.fineAmount > 0 && (
+                                <p><strong>Fine:</strong> ₱{penalty.fineAmount}</p>
                             )}
-
-                            {penalty.service && (
-                                <p><strong>Community Service:</strong> {penalty.service}</p>
+                            {penalty.communityService && (
+                                <p><strong>Community Service:</strong> {penalty.communityService}</p>
                             )}
                         </div>
                     </div>
 
-                    {/* BUTTON */}
+                    {/* Error */}
+                    {error && (
+                        <div className="bg-red-50 border border-red-300 rounded-lg p-3 text-sm text-red-700">
+                            {error}
+                        </div>
+                    )}
+
+                    {/* Action button */}
                     <button
                         onClick={() => setActive(true)}
-                        className="bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition"
+                        disabled={loading}
+                        className="bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Assign Penalty
+                        {loading ? "Applying..." : "Assign Penalty"}
                     </button>
-
                 </div>
-
-                <ConfirmationModal
-                    isOpen={active}
-                    onClose={() => setActive(false)}
-                    onConfirm={handleConfirm}
-                />
-
-                <SuccessToast
-                    show={showToast}
-                    onClose={() => setShowToast(false)}
-                    message="Penalty successfully assigned!"
-                />
-
             </div>
+
+            <ConfirmationModal
+                isOpen={active}
+                onClose={() => setActive(false)}
+                onConfirm={handleConfirm}
+            />
+
+            <SuccessToast
+                show={showToast}
+                onClose={() => setShowToast(false)}
+                message={
+                    resultPenalty
+                        ? `Penalty applied: ${resultPenalty.penaltyType} (Offense #${resultPenalty.offenseNumber})`
+                        : "Penalty successfully assigned!"
+                }
+            />
         </div>
     );
 }

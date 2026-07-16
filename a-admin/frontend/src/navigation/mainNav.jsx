@@ -40,7 +40,8 @@ export default function NavigationShell() {
             {isAdmin ? (
                 <MobileDrawer menu={adminMenu} />
             ) : (
-                <BottomNav menu={userMenu} />
+                // <BottomNav menu={userMenu} />
+                <MobileDrawer menu={adminMenu} />
             )}
         </>
     );

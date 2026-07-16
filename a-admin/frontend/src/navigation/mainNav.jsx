@@ -31,7 +31,7 @@ const adminMenu = [
 ]
 
 export default function NavigationShell() {
-    const role = sessionStorage.getItem("role") || "user";
+    const role = sessionStorage.getItem("role") || "admin"; // Default to "admin" if role is not found
     const isAdmin = role === "admin";
     return (
         <>

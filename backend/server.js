@@ -6,8 +6,6 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const mongoSanitize = require("express-mongo-sanitize");
 const path = require("path");
-const { Bonjour } = require("bonjour-service");
-const bonjour = new Bonjour();
 
 const connectDB = require("./config/db");
 const deviceRoutes = require("./routes/deviceRoutes");
@@ -28,6 +26,13 @@ const PORT = process.env.PORT || 5000;
 
 connectDB();
 startBinStatusChecker();
+
+// ═══════════════════════════════════════════════════════════════
+//  0. TRUST PROXY — required on Render (and most cloud hosts) so
+//     express-rate-limit reads the real client IP from X-Forwarded-For
+//     instead of the proxy's IP.
+// ═══════════════════════════════════════════════════════════════
+app.set("trust proxy", 1);
 
 // ═══════════════════════════════════════════════════════════════
 //  1. HELMET — security headers (must be first)
@@ -78,28 +83,25 @@ app.use(mongoSanitize());
 //  5. RATE LIMITERS
 // ═══════════════════════════════════════════════════════════════
 
-// General limiter — all /api routes
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,   // 15 minutes
-  max: 200,                    // generous for dashboard polling (bins fetch every 10s)
-  standardHeaders: true,       // return RateLimit headers
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "Too many requests. Please try again later." },
 });
 
-// Strict limiter — login / register (brute force protection)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,                     // 15 attempts per 15 min per IP
+  max: 15,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
 });
 
-// ESP32 limiter — RFID scan endpoint (high frequency but bounded)
 const rfidLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,    // 1 minute
-  max: 60,                     // 1 scan per second max
+  windowMs: 1 * 60 * 1000,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "RFID scan rate limit exceeded." },
@@ -148,7 +150,7 @@ app.use(errorHandler);
 let isScheduleRunning = false;
 
 setInterval(async () => {
-  if (isScheduleRunning) return;   // prevent overlapping runs
+  if (isScheduleRunning) return;
   isScheduleRunning = true;
   try {
     await checkAndAutoSchedule();
@@ -167,6 +169,19 @@ checkAndAutoSchedule().catch(console.error);
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Environment: ${process.env.NODE_ENV}`);
   console.log(`Server running on port ${PORT}`);
-  bonjour.publish({ name: "SmartBin", type: "http", port: PORT });
-  console.log(`mDNS broadcast: http://smartbin.local:${PORT}`);
+
+  // mDNS/Bonjour only makes sense on a local network (e.g. your ESP32
+  // finding the server on the same WiFi during development). It has no
+  // effect — and can error — inside a cloud container like Render, so
+  // it's skipped outside of local development.
+  if (process.env.NODE_ENV === "development") {
+    try {
+      const { Bonjour } = require("bonjour-service");
+      const bonjour = new Bonjour();
+      bonjour.publish({ name: "SmartBin", type: "http", port: PORT });
+      console.log(`mDNS broadcast: http://smartbin.local:${PORT}`);
+    } catch (err) {
+      console.warn("mDNS broadcast skipped:", err.message);
+    }
+  }
 });

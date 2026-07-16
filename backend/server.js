@@ -46,8 +46,6 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
-  
-  console.log("[CORS] Allowed origins loaded:", JSON.stringify(ALLOWED_ORIGINS));
 
 app.use(
   cors({

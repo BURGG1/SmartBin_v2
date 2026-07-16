@@ -31,7 +31,7 @@ const adminMenu = [
 ]
 
 export default function NavigationShell() {
-    const role = localStorage.getItem("role") || "user";
+    const role = sessionStorage.getItem("role") || "user";
     const isAdmin = role === "admin";
     return (
         <>

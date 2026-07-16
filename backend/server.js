@@ -2,6 +2,9 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const mongoSanitize = require("express-mongo-sanitize");
 const path = require("path");
 const { Bonjour } = require("bonjour-service");
 const bonjour = new Bonjour();
@@ -14,11 +17,9 @@ const binRoutes = require("./routes/binRoutes");
 const rewardRoutes = require("./routes/rewardRoutes");
 const ruleRoutes = require("./routes/ruleRoutes");
 const collectorRoutes = require("./routes/collectorRoutes");
-
 const errorHandler = require("./middleware/errorHandler");
 const authRoutes = require("./routes/authRoutes");
 const registrationRequestRoutes = require("./routes/registrationRequestRoutes");
-
 const { startBinStatusChecker } = require("./jobs/binStatusChecker");
 const { checkAndAutoSchedule } = require("./services/autoScheduleService");
 
@@ -28,24 +29,96 @@ const PORT = process.env.PORT || 5000;
 connectDB();
 startBinStatusChecker();
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || origin.includes("localhost") || origin.includes("192.168.")) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true
-}));
+// ═══════════════════════════════════════════════════════════════
+//  1. HELMET — security headers (must be first)
+// ═══════════════════════════════════════════════════════════════
+app.use(helmet());
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ═══════════════════════════════════════════════════════════════
+//  2. CORS — restrict to known origins
+// ═══════════════════════════════════════════════════════════════
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (mobile apps, ESP32, Postman, curl)
+      if (!origin) return callback(null, true);
+
+      const isLocalhost = origin.includes("localhost");
+      const isLAN = origin.includes("192.168.");
+      const isAllowed = ALLOWED_ORIGINS.some((o) => origin.startsWith(o));
+
+      if (isLocalhost || isLAN || isAllowed) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin "${origin}" not allowed`));
+      }
+    },
+    credentials: true,
+  })
+);
+
+// ═══════════════════════════════════════════════════════════════
+//  3. BODY PARSING — with size limit to prevent payload flooding
+// ═══════════════════════════════════════════════════════════════
+app.use(express.json({ limit: "10kb" }));
+app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+
+// ═══════════════════════════════════════════════════════════════
+//  4. MONGO SANITIZE — strip $ and . from request data
+//     prevents NoSQL injection e.g. { "rfid": { "$gt": "" } }
+// ═══════════════════════════════════════════════════════════════
+app.use(mongoSanitize());
+
+// ═══════════════════════════════════════════════════════════════
+//  5. RATE LIMITERS
+// ═══════════════════════════════════════════════════════════════
+
+// General limiter — all /api routes
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,   // 15 minutes
+  max: 200,                    // generous for dashboard polling (bins fetch every 10s)
+  standardHeaders: true,       // return RateLimit headers
+  legacyHeaders: false,
+  message: { success: false, message: "Too many requests. Please try again later." },
+});
+
+// Strict limiter — login / register (brute force protection)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,                     // 15 attempts per 15 min per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
+});
+
+// ESP32 limiter — RFID scan endpoint (high frequency but bounded)
+const rfidLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,    // 1 minute
+  max: 60,                     // 1 scan per second max
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "RFID scan rate limit exceeded." },
+});
+
+app.use("/api/", generalLimiter);
+app.use("/api/auth", authLimiter);
+app.use("/api/rfid", rfidLimiter);
+
+// ═══════════════════════════════════════════════════════════════
+//  6. LOGGING — dev only
+// ═══════════════════════════════════════════════════════════════
 if (process.env.NODE_ENV === "development") {
   app.use(morgan("dev"));
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  7. ROUTES
+// ═══════════════════════════════════════════════════════════════
 app.use("/api/rewards", rewardRoutes);
 app.use("/api/rules", ruleRoutes);
 app.use("/api/households", householdRoutes);
@@ -55,33 +128,45 @@ app.use("/api/requests", registrationRequestRoutes);
 app.use("/api/bins", binRoutes);
 app.use("/api/collectors", collectorRoutes);
 app.use("/api/devices", deviceRoutes);
+
 app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "Server is running" });
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  8. 404 + ERROR HANDLER (must be last)
+// ═══════════════════════════════════════════════════════════════
 app.use((req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
 });
 
 app.use(errorHandler);
 
-// Run auto-schedule every 30 seconds (edit this if the auto-schedule interval needs to be changed)
+// ═══════════════════════════════════════════════════════════════
+//  9. AUTO-SCHEDULE POLLING
+// ═══════════════════════════════════════════════════════════════
+let isScheduleRunning = false;
+
 setInterval(async () => {
-    try {
-        await checkAndAutoSchedule();
-    } catch (err) {
-        console.error("[AutoSchedule] Polling error:", err.message);
-    }
+  if (isScheduleRunning) return;   // prevent overlapping runs
+  isScheduleRunning = true;
+  try {
+    await checkAndAutoSchedule();
+  } catch (err) {
+    console.error("[AutoSchedule] Polling error:", err.message);
+  } finally {
+    isScheduleRunning = false;
+  }
 }, 30_000);
 
-// Run once on startup
 checkAndAutoSchedule().catch(console.error);
 
+// ═══════════════════════════════════════════════════════════════
+//  10. START SERVER
+// ═══════════════════════════════════════════════════════════════
 app.listen(PORT, "0.0.0.0", () => {
-  // console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log("Server running on port " + PORT);
-
+  console.log(`Server running on port ${PORT}`);
   bonjour.publish({ name: "SmartBin", type: "http", port: PORT });
-  console.log("mDNS broadcast: http://smartbin.local:" + PORT);
+  console.log(`mDNS broadcast: http://smartbin.local:${PORT}`);
 });

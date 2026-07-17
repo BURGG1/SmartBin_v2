@@ -86,22 +86,22 @@ const scanAtBin = async (req, res) => {
     if (hasValidCoords || typeof fillLevel === "number") await bin.save();
 
     // ── Update streak ─────────────────────────────────────────────────────────
-    const now   = new Date();
+    const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
     const lastDate = household.streak?.lastDisposalDate
       ? new Date(
-          household.streak.lastDisposalDate.getFullYear(),
-          household.streak.lastDisposalDate.getMonth(),
-          household.streak.lastDisposalDate.getDate()
-        )
+        household.streak.lastDisposalDate.getFullYear(),
+        household.streak.lastDisposalDate.getMonth(),
+        household.streak.lastDisposalDate.getDate()
+      )
       : null;
 
     let streakChanged = false;
 
     if (!lastDate) {
       // First ever disposal
-      household.streak.currentStreak  = 1;
+      household.streak.currentStreak = 1;
       household.streak.lastDisposalDate = now;
       streakChanged = true;
     } else {
@@ -116,17 +116,25 @@ const scanAtBin = async (req, res) => {
         streakChanged = true;
       } else {
         // Streak broken
-        household.streak.currentStreak   = 1;
+        household.streak.currentStreak = 1;
         household.streak.lastDisposalDate = now;
-        household.streak.awardedStreaks   = []; // reset so they can re-earn
+        household.streak.awardedStreaks = []; // reset so they can re-earn
         streakChanged = true;
       }
     }
 
     if (streakChanged) await household.save();
 
-    // ── Disposal log ──────────────────────────────────────────────────────────
-    const existingCount = await RfidLog.countDocuments({ binId, action: "dispose" });
+    // ── Disposal log (resets to 1 every day, per bin) ───────────────────────────
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfDay = new Date(startOfDay);
+    endOfDay.setDate(endOfDay.getDate() + 1);
+
+    const existingCount = await RfidLog.countDocuments({
+      binId,
+      action: "dispose",
+      scannedAt: { $gte: startOfDay, $lt: endOfDay },
+    });
     const disposalOrder = existingCount + 1;
 
     await RfidLog.create({
@@ -142,16 +150,16 @@ const scanAtBin = async (req, res) => {
       success: true,
       message: `Logged: ${household.fullname} tapped at ${binId}`,
       data: {
-        household:    household.fullname,
+        household: household.fullname,
         binId,
-        binType:      bin.type,
+        binType: bin.type,
         disposalOrder,
         currentStreak: household.streak.currentStreak,
         coordsUpdated: hasValidCoords,
-        lat:          bin.lat,
-        lng:          bin.lng,
-        fill:         bin.fill,
-        scannedAt:    new Date(),
+        lat: bin.lat,
+        lng: bin.lng,
+        fill: bin.fill,
+        scannedAt: new Date(),
       },
     });
   } catch (error) {

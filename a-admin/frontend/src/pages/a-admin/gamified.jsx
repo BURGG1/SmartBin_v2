@@ -21,7 +21,7 @@ import BASE_URL from "../../config";
 import Pagination from "../../components/Pagination";
 import useDebounce from "../../hooks/useDebounce";
 
-import { getRewards, createReward, updateReward } from "../../api/rewardApi";
+import { getRewards, createReward, updateReward } from "../../api/rewardAPI";
 import { getRules } from "../../api/rulesAPI";
 
 const REWARDS_PER_PAGE = 4;

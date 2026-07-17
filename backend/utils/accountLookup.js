@@ -2,6 +2,7 @@ const Admin = require("../models/Admin");
 const Collector = require("../models/Collector");
 const Household = require("../models/Household");
 
+
 // Order mirrors the precedence used in login(): Admin, then Collector, then
 // Household. Keeping the same precedence avoids ambiguity if the same email
 // somehow ended up in more than one collection.

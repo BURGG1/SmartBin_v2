@@ -44,6 +44,17 @@ const toLocalDisplay = (contactNumber) => {
     return contactNumber.startsWith("0") ? contactNumber.slice(1) : contactNumber;
 };
 
+const getInitials = (name = "") => {
+    const trimmed = name.trim();
+    if (!trimmed) return "?";
+    return trimmed
+        .split(/\s+/)
+        .map((w) => w[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase();
+};
+
 export default function Profile() {
     const router = useRouter();
     const [household, setHousehold] = useState(null);
@@ -277,18 +288,40 @@ export default function Profile() {
 
     if (loading) {
         return (
-            <SafeAreaView className="flex-1 items-center justify-center">
+            <SafeAreaView className="flex-1 items-center justify-center bg-white">
                 <ActivityIndicator size="large" color="#16A34A" />
             </SafeAreaView>
         );
     }
 
+    const fullAddress =
+        [household?.address?.houseNo, household?.address?.street].filter(Boolean).join(", ") || "—";
+
+    // NOTE: adjust these field names to match whatever your API actually
+    // returns for violations (e.g. household?.violations, household?.flaggedCount).
+    const violationCount = household?.violationCount ?? household?.violations ?? 0;
+    const hasViolations = violationCount > 0;
+
     const infoItems = [
-        { label: "Household Name", value: household?.fullname || "—", icon: "home" },
-        { label: "Address", value: [household?.address?.houseNo, household?.address?.street].filter(Boolean).join(", ") || "—", icon: "map-pin" },
-        { label: "Contact Number", value: household?.contactNumber ? `+63 ${household.contactNumber}` : "—", icon: "phone" },
-        { label: "Members", value: household?.familyMember ? `${household.familyMember} people` : "—", icon: "users" },
+        { label: "Address", value: fullAddress, icon: "map-pin" },
+        { label: "Contact number", value: household?.contactNumber ? `+63 ${household.contactNumber}` : "—", icon: "phone" },
         { label: "Email", value: household?.email || "—", icon: "mail" },
+        {
+            label: "Family members",
+            value: household?.familyMember ? `${household.familyMember} ${household.familyMember === 1 ? "person" : "people"}` : "—",
+            icon: "users",
+        },
+        {
+            label: "Reward points",
+            value: `${household?.points?.total ?? 0} pts · +${household?.points?.thisMonth ?? 0} this month`,
+            icon: "award",
+        },
+        {
+            label: "Violations",
+            value: hasViolations ? `${violationCount} flagged` : "No flags on record",
+            icon: "alert-triangle",
+            danger: hasViolations,
+        },
     ];
 
     // Generic fields — contact number is handled separately below with
@@ -302,43 +335,61 @@ export default function Profile() {
     ];
 
     return (
-        <SafeAreaView className="flex-1">
-            <ScrollView className="flex-1 px-4 py-1">
+        <SafeAreaView className="flex-1 bg-gray-50">
+            <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 32 }}>
 
-                <View>
-                    <Text className="text-3xl font-bold">Household Profile</Text>
-                    <Text className="text-gray-500 mb-6">View and manage your household information</Text>
+                <View className="px-5 pt-2 pb-5">
+                    <Text className="text-2xl font-bold text-gray-900">Household Profile</Text>
+                    <Text className="text-gray-500 mt-0.5">View and manage your household information</Text>
                 </View>
 
-                <View className="bg-white rounded-xl shadow p-6 space-y-4">
-                    <Text className="text-lg font-semibold mb-4">Household Information</Text>
-                    <View className="flex flex-col gap-4">
-                        {infoItems.map((item) => (
-                            <View key={item.label} className="w-full flex-row items-center gap-4 bg-gray-50 rounded-xl p-4">
-                                <View className="p-3 bg-green-100 rounded-lg">
-                                    <Feather name={item.icon} size={20} color="#16A34A" />
-                                </View>
-                                <View>
-                                    <Text className="text-sm text-gray-500">{item.label}</Text>
-                                    <Text className="font-semibold">{item.value}</Text>
-                                </View>
+                {/* Hero identity card */}
+                <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 items-center">
+                    <View className="w-16 h-16 rounded-full bg-green-100 items-center justify-center mb-3">
+                        <Text className="text-green-700 text-lg font-bold">{getInitials(household?.fullname)}</Text>
+                    </View>
+                    <Text className="text-lg font-bold text-gray-900">{household?.fullname || "—"}</Text>
+                    <Text className="text-gray-500 text-sm mt-0.5">Household account</Text>
+                </View>
+
+                {/* Grouped info card */}
+                <View className="mx-4 mt-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    {infoItems.map((item, idx) => (
+                        <View
+                            key={item.label}
+                            className={`flex-row items-center gap-3 px-4 py-4 ${idx !== infoItems.length - 1 ? "border-b border-gray-100" : ""
+                                }`}
+                        >
+                            <View className={`w-9 h-9 rounded-full items-center justify-center ${item.danger ? "bg-red-50" : "bg-green-50"}`}>
+                                <Feather name={item.icon} size={16} color={item.danger ? "#DC2626" : "#16A34A"} />
                             </View>
-                        ))}
-                    </View>
-
-                    <View className="flex items-center mt-4">
-                        <TouchableOpacity onPress={() => setIsModalOpen(true)}>
-                            <Text className="text-gray-400 underline">Update information</Text>
-                        </TouchableOpacity>
-                    </View>
+                            <View className="ml-1 flex-1">
+                                <Text className="text-xs text-gray-500">{item.label}</Text>
+                                <Text className={`text-sm font-semibold mt-0.5 ${item.danger ? "text-red-600" : "text-gray-900"}`}>
+                                    {item.value}
+                                </Text>
+                            </View>
+                        </View>
+                    ))}
                 </View>
 
-                <View className="w-full items-center mt-4 mb-4">
-                    <TouchableOpacity onPress={handleLogout} className="bg-gray-600 px-4 py-2 rounded-lg">
-                        <View className="flex-row items-center gap-2">
-                            <Feather name="log-out" size={18} color="white" />
-                            <Text className="text-white">Logout</Text>
-                        </View>
+                {/* Actions */}
+                <View className="mx-4 mt-5 gap-3">
+                    <TouchableOpacity
+                        onPress={() => setIsModalOpen(true)}
+                        activeOpacity={0.8}
+                        className="w-full py-3.5 rounded-xl border border-green-600 items-center bg-white"
+                    >
+                        <Text className="text-green-700 text-sm font-semibold">Update information</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        onPress={handleLogout}
+                        activeOpacity={0.8}
+                        className="w-full py-3.5 rounded-xl bg-gray-600 flex-row items-center justify-center"
+                    >
+                        <Feather name="log-out" size={16} color="white" />
+                        <Text className="text-white text-sm font-semibold ml-2">Logout</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -354,17 +405,20 @@ export default function Profile() {
                         <ScrollView className="w-full" contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}>
                             <View className="bg-white w-full rounded-2xl p-6 gap-4">
 
-                                <View className="flex-row justify-between items-center">
-                                    <Text className="text-lg font-bold">Update Information</Text>
-                                    <TouchableOpacity onPress={() => !updating && resetModalState()}>
-                                        <Feather name="x" size={22} color="gray" />
+                                <View className="flex-row justify-between items-center mb-1">
+                                    <Text className="text-lg font-bold text-gray-900">Update Information</Text>
+                                    <TouchableOpacity
+                                        onPress={() => !updating && resetModalState()}
+                                        className="w-8 h-8 rounded-full bg-gray-100 items-center justify-center"
+                                    >
+                                        <Feather name="x" size={18} color="#4B5563" />
                                     </TouchableOpacity>
                                 </View>
 
                                 {/* Fullname */}
                                 {genericFields.slice(0, 1).map((field) => (
                                     <View key={field.key}>
-                                        <Text className="text-sm font-semibold mb-1">
+                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">
                                             {field.label}
                                             {field.required && <Text className="text-red-500"> *</Text>}
                                         </Text>
@@ -378,7 +432,8 @@ export default function Profile() {
                                                 }
                                             }}
                                             placeholder={field.placeholder}
-                                            className={`border rounded-lg px-3 py-2 ${formErrors[field.key] ? "border-red-500" : "border-gray-300"
+                                            placeholderTextColor="#9CA3AF"
+                                            className={`border rounded-xl px-3.5 py-3 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-200"
                                                 }`}
                                         />
                                         {formErrors[field.key] && (
@@ -389,16 +444,16 @@ export default function Profile() {
 
                                 {/* Contact Number — matches AddHousehold's +63 prefixed input */}
                                 <View>
-                                    <Text className="text-sm font-semibold mb-1">
+                                    <Text className="text-sm font-semibold mb-1.5 text-gray-700">
                                         Contact Number
                                         <Text className="text-red-500"> *</Text>
                                     </Text>
                                     <View
-                                        className={`flex-row items-center border rounded-lg overflow-hidden ${formErrors.contactNumber ? "border-red-500" : "border-gray-300"
+                                        className={`flex-row items-center border rounded-xl overflow-hidden bg-gray-50 ${formErrors.contactNumber ? "border-red-500" : "border-gray-200"
                                             }`}
                                     >
-                                        <View className="bg-gray-100 px-3 py-2">
-                                            <Text className="text-gray-700 text-sm">🇵🇭 +63</Text>
+                                        <View className="bg-gray-100 px-3.5 py-3">
+                                            <Text className="text-gray-700 text-sm font-medium">🇵🇭 +63</Text>
                                         </View>
                                         <TextInput
                                             editable={!updating}
@@ -412,9 +467,10 @@ export default function Profile() {
                                                 }
                                             }}
                                             placeholder="912-345-6789"
+                                            placeholderTextColor="#9CA3AF"
                                             keyboardType="phone-pad"
                                             maxLength={10}
-                                            className="flex-1 px-3 py-2"
+                                            className="flex-1 px-3.5 py-3"
                                         />
                                     </View>
                                     {formErrors.contactNumber && (
@@ -425,7 +481,7 @@ export default function Profile() {
                                 {/* Remaining generic fields */}
                                 {genericFields.slice(1).map((field) => (
                                     <View key={field.key}>
-                                        <Text className="text-sm font-semibold mb-1">{field.label}</Text>
+                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">{field.label}</Text>
                                         <TextInput
                                             editable={!updating}
                                             value={form[field.key]}
@@ -436,9 +492,10 @@ export default function Profile() {
                                                 }
                                             }}
                                             placeholder={field.placeholder}
+                                            placeholderTextColor="#9CA3AF"
                                             keyboardType={field.keyboard || "default"}
                                             autoCapitalize={field.key === "email" ? "none" : "sentences"}
-                                            className={`border rounded-lg px-3 py-2 ${formErrors[field.key] ? "border-red-500" : "border-gray-300"
+                                            className={`border rounded-xl px-3.5 py-3 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-200"
                                                 }`}
                                         />
                                         {formErrors[field.key] && (
@@ -448,9 +505,9 @@ export default function Profile() {
                                 ))}
 
                                 {/* Divider */}
-                                <View className="border-t border-gray-200 mt-2 pt-4">
-                                    <Text className="text-sm font-bold text-gray-700 mb-3">
-                                        Change Password
+                                <View className="border-t border-gray-100 mt-2 pt-4">
+                                    <Text className="text-xs font-bold text-gray-500 mb-1 tracking-wide">
+                                        CHANGE PASSWORD
                                     </Text>
                                     <Text className="text-xs text-gray-400 mb-3">
                                         Leave blank if you don't want to change your password.
@@ -458,54 +515,57 @@ export default function Profile() {
 
                                     {/* Current Password */}
                                     <View className="mb-3">
-                                        <Text className="text-sm font-semibold mb-1">Current Password</Text>
-                                        <View className="flex-row items-center border rounded-lg px-3 py-2 border-gray-300">
+                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">Current Password</Text>
+                                        <View className="flex-row items-center border rounded-xl px-3.5 py-3 border-gray-200 bg-gray-50">
                                             <TextInput
                                                 editable={!updating}
                                                 value={passwordForm.currentPassword}
                                                 onChangeText={(v) => setPasswordForm((prev) => ({ ...prev, currentPassword: v }))}
                                                 placeholder="Enter current password"
+                                                placeholderTextColor="#9CA3AF"
                                                 secureTextEntry={!showCurrentPassword}
                                                 className="flex-1"
                                             />
                                             <TouchableOpacity onPress={() => setShowCurrentPassword(!showCurrentPassword)}>
-                                                <Feather name={showCurrentPassword ? "eye-off" : "eye"} size={18} color="gray" />
+                                                <Feather name={showCurrentPassword ? "eye-off" : "eye"} size={18} color="#9CA3AF" />
                                             </TouchableOpacity>
                                         </View>
                                     </View>
 
                                     {/* New Password */}
                                     <View className="mb-3">
-                                        <Text className="text-sm font-semibold mb-1">New Password</Text>
-                                        <View className="flex-row items-center border rounded-lg px-3 py-2 border-gray-300">
+                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">New Password</Text>
+                                        <View className="flex-row items-center border rounded-xl px-3.5 py-3 border-gray-200 bg-gray-50">
                                             <TextInput
                                                 editable={!updating}
                                                 value={passwordForm.newPassword}
                                                 onChangeText={(v) => setPasswordForm((prev) => ({ ...prev, newPassword: v }))}
                                                 placeholder="Enter new password"
+                                                placeholderTextColor="#9CA3AF"
                                                 secureTextEntry={!showNewPassword}
                                                 className="flex-1"
                                             />
                                             <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)}>
-                                                <Feather name={showNewPassword ? "eye-off" : "eye"} size={18} color="gray" />
+                                                <Feather name={showNewPassword ? "eye-off" : "eye"} size={18} color="#9CA3AF" />
                                             </TouchableOpacity>
                                         </View>
                                     </View>
 
                                     {/* Confirm New Password */}
-                                    <View className="mb-3">
-                                        <Text className="text-sm font-semibold mb-1">Confirm New Password</Text>
-                                        <View className="flex-row items-center border rounded-lg px-3 py-2 border-gray-300">
+                                    <View className="mb-1">
+                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">Confirm New Password</Text>
+                                        <View className="flex-row items-center border rounded-xl px-3.5 py-3 border-gray-200 bg-gray-50">
                                             <TextInput
                                                 editable={!updating}
                                                 value={passwordForm.confirmPassword}
                                                 onChangeText={(v) => setPasswordForm((prev) => ({ ...prev, confirmPassword: v }))}
                                                 placeholder="Re-enter new password"
+                                                placeholderTextColor="#9CA3AF"
                                                 secureTextEntry={!showConfirmPassword}
                                                 className="flex-1"
                                             />
                                             <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
-                                                <Feather name={showConfirmPassword ? "eye-off" : "eye"} size={18} color="gray" />
+                                                <Feather name={showConfirmPassword ? "eye-off" : "eye"} size={18} color="#9CA3AF" />
                                             </TouchableOpacity>
                                         </View>
                                     </View>
@@ -514,17 +574,27 @@ export default function Profile() {
                                 <TouchableOpacity
                                     onPress={handleUpdate}
                                     disabled={updating}
-                                    className="bg-green-600 py-3 rounded-lg items-center mt-2"
+                                    activeOpacity={0.85}
+                                    className="bg-green-600 py-3.5 rounded-xl items-center mt-2"
                                     style={{ opacity: updating ? 0.6 : 1 }}
                                 >
                                     {updating ? (
                                         <View className="flex-row items-center gap-2">
                                             <ActivityIndicator size="small" color="#fff" />
-                                            <Text className="text-white font-semibold">Updating...</Text>
+                                            <Text className="text-white font-semibold ml-2">Updating...</Text>
                                         </View>
                                     ) : (
                                         <Text className="text-white font-semibold">Save Changes</Text>
                                     )}
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    onPress={() => !updating && resetModalState()}
+                                    disabled={updating}
+                                    activeOpacity={0.7}
+                                    className="items-center py-1"
+                                >
+                                    <Text className="text-gray-500 text-sm font-medium">Cancel</Text>
                                 </TouchableOpacity>
 
                             </View>

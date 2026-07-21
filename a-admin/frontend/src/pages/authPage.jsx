@@ -8,7 +8,7 @@ import ForgotPasswordModal from "../components/ForgotPasswordModal";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 60_000; 
+const LOCKOUT_MS = 60_000;
 
 const ROLE_ROUTES = {
   admin: "/dashboard",
@@ -34,6 +34,7 @@ export default function AuthPage() {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
+  const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState(0);
   const navigate = useNavigate();
 
   // Client-side throttling. UX safety net only — the server MUST enforce
@@ -41,6 +42,18 @@ export default function AuthPage() {
   const attemptsRef = useRef(0);
   const lockedUntilRef = useRef(0);
   const inFlightRef = useRef(false);
+
+  // Ticks every second so the lockout countdown shown in the UI stays
+  // accurate in realtime, independent of any user interaction (submit,
+  // typing, etc). Cheap no-op when not locked out.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const remainingMs = lockedUntilRef.current - Date.now();
+      const secondsLeft = remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+      setLockoutSecondsLeft((prev) => (prev === secondsLeft ? prev : secondsLeft));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Cancel any in-flight request if the component unmounts mid-request
   // (e.g. user navigates away right after clicking Login).
@@ -57,13 +70,7 @@ export default function AuthPage() {
   };
 
   const isLockedOut = useCallback(() => {
-    const now = Date.now();
-    if (now < lockedUntilRef.current) {
-      const secondsLeft = Math.ceil((lockedUntilRef.current - now) / 1000);
-      setError(`Too many attempts. Please wait ${secondsLeft}s before trying again.`);
-      return true;
-    }
-    return false;
+    return Date.now() < lockedUntilRef.current;
   }, []);
 
   const registerFailedAttempt = useCallback(() => {
@@ -71,6 +78,9 @@ export default function AuthPage() {
     if (attemptsRef.current >= MAX_ATTEMPTS) {
       lockedUntilRef.current = Date.now() + LOCKOUT_MS;
       attemptsRef.current = 0;
+      // Kick the countdown state immediately so the banner appears
+      // right away instead of waiting up to 1s for the next tick.
+      setLockoutSecondsLeft(Math.ceil(LOCKOUT_MS / 1000));
     }
   }, []);
 
@@ -82,8 +92,8 @@ export default function AuthPage() {
 
   const handleLogin = useCallback(async () => {
     if (inFlightRef.current) return;
-    setError("");
     if (isLockedOut()) return;
+    setError("");
 
     const email = form.email.trim().toLowerCase();
     if (!email || !EMAIL_REGEX.test(email)) {
@@ -152,10 +162,12 @@ export default function AuthPage() {
   }, [form, isLockedOut, registerFailedAttempt, navigate]);
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !loading) {
+    if (e.key === "Enter" && !loading && lockoutSecondsLeft === 0) {
       handleLogin();
     }
   };
+
+  const isLocked = lockoutSecondsLeft > 0;
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-gray-100 px-4">
@@ -196,7 +208,7 @@ export default function AuthPage() {
                 placeholder="Enter your email"
                 className="w-full bg-transparent outline-none pl-4"
                 required
-                disabled={loading}
+                disabled={loading || isLocked}
                 maxLength={254}
                 autoComplete="email"
                 autoFocus
@@ -221,7 +233,7 @@ export default function AuthPage() {
                 placeholder="Enter your password"
                 className="w-full bg-transparent outline-none pl-4"
                 required
-                disabled={loading}
+                disabled={loading || isLocked}
                 maxLength={128}
                 autoComplete="current-password"
               />
@@ -237,29 +249,38 @@ export default function AuthPage() {
             </div>
           </div>
 
-          {/* Error message */}
-          {error && (
+          {/* Error / lockout message — lockout countdown takes priority
+              and re-renders every second via lockoutSecondsLeft state */}
+          {isLocked ? (
+            <p role="alert" aria-live="polite" className="text-red-500 text-sm text-left">
+              Too many attempts. Please wait {lockoutSecondsLeft}s before trying again.
+            </p>
+          ) : error ? (
             <p role="alert" aria-live="polite" className="text-red-500 text-sm text-left">
               {error}
             </p>
-          )}
+          ) : null}
 
           <button
             onClick={handleLogin}
-            disabled={loading}
+            disabled={loading || isLocked}
             type="button"
             className="w-full cursor-pointer bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && <Loader2 size={18} className="animate-spin" />}
-            {loading ? "Logging in..." : "Login"}
+            {loading
+              ? "Logging in..."
+              : isLocked
+              ? `Try again in ${lockoutSecondsLeft}s`
+              : "Login"}
           </button>
 
           <p className="text-sm text-gray-500">
             Forgot your password?{" "}
             <span
-              onClick={() => !loading && setIsForgotPasswordOpen(true)}
+              onClick={() => !loading && !isLocked && setIsForgotPasswordOpen(true)}
               className={`text-green-600 font-medium hover:underline ${
-                loading ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                loading || isLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"
               }`}
             >
               Reset here

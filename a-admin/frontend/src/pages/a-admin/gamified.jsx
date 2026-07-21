@@ -468,7 +468,7 @@ export default function Gamified() {
                                                                 setOpenRewardModal(true);
                                                                 setClickReward(item.name);
                                                             }}
-                                                            className="w-full cursor-pointer mt-auto bg-blue-600 text-white rounded-lg py-2 ">
+                                                            className="w-full cursor-pointer mt-auto bg-gray-900 text-white rounded-lg py-2 ">
                                                             View
                                                         </button>
                                                     </div>

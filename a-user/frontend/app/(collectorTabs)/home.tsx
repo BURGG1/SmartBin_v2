@@ -1,71 +1,94 @@
-import { useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity } from "react-native";
+import { useState, useEffect, useCallback } from "react";
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { API_BASE } from "@/config"; // Import the API base URL
+import AsyncStorage from "@react-native-async-storage/async-storage"; // ⚠️ confirm this matches your actual token storage
+import { API_BASE } from "@/config";
 
-// Collector Info
-const collector = {
-  id: "WC-202610001",
-  name: "Chito Miranda",
-  assignedArea: "Barangay Pla",
-  contact: "+63 917 123 4567",
-  collectedToday: 2,
+type Bin = {
+  id: string;
+  location: string;
+  scheduleDate?: string;
+  scheduleTime?: string;
+  fill: number;
 };
 
-// Assigned Bins
-const assignedBins = [
-  {
-    id: "BIN-001",
-    location: "Rizal St.",
-    fill: 95,
-    scheduleDate: "Mar 16, 2026",
-    scheduleTime: "10:00 AM",
-  },
-  {
-    id: "BIN-002",
-    location: "Rizal St.",
-    fill: 92,
-    scheduleDate: "Mar 16, 2026",
-    scheduleTime: "11:30 AM",
-  },
-];
+type CollectionActivity = {
+  bin: string;
+  location: string;
+  date: string;
+  time: string;
+  status: string;
+};
 
-// Recent Activity
-const recentCollections = [
-  {
-    bin: "BIN-002",
-    location: "Rizal St.",
-    date: "Mar 16, 2026",
-    time: "08:45 AM",
-    status: "Collected",
-  },
-  {
-    bin: "BIN-004",
-    location: "Mabini St.",
-    date: "Mar 16, 2026",
-    time: "08:20 AM",
-    status: "Collected",
-  },
-  {
-    bin: "BIN-003",
-    location: "Bonifacio Ave.",
-    date: "Mar 16, 2026",
-    time: "07:50 AM",
-    status: "Collected",
-  },
-  {
-    bin: "BIN-001",
-    location: "Rizal St.",
-    date: "Mar 16, 2026",
-    time: "Pending",
-    status: "Pending",
-  },
-];
+type Collector = {
+  name: string;
+};
 
 export default function CollectorHome() {
-  const [search, setSearch] = useState("");
+  const [collector, setCollector] = useState<Collector | null>(null);
+  const [assignedBins, setAssignedBins] = useState<Bin[]>([]);
+  const [recentCollections, setRecentCollections] = useState<CollectionActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const fetchDashboard = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const token = await AsyncStorage.getItem("token"); // ⚠️ confirm key name matches your login flow
+      const res = await fetch(`${API_BASE}/api/collectors/me/dashboard`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (res.status === 401) {
+        throw new Error("Not authenticated — please log in again.");
+      }
+      if (!res.ok) {
+        throw new Error(`Server responded ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to load dashboard.");
+
+      setCollector(data.data.collector);
+      setAssignedBins(data.data.assignedBins);
+      setRecentCollections(data.data.recentCollections);
+    } catch (err) {
+      console.error("Failed to fetch collector dashboard:", err);
+      const message = err instanceof Error ? err.message : "Could not load your dashboard. Please try again.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboard();
+  }, [fetchDashboard]);
+
+  if (loading) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
+        <ActivityIndicator size="large" color="#16a34a" />
+      </SafeAreaView>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center px-6">
+        <Text className="text-red-500 text-center mb-4">{error}</Text>
+        <TouchableOpacity
+          onPress={fetchDashboard}
+          className="bg-green-600 px-4 py-2 rounded-lg"
+        >
+          <Text className="text-white font-semibold">Retry</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -82,7 +105,7 @@ export default function CollectorHome() {
         <View className="bg-green-600 rounded-xl shadow p-6 gap-4">
           <Text className="text-white">Welcome back,</Text>
           <Text className="text-3xl text-white font-bold">
-            {collector.name}
+            {collector?.name ?? "—"}
           </Text>
         </View>
 
@@ -93,32 +116,40 @@ export default function CollectorHome() {
             <Text className="text-lg font-semibold">Assigned Bins</Text>
           </View>
 
-          {assignedBins.map((bin, i) => (
-            <TouchableOpacity
-              key={i}
-              activeOpacity={0.7}
-              onPress={() =>
-                router.push({
-                  pathname: "/counterInfopage",
-                  params: { bin: JSON.stringify(bin) },
-                })
-              }
-              className="flex-row justify-between items-center mb-3 border p-3 rounded-lg"
-            >
-              <View>
-                <Text className="text-lg font-semibold">{bin.id}</Text>
-                <Text className="text-sm text-gray-500">{bin.location}</Text>
-                <Text className="text-sm text-green-600">
-                  Scheduled: {bin.scheduleDate} • {bin.scheduleTime}
-                </Text>
-              </View>
+          {assignedBins.length === 0 ? (
+            <Text className="text-gray-400 text-center py-4">
+              No bins currently assigned
+            </Text>
+          ) : (
+            assignedBins.map((bin, i) => (
+              <TouchableOpacity
+                key={i}
+                activeOpacity={0.7}
+                onPress={() =>
+                  router.push({
+                    pathname: "/counterInfopage",
+                    params: { bin: JSON.stringify(bin) },
+                  })
+                }
+                className="flex-row justify-between items-center mb-3 border p-3 rounded-lg"
+              >
+                <View>
+                  <Text className="text-lg font-semibold">{bin.id}</Text>
+                  <Text className="text-sm text-gray-500">{bin.location}</Text>
+                  <Text className="text-sm text-green-600">
+                    {bin.scheduleDate
+                      ? `Scheduled: ${bin.scheduleDate} • ${bin.scheduleTime}`
+                      : "Not yet scheduled"}
+                  </Text>
+                </View>
 
-              <View className="flex-row items-center gap-2">
-                <Text className="text-red-500 font-semibold">{bin.fill}%</Text>
-                <Feather name="chevron-right" size={18} color="#9ca3af" />
-              </View>
-            </TouchableOpacity>
-          ))}
+                <View className="flex-row items-center gap-2">
+                  <Text className="text-red-500 font-semibold">{bin.fill}%</Text>
+                  <Feather name="chevron-right" size={18} color="#9ca3af" />
+                </View>
+              </TouchableOpacity>
+            ))
+          )}
         </View>
 
         {/* RECENT COLLECTION ACTIVITY */}
@@ -127,32 +158,38 @@ export default function CollectorHome() {
             Recent Collection Activity
           </Text>
 
-          {recentCollections.map((activity, i) => (
-            <View
-              key={i}
-              className="flex-row justify-between items-center mb-3"
-            >
-              <View>
-                <Text className="font-medium">{activity.bin}</Text>
-                <Text className="text-xs text-gray-500">
-                  {activity.location}
-                </Text>
-                <Text className="text-xs text-gray-400">
-                  {activity.date} • {activity.time}
+          {recentCollections.length === 0 ? (
+            <Text className="text-gray-400 text-center py-4">
+              No recent collections yet
+            </Text>
+          ) : (
+            recentCollections.map((activity, i) => (
+              <View
+                key={i}
+                className="flex-row justify-between items-center mb-3"
+              >
+                <View>
+                  <Text className="font-medium">{activity.bin}</Text>
+                  <Text className="text-xs text-gray-500">
+                    {activity.location}
+                  </Text>
+                  <Text className="text-xs text-gray-400">
+                    {activity.date} • {activity.time}
+                  </Text>
+                </View>
+
+                <Text
+                  className={`text-xs font-semibold ${
+                    activity.status === "Collected"
+                      ? "text-green-600"
+                      : "text-orange-500"
+                  }`}
+                >
+                  {activity.status}
                 </Text>
               </View>
-
-              <Text
-                className={`text-xs font-semibold ${
-                  activity.status === "Collected"
-                    ? "text-green-600"
-                    : "text-orange-500"
-                }`}
-              >
-                {activity.status}
-              </Text>
-            </View>
-          ))}
+            ))
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>

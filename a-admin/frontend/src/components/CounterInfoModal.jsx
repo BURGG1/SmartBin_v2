@@ -15,7 +15,6 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
     const [loading, setLoading]           = useState(false);
     const [error, setError]               = useState("");
     const [page, setPage]                 = useState(1);
-    const [togglingId, setTogglingId]     = useState(null); // tracks which row is mid-request
 
     const abortRef = useRef(null);
 
@@ -38,6 +37,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
             });
 
             const res  = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
+            if (!res.ok) throw new Error(`Server error (${res.status})`);
             const data = await res.json();
 
             if (data.success) {
@@ -45,7 +45,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 setTotal(data.pagination?.total ?? data.data.length);
                 setPage(pageArg);
             } else {
-                setError("Failed to load logs.");
+                setError(data.message || "Failed to load logs.");
             }
         } catch (err) {
             if (err.name !== "AbortError") setError("Network error. Could not load logs.");
@@ -68,49 +68,6 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
     }, [fromDate]);
 
     useEffect(() => () => abortRef.current?.abort(), []);
-
-    // ── Toggle flag with optimistic update + rollback on failure ─────────────
-    const toggleFlag = useCallback(async (log) => {
-        const nextFlagged = !log.flagged;
-        setTogglingId(log._id);
-
-        // Optimistic update — flip it immediately in the UI
-        setDisposalLogs((prev) =>
-            prev.map((l) =>
-                l._id === log._id
-                    ? { ...l, flagged: nextFlagged, flaggedAt: nextFlagged ? new Date().toISOString() : null }
-                    : l
-            )
-        );
-
-        try {
-            const res = await fetch(`${BASE_URL}/api/rfid/logs/${log._id}/flag`, {
-                method:  "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body:    JSON.stringify({ flagged: nextFlagged }),
-            });
-
-            const data = await res.json();
-            if (!res.ok || !data.success) throw new Error(data.message || "Failed to update flag");
-
-            // Sync with server's confirmed state
-            setDisposalLogs((prev) =>
-                prev.map((l) => (l._id === log._id ? { ...l, ...data.data } : l))
-            );
-        } catch (err) {
-            // Rollback on failure
-            setDisposalLogs((prev) =>
-                prev.map((l) =>
-                    l._id === log._id
-                        ? { ...l, flagged: log.flagged, flaggedAt: log.flaggedAt }
-                        : l
-                )
-            );
-            console.error("Flag toggle failed:", err.message);
-        } finally {
-            setTogglingId(null);
-        }
-    }, []);
 
     if (!isOpen || !bin) return null;
 
@@ -163,14 +120,13 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                     <th>Resident</th>
                                     <th>Contact No.</th>
                                     <th>Email</th>
-                                    <th>Flag</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody className="text-center">
                                 {disposalLogs.length === 0 ? (
                                     <tr>
-                                        <td colSpan="8" className="text-center py-6 text-gray-500">
+                                        <td colSpan="7" className="text-center py-6 text-gray-500">
                                             No records found for selected dates
                                         </td>
                                     </tr>
@@ -185,20 +141,19 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                         const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "—";
                                         const contact     = hh?.contactNumber ? `+63-${hh.contactNumber}` : "—";
                                         const isFlagged   = !!log.flagged;
-                                        const isBusy      = togglingId === log._id;
 
                                         return (
                                             <tr
                                                 key={log._id}
-                                                // ✅ Red row background if flagged
-                                                className={isFlagged ? "bg-red-50" : "hover:bg-gray-50"}
+                                                // Red row background if flagged
+                                                className={isFlagged ? "bg-red-100" : "hover:bg-gray-50"}
                                             >
                                                 <td className="py-2">
                                                     <p>{date}</p>
                                                     <p className="text-xs text-gray-500">{time}</p>
                                                 </td>
 
-                                                {/* ✅ Red text on Household ID if flagged */}
+                                                {/* Red text on Household ID if flagged */}
                                                 <td className={isFlagged ? "text-red-600 font-semibold" : ""}>
                                                     {householdId}
                                                 </td>
@@ -207,7 +162,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                                     #{log.disposalOrder ?? "—"}
                                                 </td>
 
-                                                {/* ✅ Red text on Resident name if flagged */}
+                                                {/* Red text + dot on Resident name if flagged */}
                                                 <td className={isFlagged ? "text-red-600 font-semibold" : ""}>
                                                     <div className="flex items-center justify-center gap-1">
                                                         {isFlagged && (
@@ -219,31 +174,6 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
 
                                                 <td>{contact}</td>
                                                 <td>{hh?.email ?? "—"}</td>
-
-                                                {/* ✅ Flag toggle button */}
-                                                <td>
-                                                    <button
-                                                        onClick={() => toggleFlag(log)}
-                                                        disabled={isBusy}
-                                                        title={isFlagged ? "Click to unflag" : "Click to flag"}
-                                                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border transition
-                                                            ${isFlagged
-                                                                ? "bg-red-600 text-white border-red-600 hover:bg-red-700"
-                                                                : "bg-white text-red-600 border-red-400 hover:bg-red-50"
-                                                            }
-                                                            ${isBusy ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
-                                                        `}
-                                                    >
-                                                        {isBusy ? (
-                                                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                                        ) : (
-                                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                                <path fillRule="evenodd" d="M3 6a1 1 0 011-1h12a1 1 0 01.707 1.707L13.414 10l3.293 3.293A1 1 0 0116 15H4a1 1 0 01-1-1V6z" clipRule="evenodd" />
-                                                            </svg>
-                                                        )}
-                                                        {isFlagged ? "Flagged" : "Flag"}
-                                                    </button>
-                                                </td>
 
                                                 {/* Penalize button */}
                                                 <td>
@@ -265,7 +195,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                 {disposalLogs.length > 0 &&
                                     Array.from({ length: emptyRows }).map((_, i) => (
                                         <tr key={`counter-empty-${i}`} aria-hidden="true">
-                                            <td className="py-3" colSpan="8">&nbsp;</td>
+                                            <td className="py-3" colSpan="7">&nbsp;</td>
                                         </tr>
                                     ))}
                             </tbody>

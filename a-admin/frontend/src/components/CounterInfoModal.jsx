@@ -7,24 +7,21 @@ import BASE_URL from "../config";
 const LOGS_LIMIT = 7;
 
 export default function CounterInfoModal({ isOpen, onClose, bin }) {
-
-    const [openModal, setOpenModal] = useState(false);
-    const [activeHH, setActiveHH] = useState(null);
-    const [fromDate, setFromDate] = useState("");
+    const [openModal, setOpenModal]       = useState(false);
+    const [activeHH, setActiveHH]         = useState(null);
+    const [fromDate, setFromDate]         = useState("");
     const [disposalLogs, setDisposalLogs] = useState([]);
-    const [total, setTotal] = useState(0);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
-    const [page, setPage] = useState(1);
+    const [total, setTotal]               = useState(0);
+    const [loading, setLoading]           = useState(false);
+    const [error, setError]               = useState("");
+    const [page, setPage]                 = useState(1);
+    const [togglingId, setTogglingId]     = useState(null); // tracks which row is mid-request
 
     const abortRef = useRef(null);
 
-    // ── Fetch a single page of logs from the server (not the whole history) ──
     const fetchLogs = useCallback(async (pageArg = 1) => {
         if (!bin?.id) return;
 
-        // Cancel any in-flight request so a slow, stale response can't
-        // overwrite what a faster, newer request already returned
         abortRef.current?.abort();
         const controller = new AbortController();
         abortRef.current = controller;
@@ -33,14 +30,14 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
         setError("");
         try {
             const params = new URLSearchParams({
-                binId: bin.id,
+                binId:  bin.id,
                 action: "dispose",
-                page: pageArg,
-                limit: LOGS_LIMIT,
+                page:   pageArg,
+                limit:  LOGS_LIMIT,
                 ...(fromDate && { date: fromDate }),
             });
 
-            const res = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
+            const res  = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
             const data = await res.json();
 
             if (data.success) {
@@ -51,15 +48,12 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 setError("Failed to load logs.");
             }
         } catch (err) {
-            if (err.name !== "AbortError") {
-                setError("Network error. Could not load logs.");
-            }
+            if (err.name !== "AbortError") setError("Network error. Could not load logs.");
         } finally {
             if (abortRef.current === controller) setLoading(false);
         }
     }, [bin?.id, fromDate]);
 
-    // On open (or bin change): reset filters and load page 1
     useEffect(() => {
         if (!isOpen || !bin?.id) return;
         setFromDate("");
@@ -67,15 +61,56 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, bin?.id]);
 
-    // Re-fetch page 1 whenever the date filter changes
     useEffect(() => {
         if (!isOpen || !bin?.id) return;
         fetchLogs(1);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fromDate]);
 
-    // Cancel any pending request if the component unmounts mid-fetch
     useEffect(() => () => abortRef.current?.abort(), []);
+
+    // ── Toggle flag with optimistic update + rollback on failure ─────────────
+    const toggleFlag = useCallback(async (log) => {
+        const nextFlagged = !log.flagged;
+        setTogglingId(log._id);
+
+        // Optimistic update — flip it immediately in the UI
+        setDisposalLogs((prev) =>
+            prev.map((l) =>
+                l._id === log._id
+                    ? { ...l, flagged: nextFlagged, flaggedAt: nextFlagged ? new Date().toISOString() : null }
+                    : l
+            )
+        );
+
+        try {
+            const res = await fetch(`${BASE_URL}/api/rfid/logs/${log._id}/flag`, {
+                method:  "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify({ flagged: nextFlagged }),
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.message || "Failed to update flag");
+
+            // Sync with server's confirmed state
+            setDisposalLogs((prev) =>
+                prev.map((l) => (l._id === log._id ? { ...l, ...data.data } : l))
+            );
+        } catch (err) {
+            // Rollback on failure
+            setDisposalLogs((prev) =>
+                prev.map((l) =>
+                    l._id === log._id
+                        ? { ...l, flagged: log.flagged, flaggedAt: log.flaggedAt }
+                        : l
+                )
+            );
+            console.error("Flag toggle failed:", err.message);
+        } finally {
+            setTogglingId(null);
+        }
+    }, []);
 
     if (!isOpen || !bin) return null;
 
@@ -93,7 +128,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                     </button>
                 </div>
 
-                {/* Filter */}
+                {/* FILTER */}
                 <div className="w-full flex flex-col justify-between items-center sm:flex-row px-4 py-2 border-b">
                     <div className="flex-1">
                         <h2 className="text-md font-bold md:text-lg">
@@ -128,51 +163,96 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                     <th>Resident</th>
                                     <th>Contact No.</th>
                                     <th>Email</th>
+                                    <th>Flag</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody className="text-center">
                                 {disposalLogs.length === 0 ? (
                                     <tr>
-                                        <td colSpan="7" className="text-center py-6 text-gray-500">
+                                        <td colSpan="8" className="text-center py-6 text-gray-500">
                                             No records found for selected dates
                                         </td>
                                     </tr>
                                 ) : (
                                     disposalLogs.map((log) => {
-                                        const scannedAt = new Date(log.scannedAt);
-                                        const date = scannedAt.toISOString().split("T")[0];
-                                        const time = scannedAt.toLocaleTimeString("en-US", {
+                                        const scannedAt   = new Date(log.scannedAt);
+                                        const date        = scannedAt.toISOString().split("T")[0];
+                                        const time        = scannedAt.toLocaleTimeString("en-US", {
                                             hour: "2-digit", minute: "2-digit", second: "2-digit",
                                         });
-                                        const hh = log.household;
-                                        const householdId = hh?._id
-                                            ? `HH-${hh._id.slice(-8).toUpperCase()}`
-                                            : "—";
-                                        const contact = hh?.contactNumber
-                                            ? `+63-${hh.contactNumber}`
-                                            : "—";
+                                        const hh          = log.household;
+                                        const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "—";
+                                        const contact     = hh?.contactNumber ? `+63-${hh.contactNumber}` : "—";
+                                        const isFlagged   = !!log.flagged;
+                                        const isBusy      = togglingId === log._id;
 
                                         return (
-                                            <tr key={log._id}>
-                                                <td>
+                                            <tr
+                                                key={log._id}
+                                                // ✅ Red row background if flagged
+                                                className={isFlagged ? "bg-red-50" : "hover:bg-gray-50"}
+                                            >
+                                                <td className="py-2">
                                                     <p>{date}</p>
                                                     <p className="text-xs text-gray-500">{time}</p>
                                                 </td>
-                                                <td>{householdId}</td>
+
+                                                {/* ✅ Red text on Household ID if flagged */}
+                                                <td className={isFlagged ? "text-red-600 font-semibold" : ""}>
+                                                    {householdId}
+                                                </td>
+
                                                 <td className="px-6 py-3 font-medium">
                                                     #{log.disposalOrder ?? "—"}
                                                 </td>
-                                                <td>{hh?.fullname ?? "—"}</td>
+
+                                                {/* ✅ Red text on Resident name if flagged */}
+                                                <td className={isFlagged ? "text-red-600 font-semibold" : ""}>
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        {isFlagged && (
+                                                            <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                                                        )}
+                                                        {hh?.fullname ?? "—"}
+                                                    </div>
+                                                </td>
+
                                                 <td>{contact}</td>
                                                 <td>{hh?.email ?? "—"}</td>
+
+                                                {/* ✅ Flag toggle button */}
+                                                <td>
+                                                    <button
+                                                        onClick={() => toggleFlag(log)}
+                                                        disabled={isBusy}
+                                                        title={isFlagged ? "Click to unflag" : "Click to flag"}
+                                                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border transition
+                                                            ${isFlagged
+                                                                ? "bg-red-600 text-white border-red-600 hover:bg-red-700"
+                                                                : "bg-white text-red-600 border-red-400 hover:bg-red-50"
+                                                            }
+                                                            ${isBusy ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
+                                                        `}
+                                                    >
+                                                        {isBusy ? (
+                                                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                                        ) : (
+                                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                                <path fillRule="evenodd" d="M3 6a1 1 0 011-1h12a1 1 0 01.707 1.707L13.414 10l3.293 3.293A1 1 0 0116 15H4a1 1 0 01-1-1V6z" clipRule="evenodd" />
+                                                            </svg>
+                                                        )}
+                                                        {isFlagged ? "Flagged" : "Flag"}
+                                                    </button>
+                                                </td>
+
+                                                {/* Penalize button */}
                                                 <td>
                                                     <button
                                                         onClick={() => {
                                                             setActiveHH(log);
                                                             setOpenModal(true);
                                                         }}
-                                                        className="bg-red-600 text-white px-2 py-1 rounded-lg cursor-pointer"
+                                                        className="bg-red-600 text-white px-2 py-1 rounded-lg cursor-pointer hover:bg-red-700 transition"
                                                     >
                                                         Penalize
                                                     </button>
@@ -181,11 +261,11 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                         );
                                     })
                                 )}
-                                {/* Pad remaining slots so table height stays constant at LOGS_LIMIT rows */}
+
                                 {disposalLogs.length > 0 &&
                                     Array.from({ length: emptyRows }).map((_, i) => (
                                         <tr key={`counter-empty-${i}`} aria-hidden="true">
-                                            <td className="py-3" colSpan="7">&nbsp;</td>
+                                            <td className="py-3" colSpan="8">&nbsp;</td>
                                         </tr>
                                     ))}
                             </tbody>
@@ -208,10 +288,9 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
             <ViolationModal
                 isOpen={openModal}
                 onClose={() => setOpenModal(false)}
-                household={activeHH}        // already passes the log (which has household nested)
+                household={activeHH}
                 onPenalized={() => {
                     setOpenModal(false);
-                    // Optionally re-fetch logs to reflect any changes
                     fetchLogs(page);
                 }}
             />

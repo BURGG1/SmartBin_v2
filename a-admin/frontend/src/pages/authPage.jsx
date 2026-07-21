@@ -44,8 +44,7 @@ export default function AuthPage() {
   const inFlightRef = useRef(false);
 
   // Ticks every second so the lockout countdown shown in the UI stays
-  // accurate in realtime, independent of any user interaction (submit,
-  // typing, etc). Cheap no-op when not locked out.
+  // accurate in realtime, independent of any user interaction.
   useEffect(() => {
     const id = setInterval(() => {
       const remainingMs = lockedUntilRef.current - Date.now();
@@ -73,21 +72,32 @@ export default function AuthPage() {
     return Date.now() < lockedUntilRef.current;
   }, []);
 
+  // Increments the failed-attempt counter and, once the threshold is hit,
+  // starts the lockout. Returns how many attempts are left so the caller
+  // can warn the user right before they get locked out.
   const registerFailedAttempt = useCallback(() => {
     attemptsRef.current += 1;
     if (attemptsRef.current >= MAX_ATTEMPTS) {
       lockedUntilRef.current = Date.now() + LOCKOUT_MS;
       attemptsRef.current = 0;
-      // Kick the countdown state immediately so the banner appears
-      // right away instead of waiting up to 1s for the next tick.
       setLockoutSecondsLeft(Math.ceil(LOCKOUT_MS / 1000));
+      return { justLockedOut: true, remainingAttempts: 0 };
     }
+    return { justLockedOut: false, remainingAttempts: MAX_ATTEMPTS - attemptsRef.current };
   }, []);
 
   const storeSession = (data) => {
     sessionStorage.setItem("token", data.token);
     sessionStorage.setItem("user", JSON.stringify(data.user));
     sessionStorage.setItem("role", data.role);
+  };
+
+  const buildErrorMessage = (baseMessage, { justLockedOut, remainingAttempts }) => {
+    if (justLockedOut) return baseMessage;
+    if (remainingAttempts === 1) {
+      return `${baseMessage} One more attempt before your account is temporarily locked.`;
+    }
+    return baseMessage;
   };
 
   const handleLogin = useCallback(async () => {
@@ -126,14 +136,14 @@ export default function AuthPage() {
       const data = await response.json().catch(() => null);
 
       if (!response.ok || !data?.success) {
-        registerFailedAttempt();
-        setError(data?.message || "Invalid credentials.");
+        const attemptInfo = registerFailedAttempt();
+        setError(buildErrorMessage(data?.message || "Invalid credentials.", attemptInfo));
         return;
       }
 
       if (data.role !== "admin") {
-        registerFailedAttempt();
-        setError("Access denied. This portal is for admins only.");
+        const attemptInfo = registerFailedAttempt();
+        setError(buildErrorMessage("Access denied. This portal is for admins only.", attemptInfo));
         return;
       }
 

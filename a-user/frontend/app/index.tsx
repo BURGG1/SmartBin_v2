@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -28,6 +28,11 @@ interface LoginResponse {
   user?: Record<string, unknown>;
 }
 
+interface FailedAttemptResult {
+  justLockedOut: boolean;
+  remainingAttempts: number;
+}
+
 // --- Helpers ------------------------------------------------------------
 
 async function fetchWithTimeout(
@@ -44,6 +49,14 @@ async function fetchWithTimeout(
   }
 }
 
+function buildErrorMessage(baseMessage: string, attemptInfo: FailedAttemptResult): string {
+  if (attemptInfo.justLockedOut) return baseMessage;
+  if (attemptInfo.remainingAttempts === 1) {
+    return `${baseMessage} One more attempt before your account is temporarily locked.`;
+  }
+  return baseMessage;
+}
+
 export default function AuthPage() {
   const router = useRouter();
   const [form, setForm] = useState<LoginForm>({ email: "", password: "" });
@@ -51,12 +64,24 @@ export default function AuthPage() {
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [lockoutSecondsLeft, setLockoutSecondsLeft] = useState<number>(0);
 
   // Client-side throttling. UX safety net only — the server MUST enforce
   // its own rate limiting, since any client-side check can be bypassed.
   const attemptsRef = useRef<number>(0);
   const lockedUntilRef = useRef<number>(0);
   const inFlightRef = useRef<boolean>(false);
+
+  // Ticks every second so the lockout countdown shown on the button stays
+  // accurate in realtime, independent of any user interaction.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const remainingMs = lockedUntilRef.current - Date.now();
+      const secondsLeft = remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+      setLockoutSecondsLeft((prev) => (prev === secondsLeft ? prev : secondsLeft));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const isLockedOut = useCallback((): boolean => {
     const now = Date.now();
@@ -68,12 +93,18 @@ export default function AuthPage() {
     return false;
   }, []);
 
-  const registerFailedAttempt = useCallback(() => {
+  // Increments the failed-attempt counter and, once the threshold is hit,
+  // starts the lockout. Returns how many attempts are left so the caller
+  // can warn the user right before they get locked out.
+  const registerFailedAttempt = useCallback((): FailedAttemptResult => {
     attemptsRef.current += 1;
     if (attemptsRef.current >= MAX_ATTEMPTS) {
       lockedUntilRef.current = Date.now() + LOCKOUT_MS;
       attemptsRef.current = 0;
+      setLockoutSecondsLeft(Math.ceil(LOCKOUT_MS / 1000));
+      return { justLockedOut: true, remainingAttempts: 0 };
     }
+    return { justLockedOut: false, remainingAttempts: MAX_ATTEMPTS - attemptsRef.current };
   }, []);
 
   const handleLogin = useCallback(async (): Promise<void> => {
@@ -112,8 +143,8 @@ export default function AuthPage() {
       }
 
       if (!response.ok || !data?.success) {
-        registerFailedAttempt();
-        Alert.alert("Login Failed", data?.message || "Invalid credentials.");
+        const attemptInfo = registerFailedAttempt();
+        Alert.alert("Login Failed", buildErrorMessage(data?.message || "Invalid credentials.", attemptInfo));
         return;
       }
 
@@ -142,6 +173,8 @@ export default function AuthPage() {
       setLoading(false);
     }
   }, [form, isLockedOut, registerFailedAttempt, router]);
+
+  const isLocked = lockoutSecondsLeft > 0;
 
   return (
     <View className="flex-1 bg-gray-100 justify-center px-4">
@@ -184,7 +217,7 @@ export default function AuthPage() {
                 keyboardType="email-address"
                 textContentType="emailAddress"
                 autoComplete="email"
-                editable={!loading}
+                editable={!loading && !isLocked}
                 maxLength={254}
                 accessibilityLabel="Email"
               />
@@ -206,7 +239,7 @@ export default function AuthPage() {
                 autoCorrect={false}
                 textContentType="password"
                 autoComplete="password"
-                editable={!loading}
+                editable={!loading && !isLocked}
                 maxLength={128}
                 accessibilityLabel="Password"
                 returnKeyType="send"
@@ -229,14 +262,18 @@ export default function AuthPage() {
           {/* LOGIN BUTTON */}
           <TouchableOpacity
             onPress={() => handleLogin()}
-            disabled={loading}
+            disabled={loading || isLocked}
             className="bg-green-600 mt-8 mb-4 py-3 rounded-lg flex-row items-center justify-center"
-            style={{ opacity: loading ? 0.6 : 1 }}
+            style={{ opacity: loading || isLocked ? 0.6 : 1 }}
             accessibilityRole="button"
           >
             {loading && <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />}
             <Text className="text-white text-center font-medium">
-              {loading ? "Logging in..." : "Login"}
+              {loading
+                ? "Logging in..."
+                : isLocked
+                ? `Try again in ${lockoutSecondsLeft}s`
+                : "Login"}
             </Text>
           </TouchableOpacity>
 

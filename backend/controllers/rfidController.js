@@ -167,6 +167,26 @@ const scanAtBin = async (req, res) => {
   }
 };
 
+// PATCH /api/rfid/logs/:id/flag
+const flagRfidLog = async (req, res) => {
+  try {
+    const { flagged } = req.body;
+    const log = await RfidLog.findByIdAndUpdate(
+      req.params.id,
+      { flagged: !!flagged, flaggedAt: flagged ? new Date() : null },
+      { new: true }
+    ).populate("household", "fullname address contactNumber email");
+
+    if (!log) {
+      return res.status(404).json({ success: false, message: "Log not found" });
+    }
+
+    res.json({ success: true, data: log });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // GET /api/rfid/check/:rfid
 const checkRfid = async (req, res) => {
   try {
@@ -250,4 +270,4 @@ const getRfidHistory = async (req, res) => {
   }
 };
 
-module.exports = { scanRfid, scanAtBin, checkRfid, getLatestScan, getRfidLogs, getRfidHistory };
+module.exports = { scanRfid, scanAtBin, checkRfid, getLatestScan, getRfidLogs, getRfidHistory, flagRfidLog };

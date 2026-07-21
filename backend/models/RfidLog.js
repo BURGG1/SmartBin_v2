@@ -7,6 +7,8 @@ const rfidLogSchema = new mongoose.Schema(
     binId: { type: String, default: null, trim: true },
     action: { type: String, enum: ["scan", "assign", "unassign", "dispose"], required: true },
     disposalOrder: { type: Number, default: null }, // global order per bin
+    flagged: { type: Boolean, default: false }, 
+    flaggedAt: { type: Date, default: null },
     scannedAt: { type: Date, default: Date.now },
     note: { type: String, default: null },
   },

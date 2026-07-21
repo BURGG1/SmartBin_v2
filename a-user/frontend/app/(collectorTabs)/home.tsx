@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { View, Text, ScrollView } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { router } from "expo-router";
 import { API_BASE } from "@/config"; // Import the API base URL
 
 // Collector Info
@@ -68,9 +69,7 @@ export default function CollectorHome() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
-
       <ScrollView className="flex-1 px-4 py-2">
-
         {/* HEADER */}
         <View>
           <Text className="text-3xl font-bold">Collector Dashboard</Text>
@@ -81,92 +80,63 @@ export default function CollectorHome() {
 
         {/* COLLECTOR INFO */}
         <View className="bg-green-600 rounded-xl shadow p-6 gap-4">
-
           <Text className="text-white">Welcome back,</Text>
           <Text className="text-3xl text-white font-bold">
             {collector.name}
           </Text>
-
-          {/* <View className="flex-row items-center gap-2">
-            <Feather name="map-pin" size={18} color="white" />
-            <Text className="text-white">
-              Assigned Area: {collector.assignedArea}
-            </Text>
-          </View>
-
-          <View className="flex-row justify-between mt-3">
-            <View>
-              <Text className="text-3xl font-bold text-white">
-                {collector.collectedToday}
-              </Text>
-              <Text className="text-green-100">
-                Bins Collected Today
-              </Text>
-            </View> */}
-          {/* </View> */}
-
         </View>
 
         {/* ASSIGNED BINS */}
         <View className="bg-white rounded-xl p-6 shadow mt-5">
-
           <View className="flex-row items-center gap-2 mb-3">
             <Feather name="clipboard" size={18} color="green" />
-            <Text className="text-lg font-semibold">
-              Assigned Bins
-            </Text>
+            <Text className="text-lg font-semibold">Assigned Bins</Text>
           </View>
 
           {assignedBins.map((bin, i) => (
-            <View
+            <TouchableOpacity
               key={i}
+              activeOpacity={0.7}
+              onPress={() =>
+                router.push({
+                  pathname: "/counterInfopage",
+                  params: { bin: JSON.stringify(bin) },
+                })
+              }
               className="flex-row justify-between items-center mb-3 border p-3 rounded-lg"
             >
-
               <View>
                 <Text className="text-lg font-semibold">{bin.id}</Text>
-
-                <Text className="text-sm text-gray-500">
-                  {bin.location}
-                </Text>
-
+                <Text className="text-sm text-gray-500">{bin.location}</Text>
                 <Text className="text-sm text-green-600">
                   Scheduled: {bin.scheduleDate} • {bin.scheduleTime}
                 </Text>
               </View>
 
-              <Text className="text-red-500 font-semibold">
-                {bin.fill}%
-              </Text>
-
-            </View>
+              <View className="flex-row items-center gap-2">
+                <Text className="text-red-500 font-semibold">{bin.fill}%</Text>
+                <Feather name="chevron-right" size={18} color="#9ca3af" />
+              </View>
+            </TouchableOpacity>
           ))}
-
         </View>
 
         {/* RECENT COLLECTION ACTIVITY */}
         <View className="bg-white rounded-xl p-6 shadow mt-5">
-
           <Text className="text-lg font-semibold mb-4">
             Recent Collection Activity
           </Text>
 
           {recentCollections.map((activity, i) => (
-
             <View
               key={i}
               className="flex-row justify-between items-center mb-3"
             >
-
               <View>
-                <Text className="font-medium">
-                  {activity.bin}
-                </Text>
-
+                <Text className="font-medium">{activity.bin}</Text>
                 <Text className="text-xs text-gray-500">
                   {activity.location}
                 </Text>
-
                 <Text className="text-xs text-gray-400">
                   {activity.date} • {activity.time}
                 </Text>
@@ -181,15 +151,10 @@ export default function CollectorHome() {
               >
                 {activity.status}
               </Text>
-
             </View>
-
           ))}
-
         </View>
-
       </ScrollView>
-
     </SafeAreaView>
   );
 }

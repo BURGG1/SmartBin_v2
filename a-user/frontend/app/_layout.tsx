@@ -8,6 +8,10 @@ export default function RootLayout() {
       options={{ headerShown: false }}
     />
     <Stack.Screen
+      name="counterInfopage"
+      options={{ headerShown: false }}
+    />
+    <Stack.Screen
       name="(userTabs)"
       options={{ headerShown: false }}
     />

@@ -7,14 +7,14 @@ import BASE_URL from "../config";
 const LOGS_LIMIT = 7;
 
 export default function CounterInfoModal({ isOpen, onClose, bin }) {
-    const [openModal, setOpenModal]       = useState(false);
-    const [activeHH, setActiveHH]         = useState(null);
-    const [fromDate, setFromDate]         = useState("");
+    const [openModal, setOpenModal] = useState(false);
+    const [activeHH, setActiveHH] = useState(null);
+    const [fromDate, setFromDate] = useState("");
     const [disposalLogs, setDisposalLogs] = useState([]);
-    const [total, setTotal]               = useState(0);
-    const [loading, setLoading]           = useState(false);
-    const [error, setError]               = useState("");
-    const [page, setPage]                 = useState(1);
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+    const [page, setPage] = useState(1);
 
     const abortRef = useRef(null);
 
@@ -29,14 +29,14 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
         setError("");
         try {
             const params = new URLSearchParams({
-                binId:  bin.id,
+                binId: bin.id,
                 action: "dispose",
-                page:   pageArg,
-                limit:  LOGS_LIMIT,
+                page: pageArg,
+                limit: LOGS_LIMIT,
                 ...(fromDate && { date: fromDate }),
             });
 
-            const res  = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
+            const res = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
             if (!res.ok) throw new Error(`Server error (${res.status})`);
             const data = await res.json();
 
@@ -132,15 +132,15 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                     </tr>
                                 ) : (
                                     disposalLogs.map((log) => {
-                                        const scannedAt   = new Date(log.scannedAt);
-                                        const date        = scannedAt.toISOString().split("T")[0];
-                                        const time        = scannedAt.toLocaleTimeString("en-US", {
+                                        const scannedAt = new Date(log.scannedAt);
+                                        const date = scannedAt.toISOString().split("T")[0];
+                                        const time = scannedAt.toLocaleTimeString("en-US", {
                                             hour: "2-digit", minute: "2-digit", second: "2-digit",
                                         });
-                                        const hh          = log.household;
+                                        const hh = log.household;
                                         const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "—";
-                                        const contact     = hh?.contactNumber ? `+63-${hh.contactNumber}` : "—";
-                                        const isFlagged   = !!log.flagged;
+                                        const contact = hh?.contactNumber ? `+63-${hh.contactNumber}` : "—";
+                                        const isFlagged = !!log.flagged;
 
                                         return (
                                             <tr
@@ -182,7 +182,12 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                                             setActiveHH(log);
                                                             setOpenModal(true);
                                                         }}
-                                                        className="bg-red-600 text-white px-2 py-1 rounded-lg cursor-pointer hover:bg-red-700 transition"
+                                                        disabled={!isFlagged}
+                                                        className={
+                                                            isFlagged
+                                                                ? "bg-red-600 text-white px-2 py-1 rounded-lg cursor-pointer hover:bg-red-700 transition"
+                                                                : "bg-gray-300 text-gray-500 px-2 py-1 rounded-lg cursor-not-allowed"
+                                                        }
                                                     >
                                                         Penalize
                                                     </button>

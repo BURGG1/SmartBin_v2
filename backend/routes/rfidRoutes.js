@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const { upload } = require("../middleware/upload");
 const { scanRfid, scanAtBin, checkRfid, getRfidLogs, getRfidHistory, getLatestScan, flagRfidLog } = require("../controllers/rfidController");
 
 router.post("/scan", scanRfid);
@@ -8,6 +9,6 @@ router.get("/check/:rfid", checkRfid);
 router.get("/latest-scan", getLatestScan);
 router.get("/logs", getRfidLogs);
 router.get("/logs/:rfid", getRfidHistory);
-router.patch("/logs/:id/flag", flagRfidLog);
+router.patch("/logs/:id/flag", upload.single("evidencePhoto"), flagRfidLog);
 
 module.exports = router;

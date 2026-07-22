@@ -35,11 +35,15 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
 
     if (!isOpen || !household) return null;
 
-    // Compute what offense this WILL be (same logic as backend)
+    // `household` here is the RfidLog document (see CounterInfoModal's
+    // setActiveHH(log)) — its `.household` field is the populated
+    // Household sub-document, and `_id`/`evidencePhoto` live on the log
+    // itself, not nested.
     const currentViolation = household?.household?.violation ?? household?.violation ?? 0;
     const nextOffense = currentViolation >= 3 ? 1 : currentViolation + 1;
     const penalty = PENALTY_CONFIG[nextOffense];
-    const evidenceImage = household?.household?.evidenceImage ?? household?.evidenceImage;
+    const evidenceImage = household?.evidencePhoto ?? null;
+    const logId = household?._id;
 
     const openConfirm = (type) => {
         setDecision(type);
@@ -47,16 +51,47 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
     };
 
     const handleConfirm = async () => {
-        // Decline doesn't hit the penalty endpoint — just close out the report
+        setLoading(true);
+        setError("");
+
+        // Decline: unflag the log via the same endpoint used to flag it.
+        // The backend already clears evidencePhoto and deletes the
+        // Cloudinary image whenever flagged is set to false.
         if (decision === "decline") {
-            setActive(false);
-            setShowToast(true);
-            setTimeout(() => onClose(), 1800);
+            try {
+                const token = sessionStorage.getItem("token");
+                const formData = new FormData();
+                formData.append("flagged", "false");
+
+                const res = await fetch(`${BASE_URL}/api/rfid/logs/${logId}/flag`, {
+                    method: "PATCH",
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    body: formData, // no Content-Type — browser sets the multipart boundary
+                });
+
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    throw new Error(data.message || "Failed to decline report.");
+                }
+
+                setActive(false);
+                setShowToast(true);
+
+                // Let the parent refresh its log list so the row stops
+                // showing red/flagged and the image is gone from the UI.
+                if (onPenalized) onPenalized(data.data);
+
+                setTimeout(() => onClose(), 1800);
+            } catch (err) {
+                setError(err.message);
+                setActive(false);
+            } finally {
+                setLoading(false);
+            }
             return;
         }
 
-        setLoading(true);
-        setError("");
+        // Approve: apply the actual penalty
         try {
             const token = sessionStorage.getItem("token");
             const householdId = household?.household?._id ?? household?._id;
@@ -79,7 +114,6 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
             setActive(false);
             setShowToast(true);
 
-            // Notify parent to refresh household data
             if (onPenalized) onPenalized(data.data.household);
 
             setTimeout(() => onClose(), 1800);

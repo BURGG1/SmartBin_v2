@@ -1,6 +1,7 @@
 const Household = require("../models/Household");
 const RfidLog = require("../models/RfidLog");
 const Bin = require("../models/Bin");
+const { cloudinary } = require("../middleware/upload");
 
 // POST /api/rfid/scan
 const scanRfid = async (req, res) => {
@@ -168,18 +169,46 @@ const scanAtBin = async (req, res) => {
 };
 
 // PATCH /api/rfid/logs/:id/flag
+// Accepts multipart/form-data: { flagged: "true"|"false", evidencePhoto?: File }
 const flagRfidLog = async (req, res) => {
   try {
     const { flagged } = req.body;
-    const log = await RfidLog.findByIdAndUpdate(
-      req.params.id,
-      { flagged: !!flagged, flaggedAt: flagged ? new Date() : null },
-      { new: true }
-    ).populate("household", "fullname address contactNumber email");
-
-    if (!log) {
-      return res.status(404).json({ success: false, message: "Log not found" });
+    if (flagged === undefined) {
+      return res.status(400).json({ success: false, message: "flagged is required." });
     }
+
+    const log = await RfidLog.findById(req.params.id);
+    if (!log) {
+      return res.status(404).json({ success: false, message: "Log not found." });
+    }
+
+    log.flagged = flagged === "true" || flagged === true;
+    log.flaggedAt = log.flagged ? new Date() : null;
+
+    if (req.file) {
+      // req.file.path is populated by multer-storage-cloudinary — it's
+      // the full secure_url of the newly uploaded image.
+      if (log.evidencePhoto) {
+        const publicId = log.evidencePhoto.split("/").slice(-2).join("/").split(".")[0];
+        await cloudinary.uploader.destroy(publicId).catch((err) =>
+          console.error("[Cloudinary] Failed to delete old evidence photo:", err.message)
+        );
+      }
+      log.evidencePhoto = req.file.path;
+    }
+
+    if (!log.flagged) {
+      if (log.evidencePhoto) {
+        const publicId = log.evidencePhoto.split("/").slice(-2).join("/").split(".")[0];
+        await cloudinary.uploader.destroy(publicId).catch((err) =>
+          console.error("[Cloudinary] Failed to delete evidence photo on unflag:", err.message)
+        );
+      }
+      log.evidencePhoto = null;
+    }
+
+    await log.save();
+    await log.populate("household", "fullname address contactNumber email");
 
     res.json({ success: true, data: log });
   } catch (error) {

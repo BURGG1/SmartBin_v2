@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 
 import { getRewards, redeemReward, getHouseholdActivity } from "../../api/rewardAPI";
-import { useHousehold, fetchHousehold, updatePointsLocally } from "../store/householdStore";
+import { useHousehold, fetchHousehold, setHousehold } from "../store/householdStore";
 import Pagination from "../../components/UserPagination";
 
 type Reward = {
@@ -24,26 +24,26 @@ type ActivityItem = {
     amount?: string;
 };
 
-const REWARDS_PER_PAGE = 4;
-const ACTIVITY_PER_PAGE = 7;
-const ACTIVITY_FETCH_LIMIT = 50; // fetch enough rows to paginate client-side
-const ACTIVITY_HISTORY_CAP = 50; // how much locally-prepended history to retain after a redemption
+const REWARDS_PER_PAGE      = 4;
+const ACTIVITY_PER_PAGE     = 7;
+const ACTIVITY_FETCH_LIMIT  = 50;
+const ACTIVITY_HISTORY_CAP  = 50;
 
 export default function Rewards() {
     const household = useHousehold();
     const [householdLoading, setHouseholdLoading] = useState(!household);
 
-    const [rewards, setRewards] = useState<Reward[]>([]);
+    const [rewards, setRewards]           = useState<Reward[]>([]);
     const [rewardsLoading, setRewardsLoading] = useState(true);
     const [rewardsError, setRewardsError] = useState("");
-    const [rewardsPage, setRewardsPage] = useState(1);
+    const [rewardsPage, setRewardsPage]   = useState(1);
 
-    const [activity, setActivity] = useState<ActivityItem[]>([]);
+    const [activity, setActivity]           = useState<ActivityItem[]>([]);
     const [activityLoading, setActivityLoading] = useState(true);
-    const [activityPage, setActivityPage] = useState(1);
+    const [activityPage, setActivityPage]   = useState(1);
 
     const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
-    const [redeeming, setRedeeming] = useState(false);
+    const [redeeming, setRedeeming]           = useState(false);
 
     const loadHousehold = useCallback(async () => {
         setHouseholdLoading(true);
@@ -92,7 +92,6 @@ export default function Rewards() {
         }
     }, [household?._id]);
 
-    // Refresh on screen focus — catches points awarded elsewhere (e.g. RFID scan)
     useFocusEffect(
         useCallback(() => {
             loadHousehold();
@@ -100,7 +99,6 @@ export default function Rewards() {
         }, [household?._id])
     );
 
-    // Clamp pages if the underlying data shrinks
     useEffect(() => {
         const totalPages = Math.max(1, Math.ceil(rewards.length / REWARDS_PER_PAGE));
         if (rewardsPage > totalPages) setRewardsPage(totalPages);
@@ -128,35 +126,52 @@ export default function Rewards() {
     };
 
     const confirmRedeem = async () => {
-        if (!selectedReward || !household?._id) return;
+        if (!selectedReward || !household?._id || !household) return;
 
         setRedeeming(true);
         try {
             const res = await redeemReward(selectedReward._id, household._id);
 
-            // Real-time UI updates from the server response — no refetch needed
-            updatePointsLocally(-selectedReward.points);
+            // ── Update points in store using server response as source of truth ──
+            const newTotal     = res?.data?.household?.points?.total
+                ?? (household.points.total - selectedReward.points);
+            const newThisMonth = res?.data?.household?.points?.thisMonth
+                ?? (household.points.thisMonth - selectedReward.points);
+
+            setHousehold({
+                ...household,
+                points: {
+                    total:     newTotal,
+                    thisMonth: newThisMonth,
+                },
+            });
+
+            // Update reward stock in UI
             setRewards((prev) =>
-                prev.map((r) => (r._id === selectedReward._id ? { ...r, stocks: r.stocks - 1 } : r))
+                prev.map((r) =>
+                    r._id === selectedReward._id ? { ...r, stocks: r.stocks - 1 } : r
+                )
             );
+
+            // Prepend to activity log
             setActivity((prev) =>
                 [
                     {
-                        type: "Redeemed Reward",
-                        via: selectedReward.name,
-                        date: new Date().toISOString(),
+                        type:   "Redeemed Reward",
+                        via:    selectedReward.name,
+                        date:   new Date().toISOString(),
                         points: -selectedReward.points,
                     },
                     ...prev,
                 ].slice(0, ACTIVITY_HISTORY_CAP)
             );
-            setActivityPage(1); // jump back to the newest page so the redemption is visible
+            setActivityPage(1);
 
             setSelectedReward(null);
             Alert.alert("Success", res.message || "Reward redeemed successfully!");
         } catch (err: any) {
             Alert.alert("Error", err.message || "Failed to redeem reward.");
-            // Data may be stale (e.g. someone else redeemed the last unit) — resync
+            // Resync in case data is stale (e.g. last unit taken by someone else)
             loadRewards();
             loadHousehold();
         } finally {
@@ -164,17 +179,17 @@ export default function Rewards() {
         }
     };
 
-    const paginatedRewards = rewards.slice(
+    const paginatedRewards      = rewards.slice(
         (rewardsPage - 1) * REWARDS_PER_PAGE,
         rewardsPage * REWARDS_PER_PAGE
     );
-    const rewardsFillerCount = Math.max(0, REWARDS_PER_PAGE - paginatedRewards.length);
+    const rewardsFillerCount    = Math.max(0, REWARDS_PER_PAGE - paginatedRewards.length);
 
-    const paginatedActivity = activity.slice(
+    const paginatedActivity     = activity.slice(
         (activityPage - 1) * ACTIVITY_PER_PAGE,
         activityPage * ACTIVITY_PER_PAGE
     );
-    const activityFillerCount = Math.max(0, ACTIVITY_PER_PAGE - paginatedActivity.length);
+    const activityFillerCount   = Math.max(0, ACTIVITY_PER_PAGE - paginatedActivity.length);
 
     if (householdLoading) {
         return (
@@ -188,6 +203,7 @@ export default function Rewards() {
         <SafeAreaView className="flex-1">
             <ScrollView className="flex-1 px-4 py-2">
                 <View className="flex flex-col gap-5">
+
                     {/* Header */}
                     <View>
                         <Text className="text-3xl font-bold">Rewards & Achievements</Text>
@@ -237,8 +253,7 @@ export default function Rewards() {
                                 <View className="flex-row justify-between">
                                     <Text>Points Redeemed</Text>
                                     <Text className="text-red-500 font-semibold">
-                                        -
-                                        {activity
+                                        -{activity
                                             .filter((a) => a.type === "Redeemed Reward")
                                             .reduce((s, a) => s + Math.abs(a.points), 0)}
                                     </Text>
@@ -306,16 +321,22 @@ export default function Rewards() {
                                             style={{ backgroundColor: canRedeem ? "#16A34A" : "#9CA3AF" }}
                                         >
                                             <Text className="text-white font-semibold">
-                                                {item.stocks < 1 ? "Out of stock" : canRedeem ? "Redeem" : "Not enough points"}
+                                                {item.stocks < 1
+                                                    ? "Out of stock"
+                                                    : canRedeem
+                                                    ? "Redeem"
+                                                    : "Not enough points"}
                                             </Text>
                                         </TouchableOpacity>
                                     </View>
                                 );
                             })}
 
-                            {!rewardsLoading && rewards.length > 0 && Array.from({ length: rewardsFillerCount }).map((_, i) => (
-                                <View key={`filler-${i}`} className="h-60 w-full" style={{ opacity: 0 }} />
-                            ))}
+                            {!rewardsLoading && rewards.length > 0 &&
+                                Array.from({ length: rewardsFillerCount }).map((_, i) => (
+                                    <View key={`filler-${i}`} className="h-60 w-full" style={{ opacity: 0 }} />
+                                ))
+                            }
 
                             {!rewardsLoading && rewards.length === 0 && !rewardsError && (
                                 <Text className="text-gray-500 text-center py-6">No rewards available yet.</Text>
@@ -348,8 +369,7 @@ export default function Rewards() {
                                     <View>
                                         <Text className="font-medium">{a.type}</Text>
                                         <Text className="text-xs">
-                                            {a.via}
-                                            {a.amount && ` - ${a.amount}`}
+                                            {a.via}{a.amount ? ` - ${a.amount}` : ""}
                                         </Text>
                                         <Text className="text-xs text-gray-500">
                                             {new Date(a.date).toLocaleDateString()}
@@ -361,9 +381,11 @@ export default function Rewards() {
                                 </View>
                             ))}
 
-                            {!activityLoading && activity.length > 0 && Array.from({ length: activityFillerCount }).map((_, i) => (
-                                <View key={`filler-${i}`} className="h-11" style={{ opacity: 0 }} />
-                            ))}
+                            {!activityLoading && activity.length > 0 &&
+                                Array.from({ length: activityFillerCount }).map((_, i) => (
+                                    <View key={`filler-${i}`} className="h-11" style={{ opacity: 0 }} />
+                                ))
+                            }
 
                             {!activityLoading && activity.length === 0 && (
                                 <Text className="text-gray-500 text-center py-6">No activity yet.</Text>
@@ -379,6 +401,7 @@ export default function Rewards() {
                             )}
                         </View>
                     </View>
+
                 </View>
             </ScrollView>
 
@@ -398,7 +421,9 @@ export default function Rewards() {
 
                         {selectedReward && (
                             <Text className="text-gray-600 text-center">
-                                Redeem <Text className="font-semibold text-gray-900">{selectedReward.name}</Text> for{" "}
+                                Redeem{" "}
+                                <Text className="font-semibold text-gray-900">{selectedReward.name}</Text>
+                                {" "}for{" "}
                                 <Text className="font-semibold text-green-600">{selectedReward.points} points</Text>?
                                 {"\n"}This action cannot be undone.
                             </Text>

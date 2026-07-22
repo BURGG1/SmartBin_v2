@@ -1,64 +1,79 @@
-import { useSyncExternalStore } from "react";
+// store/householdStore.ts
+import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE } from "@/config";
 
-type Household = any;
-
-let household: Household | null = null;
-let listeners: Array<() => void> = [];
-
-const emit = () => listeners.forEach((l) => l());
-
-export function getHousehold() {
-  return household;
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Points {
+    total: number;
+    thisMonth: number;
 }
 
-export function setHousehold(next: Household | null) {
-  household = next;
-  emit();
+interface Streak {
+    currentStreak: number;
+    lastDisposalDate: string | null;
 }
 
-// Adjusts points immediately in the UI without waiting on a network round trip
-export function updatePointsLocally(delta: number) {
-  if (!household) return;
-  household = {
-    ...household,
-    points: {
-      total: (household.points?.total ?? 0) + delta,
-      thisMonth: (household.points?.thisMonth ?? 0) + delta,
+interface Address {
+    houseNo?: string;
+    street?: string;
+}
+
+export interface Household {
+    _id: string;
+    fullname: string;
+    rfid: string;
+    email?: string;
+    contactNumber?: string;
+    birthday?: string;
+    familyMember?: number;
+    address?: Address;
+    points: Points;
+    streak: Streak;
+    violation: number;
+    isActive: boolean;
+    createdAt: string;
+}
+
+interface HouseholdStore {
+    household: Household | null;
+    setHousehold: (h: Household | null) => void;
+    fetchHousehold: () => Promise<void>;
+    clearHousehold: () => void;
+}
+
+// ── Store ─────────────────────────────────────────────────────────────────────
+const useHouseholdStore = create<HouseholdStore>((set) => ({
+    household: null,
+
+    setHousehold: (h) => set({ household: h }),
+
+    clearHousehold: () => set({ household: null }),
+
+    fetchHousehold: async () => {
+        try {
+            const token = await AsyncStorage.getItem("token");
+            if (!token) return;
+
+            const res  = await fetch(`${API_BASE}/api/auth/me`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await res.json();
+
+            if (data.success && data.data) {
+                set({ household: data.data });
+            }
+        } catch (err) {
+            console.error("[householdStore] fetchHousehold failed:", err);
+        }
     },
-  };
-  emit();
-}
+}));
 
-export async function fetchHousehold() {
-  try {
-    const token = await AsyncStorage.getItem("token");
-    const userStr = await AsyncStorage.getItem("user");
-    const user = userStr ? JSON.parse(userStr) : null;
-    if (!user?.id) return null;
+// Named exports for use in components
+export const useHousehold    = () => useHouseholdStore((s) => s.household);
+export const fetchHousehold  = () => useHouseholdStore.getState().fetchHousehold();
+export const clearHousehold  = () => useHouseholdStore.getState().clearHousehold();
+export const setHousehold    = (h: Household | null) => useHouseholdStore.getState().setHousehold(h);
 
-    const res = await fetch(`${API_BASE}/api/households/${user.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    if (data.success) {
-      setHousehold(data.data);
-      return data.data;
-    }
-  } catch (err) {
-    console.error("Failed to fetch household:", err);
-  }
-  return null;
-}
-
-export function subscribe(listener: () => void) {
-  listeners.push(listener);
-  return () => {
-    listeners = listeners.filter((l) => l !== listener);
-  };
-}
-
-export function useHousehold(): Household | null {
-  return useSyncExternalStore(subscribe, getHousehold, getHousehold);
-}
+// ✅ Required default export so Expo Router doesn't treat this as a broken route
+export default useHouseholdStore;

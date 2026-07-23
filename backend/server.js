@@ -21,12 +21,21 @@ const authRoutes = require("./routes/authRoutes");
 const registrationRequestRoutes = require("./routes/registrationRequestRoutes");
 const { startBinStatusChecker } = require("./jobs/binStatusChecker");
 const { checkAndAutoSchedule } = require("./services/autoScheduleService");
+const {trasporter} = require("./config/mailer");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 connectDB();
 startBinStatusChecker();
+
+transporter.verify((err, success) => {
+  if (err) {
+    console.error("[Mailer] Verification failed:", err.message);
+  } else {
+    console.log("[Mailer] Ready to send emails.");
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 //  0. TRUST PROXY — required on Render (and most cloud hosts) so

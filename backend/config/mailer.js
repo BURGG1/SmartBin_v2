@@ -1,11 +1,15 @@
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_PASS,
   },
+  family: 4, // force IPv4 — avoids IPv6 route hangs on Render
+  connectionTimeout: 10000,
 });
 
 const sendPasswordEmail = async ({ to, fullname, password }) => {
@@ -28,7 +32,6 @@ const sendPasswordEmail = async ({ to, fullname, password }) => {
   });
 };
 
-// New: reset-code email, reusing the same transporter/config as above.
 const sendResetCodeEmail = async ({ to, code }) => {
   const expiryMinutes = process.env.RESET_CODE_EXPIRY_MINUTES || 10;
 

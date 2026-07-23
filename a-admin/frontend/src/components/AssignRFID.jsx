@@ -15,7 +15,7 @@ export default function AssignRFIDModal({ isOpen, onClose, onAssign }) {
             if (rfid) return; // stop polling if already filled
 
             try {
-                const res = await fetch(`${BASE_URL}/rfid/latest-scan`);
+                const res = await fetch(`${BASE_URL}/api/rfid/latest-scan`);
                 const data = await res.json();
                 if (data.success && data.rfid) {
                     setRfid(data.rfid); // ✅ use setRfid, not setForm

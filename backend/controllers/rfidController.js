@@ -2,14 +2,17 @@ const Household = require("../models/Household");
 const RfidLog = require("../models/RfidLog");
 const Bin = require("../models/Bin");
 const { cloudinary } = require("../middleware/upload");
+const { normalizeRfid } = require("../utils/normalize");
 
 // POST /api/rfid/scan
 const scanRfid = async (req, res) => {
   try {
-    const { rfid, binId } = req.body; // binId is optional
+    const { rfid: rawRfid, binId } = req.body;
 
-    if (!rfid)
+    if (!rawRfid)
       return res.status(400).json({ success: false, message: "RFID code is required" });
+
+    const rfid = normalizeRfid(rawRfid);
 
     const household = await Household.findOne({ rfid, isActive: true });
 
@@ -56,13 +59,14 @@ const scanRfid = async (req, res) => {
 };
 
 // POST /api/rfid/scan-bin
-// ESP32 calls this when household taps RFID at a specific bin
 const scanAtBin = async (req, res) => {
   try {
-    const { rfid, binId, lat, lng, fillLevel, distanceCm } = req.body;
+    const { rfid: rawRfid, binId, lat, lng, fillLevel, distanceCm } = req.body;
 
-    if (!rfid || !binId)
+    if (!rawRfid || !binId)
       return res.status(400).json({ success: false, message: "rfid and binId are required" });
+
+    const rfid = normalizeRfid(rawRfid);
 
     const household = await Household.findOne({ rfid });
     if (!household) {
@@ -101,7 +105,6 @@ const scanAtBin = async (req, res) => {
     let streakChanged = false;
 
     if (!lastDate) {
-      // First ever disposal
       household.streak.currentStreak = 1;
       household.streak.lastDisposalDate = now;
       streakChanged = true;
@@ -111,15 +114,13 @@ const scanAtBin = async (req, res) => {
       if (diffDays === 0) {
         // Already scanned today — don't update streak
       } else if (diffDays === 1) {
-        // Consecutive day
         household.streak.currentStreak += 1;
         household.streak.lastDisposalDate = now;
         streakChanged = true;
       } else {
-        // Streak broken
         household.streak.currentStreak = 1;
         household.streak.lastDisposalDate = now;
-        household.streak.awardedStreaks = []; // reset so they can re-earn
+        household.streak.awardedStreaks = [];
         streakChanged = true;
       }
     }
@@ -169,7 +170,6 @@ const scanAtBin = async (req, res) => {
 };
 
 // PATCH /api/rfid/logs/:id/flag
-// Accepts multipart/form-data: { flagged: "true"|"false", evidencePhoto?: File }
 const flagRfidLog = async (req, res) => {
   try {
     const { flagged } = req.body;
@@ -186,8 +186,6 @@ const flagRfidLog = async (req, res) => {
     log.flaggedAt = log.flagged ? new Date() : null;
 
     if (req.file) {
-      // req.file.path is populated by multer-storage-cloudinary — it's
-      // the full secure_url of the newly uploaded image.
       if (log.evidencePhoto) {
         const publicId = log.evidencePhoto.split("/").slice(-2).join("/").split(".")[0];
         await cloudinary.uploader.destroy(publicId).catch((err) =>
@@ -219,7 +217,8 @@ const flagRfidLog = async (req, res) => {
 // GET /api/rfid/check/:rfid
 const checkRfid = async (req, res) => {
   try {
-    const existing = await Household.findOne({ rfid: req.params.rfid });
+    const rfid = normalizeRfid(req.params.rfid);
+    const existing = await Household.findOne({ rfid });
     if (existing) {
       return res.json({
         success: true,
@@ -253,15 +252,11 @@ const getLatestScan = async (req, res) => {
 };
 
 // GET /api/rfid/logs
-// FIX: now reads `date` (single day, used by CounterInfoModal) and turns it
-// into a start-of-day/end-of-day range on `scannedAt`. Previously this
-// parameter was never read at all, so the filter had no effect.
-// GET /api/rfid/logs
 const getRfidLogs = async (req, res) => {
   try {
     const { rfid, action, binId, date, from, to, page = 1, limit = 20 } = req.query;
     const query = {};
-    if (rfid) query.rfid = rfid;
+    if (rfid) query.rfid = normalizeRfid(rfid);
     if (action) query.action = action;
     if (binId) query.binId = binId;
 
@@ -311,15 +306,10 @@ const getRfidLogs = async (req, res) => {
 };
 
 // GET /api/rfid/logs/:rfid
-// FIX: this previously accepted no query params at all — no action filter,
-// no pagination, no date range — and just returned every log ever recorded
-// for that RFID. Now supports `action`, `from`/`to` (day range on
-// `scannedAt`), and real server-side `page`/`limit` with a matching total,
-// same shape as getRfidLogs above.
 const getRfidHistory = async (req, res) => {
   try {
     const { action, from, to, page = 1, limit = 20 } = req.query;
-    const query = { rfid: req.params.rfid };
+    const query = { rfid: normalizeRfid(req.params.rfid) };
     if (action) query.action = action;
 
     if (from || to) {

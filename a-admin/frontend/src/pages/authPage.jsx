@@ -189,11 +189,11 @@ export default function AuthPage() {
             <Trash2 className="text-white" size={32} />
           </div>
           <h1 className="text-xl font-semibold">
-            Smart bin Waste Management with Segregation and Gamified System
+            SmartBin Waste Management with Segregation and Rewarding System
           </h1>
-          <p className="text-gray-500 text-sm">
-            Manage waste collection efficiently
-          </p>
+          {/* <p className="text-gray-500 text-sm">
+            Track and Manage waste collection efficiently
+          </p> */}
         </div>
 
         {/* CARD */}

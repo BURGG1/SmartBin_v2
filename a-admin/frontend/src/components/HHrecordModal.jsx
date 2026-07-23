@@ -26,6 +26,12 @@ function formatDate(dateStr) {
     });
 }
 
+// YYYY-MM-DD for a given date value, used both to build the `from`/`to`
+// query params and to read a record's own date field for comparison.
+function toDateStr(d) {
+    return new Date(d).toISOString().split("T")[0];
+}
+
 export default function HouseholdRecordModal({ isOpen, onClose, household: householdProp }) {
     const [household, setHousehold] = useState(null);
     const [activeTab, setActiveTab] = useState("disposal");
@@ -82,6 +88,11 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     // the backend route is confirmed to paginate correctly, this branch
     // simply never triggers (filtered.length will already be <= limit)
     // and can be deleted.
+    //
+    // DATE FILTER: when the user hasn't picked a from/to date, we don't
+    // show the entire history — we peek at the newest record's date and
+    // scope the fetch to just that day. Assumes the backend returns
+    // results sorted newest-first.
     const fetchDisposalLogs = useCallback(async (pageArg = 1) => {
         if (!householdProp?.rfid) return;
 
@@ -92,12 +103,36 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         setLogsLoading(true);
         setLogsError("");
         try {
+            let effectiveFrom = fromDate;
+            let effectiveTo = toDate;
+
+            if (!fromDate && !toDate) {
+                const peekParams = new URLSearchParams({ action: "dispose", page: 1, limit: 1 });
+                const peekRes = await fetch(`${BASE_URL}/api/rfid/logs/${householdProp.rfid}?${peekParams}`, {
+                    signal: controller.signal,
+                });
+                const peekData = await peekRes.json();
+                const latest = peekData?.success && peekData.data?.length > 0 ? peekData.data[0] : null;
+
+                if (!latest) {
+                    setDisposalLogs([]);
+                    setDisposalTotal(0);
+                    setDisposalPage(1);
+                    setLogsLoading(false);
+                    return;
+                }
+
+                const latestDate = toDateStr(latest.scannedAt);
+                effectiveFrom = latestDate;
+                effectiveTo = latestDate;
+            }
+
             const params = new URLSearchParams({
                 action: "dispose",
                 page: pageArg,
                 limit: DISPOSAL_LIMIT,
-                ...(fromDate && { from: fromDate }),
-                ...(toDate && { to: toDate }),
+                ...(effectiveFrom && { from: effectiveFrom }),
+                ...(effectiveTo && { to: effectiveTo }),
             });
 
             const res = await fetch(`${BASE_URL}/api/rfid/logs/${householdProp.rfid}?${params}`, {
@@ -136,6 +171,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         }
     }, [householdProp?.rfid, fromDate, toDate]);
 
+    // DATE FILTER: same "default to latest day" behavior as disposal logs.
     const fetchActivityLogs = useCallback(async (pageArg = 1) => {
         if (!householdProp?._id) return;
 
@@ -146,11 +182,35 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         setActivityLoading(true);
         setActivityError("");
         try {
+            let effectiveFrom = fromDate;
+            let effectiveTo = toDate;
+
+            if (!fromDate && !toDate) {
+                const peekParams = new URLSearchParams({ page: 1, limit: 1 });
+                const peekRes = await fetch(`${BASE_URL}/api/households/${householdProp._id}/activity?${peekParams}`, {
+                    signal: controller.signal,
+                });
+                const peekData = await peekRes.json();
+                const latest = peekData?.success && peekData.data?.length > 0 ? peekData.data[0] : null;
+
+                if (!latest) {
+                    setActivityLogs([]);
+                    setActivityTotal(0);
+                    setActivityPage(1);
+                    setActivityLoading(false);
+                    return;
+                }
+
+                const latestDate = toDateStr(latest.date);
+                effectiveFrom = latestDate;
+                effectiveTo = latestDate;
+            }
+
             const params = new URLSearchParams({
                 page: pageArg,
                 limit: ACTIVITY_LIMIT,
-                ...(fromDate && { from: fromDate }),
-                ...(toDate && { to: toDate }),
+                ...(effectiveFrom && { from: effectiveFrom }),
+                ...(effectiveTo && { to: effectiveTo }),
             });
 
             const res = await fetch(`${BASE_URL}/api/households/${householdProp._id}/activity?${params}`, {
@@ -177,6 +237,11 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     // request is aborted before starting a new one, so a slow older
     // response can't land after a newer one and overwrite it with stale
     // violation data.
+    //
+    // FIX: this previously never sent from/to at all, so the date filter
+    // had no effect on this tab. It now respects the filter, and — same
+    // as the other two tabs — defaults to the latest day's records when
+    // no filter is set.
     const fetchViolationLogs = useCallback(async (pageArg = 1) => {
         if (!householdProp?._id) return;
 
@@ -188,7 +253,37 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         setViolationError("");
         try {
             const token = sessionStorage.getItem("token");
-            const params = new URLSearchParams({ page: pageArg, limit: VIOLATION_LIMIT });
+            let effectiveFrom = fromDate;
+            let effectiveTo = toDate;
+
+            if (!fromDate && !toDate) {
+                const peekParams = new URLSearchParams({ page: 1, limit: 1 });
+                const peekRes = await fetch(`${BASE_URL}/api/households/${householdProp._id}/violations?${peekParams}`, {
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    signal: controller.signal,
+                });
+                const peekData = await peekRes.json();
+                const latest = peekData?.success && peekData.data?.length > 0 ? peekData.data[0] : null;
+
+                if (!latest) {
+                    setViolationLogs([]);
+                    setViolationTotal(0);
+                    setViolationPage(1);
+                    setViolationLoading(false);
+                    return;
+                }
+
+                const latestDate = toDateStr(latest.createdAt);
+                effectiveFrom = latestDate;
+                effectiveTo = latestDate;
+            }
+
+            const params = new URLSearchParams({
+                page: pageArg,
+                limit: VIOLATION_LIMIT,
+                ...(effectiveFrom && { from: effectiveFrom }),
+                ...(effectiveTo && { to: effectiveTo }),
+            });
             const res = await fetch(`${BASE_URL}/api/households/${householdProp._id}/violations?${params}`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
                 signal: controller.signal,
@@ -206,7 +301,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         } finally {
             if (violationAbortRef.current === controller) setViolationLoading(false);
         }
-    }, [householdProp?._id]);
+    }, [householdProp?._id, fromDate, toDate]);
 
     // ── On open: load everything fresh ───────────────────────────────────────
     useEffect(() => {
@@ -258,6 +353,10 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     const points = household.points?.total ?? 0;
     const violation = household.violation ?? 0;
     const suffix = ["st", "nd", "rd"];
+
+    // Whether the user has picked an explicit filter; when they haven't,
+    // each tab is silently scoped to its own latest date instead.
+    const hasExplicitFilter = !!(fromDate || toDate);
 
     // Only pad each tab's table to a fixed height once that tab actually
     // spans more than one page — a single page just renders at its
@@ -327,7 +426,12 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                             <input
                                 type="date"
                                 value={fromDate}
-                                onChange={(e) => setFromDate(e.target.value)}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                   
+                                    setFromDate(val);
+                                    setToDate(val);
+                                }}
                                 className="border rounded-lg px-3 py-2 text-sm w-50"
                             />
                         </div>
@@ -372,6 +476,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                 {/* DISPOSAL LOG */}
                 {activeTab === "disposal" && (
                     <div className="px-2">
+
                         <div className="overflow-x-auto">
                             {logsLoading ? (
                                 <p className="text-center py-6 text-gray-400">Loading logs...</p>
@@ -446,6 +551,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                 {/* ACTIVITY LOG */}
                 {activeTab === "reward" && (
                     <div className="px-2">
+
                         <div className="overflow-x-auto">
                             {activityLoading ? (
                                 <p className="text-center py-6 text-gray-400">Loading activity...</p>
@@ -513,6 +619,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                 {/* VIOLATION LOG */}
                 {activeTab === "violations" && (
                     <div className="px-2">
+
                         <div className="overflow-x-auto">
                             {violationLoading ? (
                                 <p className="text-center py-6 text-gray-400">Loading violations...</p>

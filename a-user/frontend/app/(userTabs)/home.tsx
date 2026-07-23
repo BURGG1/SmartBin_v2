@@ -577,6 +577,14 @@ export default function Home() {
                     {/* DISPOSAL TAB */}
                     {activeLogTab === "disposal" && (
                         <>
+                            <View className="flex-row justify-between text-bold items-center py-2 border-t border-gray-100">
+                                <Text>
+                                    Disposal Information
+                                </Text>
+                                <Text>
+                                    Disposal Order
+                                </Text>
+                            </View>
                             {disposalLoading && (
                                 <View className="items-center py-6">
                                     <ActivityIndicator color="#16A34A" />
@@ -595,22 +603,26 @@ export default function Home() {
                                 const binTypeMatch = log.note?.match(/\((.+)\)/);
                                 const binType = binTypeMatch ? binTypeMatch[1] : "—";
                                 return (
-                                    <View key={log._id} className="flex-row justify-between items-center py-2 border-b border-gray-100">
-                                        <View className="flex-1">
-                                            <Text className="font-medium">
-                                                Bin #{log.binId ?? "—"} · {binType}
-                                            </Text>
-                                            <Text className="text-xs text-gray-500">
-                                                {scannedAt.toLocaleDateString("en-CA")} ·{" "}
-                                                {scannedAt.toLocaleTimeString([], {
-                                                    hour: "2-digit", minute: "2-digit",
-                                                })}
+                                    <>
+                                        <View key={log._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
+                                            <View className="flex-1">
+                                                <Text className="font-medium">
+                                                    {log.binId ?? "—"} · {binType}
+                                                </Text>
+                                                <Text className="text-xs text-gray-500">
+                                                    {scannedAt.toLocaleDateString("en-CA")} ·{" "}
+                                                    {scannedAt.toLocaleTimeString([], {
+                                                        hour: "2-digit", minute: "2-digit",
+                                                    })}
+                                                </Text>
+                                            </View>
+                                            <Text className="text-bold pl-2">
+                                                #{log.disposalOrder ?? "—"}
                                             </Text>
                                         </View>
-                                        <Text className="text-xs text-gray-400 ml-2">
-                                            #{log.disposalOrder ?? "—"}
-                                        </Text>
-                                    </View>
+
+                                    </>
+
                                 );
                             })}
                             {!disposalLoading && !disposalError && disposalLogs.length > 0 && (
@@ -639,7 +651,7 @@ export default function Home() {
                                 <Text className="text-gray-500 text-center py-6">No activity yet.</Text>
                             )}
                             {!activityLoading && !activityError && activityLogs.map((a) => (
-                                <View key={a._id} className="flex-row justify-between items-center py-2 border-b border-gray-100">
+                                <View key={a._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
                                     <View className="flex-1">
                                         <Text className="font-medium">{a.type}</Text>
                                         <Text className="text-xs text-gray-500">
@@ -683,7 +695,7 @@ export default function Home() {
                                 </Text>
                             )}
                             {!violationLoading && !violationError && violationLogs.map((v) => (
-                                <View key={v._id} className="flex-row justify-between items-center py-2 border-b border-gray-100">
+                                <View key={v._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
                                     <View className="flex-1">
                                         <Text className="font-medium text-red-600">
                                             Offense #{v.offenseNumber} · {v.penaltyType}

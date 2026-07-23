@@ -1,16 +1,18 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     View, Text, TouchableOpacity, FlatList, Alert,
-    ActivityIndicator, Modal, Image, Platform,
+    ActivityIndicator, Modal, Image, Platform, TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, router } from "expo-router";
 import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
+import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { API_BASE } from "@/config";
+import Pagination from "@/components/UserPagination";
 
-const LOGS_LIMIT = 10;
+const LOGS_LIMIT = 11;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Bin {
@@ -41,6 +43,10 @@ interface RfidLogEntry {
     note?: string | null;
 }
 
+function toDateStr(d: string | Date) {
+    return new Date(d).toISOString().split("T")[0];
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function CounterInformationScreen() {
     const { bin: binParam } = useLocalSearchParams<{ bin?: string }>();
@@ -56,6 +62,21 @@ export default function CounterInformationScreen() {
     const [error, setError] = useState("");
     const [flaggingId, setFlaggingId] = useState<string | null>(null);
 
+    // ── Search (disposal order) ───────────────────────────────────────────────
+    // Client-side only: filters the logs already loaded for the current page.
+    // Doesn't reach across pages — see note where it's applied below.
+    const [searchQuery, setSearchQuery] = useState("");
+
+    // ── Date filter state ─────────────────────────────────────────────────────
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [anchorDate, setAnchorDate] = useState<string | null>(null);
+    const [pickerVisible, setPickerVisible] = useState(false);
+    const logsAbortRef = useRef<AbortController | null>(null);
+
+    // ── Pagination state ──────────────────────────────────────────────────────
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+
     // ── Camera modal state ────────────────────────────────────────────────────
     const [cameraVisible, setCameraVisible] = useState(false);
     const [pendingLog, setPendingLog] = useState<RfidLogEntry | null>(null);
@@ -65,32 +86,103 @@ export default function CounterInformationScreen() {
     const [permission, requestPermission] = useCameraPermissions();
     const cameraRef = useRef<CameraView>(null);
 
-    // ── Fetch logs ────────────────────────────────────────────────────────────
+    useEffect(() => {
+        setPage(1);
+        setAnchorDate(null);
+    }, [selectedDate, bin?.id]);
+
+    // ── Fetch logs (paginated, scoped to a single day) ───────────────────────
     const fetchLogs = useCallback(async () => {
         if (!bin?.id) { setError("No bin selected."); setLoading(false); return; }
+
+        logsAbortRef.current?.abort();
+        const controller = new AbortController();
+        logsAbortRef.current = controller;
+
         setLoading(true);
         setError("");
+
         try {
+            let dateForQuery = selectedDate;
+
+            if (!dateForQuery) {
+                if (!anchorDate) {
+                    const peekParams = new URLSearchParams({
+                        binId: bin.id, action: "dispose", page: "1", limit: "1",
+                    });
+                    const peekRes = await fetch(`${API_BASE}/api/rfid/logs?${peekParams}`, {
+                        signal: controller.signal,
+                    });
+                    const peekData = await peekRes.json();
+                    const latest = peekData?.success && peekData.data?.length > 0 ? peekData.data[0] : null;
+
+                    if (logsAbortRef.current !== controller) return;
+
+                    if (!latest) {
+                        setLogs([]);
+                        setTotal(0);
+                        setLoading(false);
+                        return;
+                    }
+
+                    setAnchorDate(toDateStr(latest.scannedAt));
+                    return;
+                }
+                dateForQuery = anchorDate;
+            }
+
             const params = new URLSearchParams({
-                binId: bin.id, action: "dispose", page: "1", limit: String(LOGS_LIMIT),
+                binId: bin.id,
+                action: "dispose",
+                page: String(page),
+                limit: String(LOGS_LIMIT),
+                from: dateForQuery,
+                to: dateForQuery,
             });
-            const res = await fetch(`${API_BASE}/api/rfid/logs?${params}`);
+
+            const res = await fetch(`${API_BASE}/api/rfid/logs?${params}`, {
+                signal: controller.signal,
+            });
             if (!res.ok) throw new Error(`Server error (${res.status})`);
             const data = await res.json();
-            if (data.success) setLogs(data.data);
-            else setError(data.message || "Failed to load logs.");
-        } catch {
-            setError("Network error. Could not load logs.");
+
+            if (logsAbortRef.current !== controller) return;
+
+            if (data.success) {
+                setLogs(data.data);
+                setTotal(data.total ?? data.pagination?.total ?? data.count ?? data.data.length);
+            } else {
+                setError(data.message || "Failed to load logs.");
+            }
+        } catch (err: any) {
+            if (err?.name !== "AbortError") setError("Network error. Could not load logs.");
         } finally {
-            setLoading(false);
+            if (logsAbortRef.current === controller) setLoading(false);
         }
-    }, [bin?.id]);
+    }, [bin?.id, selectedDate, anchorDate, page]);
 
     useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
+    useEffect(() => () => { logsAbortRef.current?.abort(); }, []);
+
+    // ── Filtered view (search applies only to what's currently loaded) ──────
+    const visibleLogs = useMemo(() => {
+        const q = searchQuery.trim();
+        if (!q) return logs;
+        return logs.filter((log) => String(log.disposalOrder ?? "").includes(q));
+    }, [logs, searchQuery]);
+
+    // ── Date picker handlers ──────────────────────────────────────────────────
+    const onChangeDate = (event: DateTimePickerEvent, date?: Date) => {
+        if (Platform.OS === "android") setPickerVisible(false);
+        if (event.type === "dismissed" || !date) return;
+        setSelectedDate(toDateStr(date));
+    };
+
+    const clearDateFilter = () => setSelectedDate(null);
+
     // ── Open camera modal ─────────────────────────────────────────────────────
     const openFlagModal = async (log: RfidLogEntry) => {
-        // If already flagged, unflag without photo
         if (log.flagged) {
             await submitFlag(log, null, false);
             return;
@@ -140,7 +232,6 @@ export default function CounterInformationScreen() {
     ) => {
         setFlaggingId(log._id);
 
-        // Optimistic update
         setLogs((prev) =>
             prev.map((l) => l._id === log._id ? { ...l, flagged: nextFlagged } : l)
         );
@@ -172,7 +263,6 @@ export default function CounterInformationScreen() {
             const data = await res.json();
             if (!data.success) throw new Error(data.message || "Failed to update flag");
 
-            // Update with server-confirmed data
             setLogs((prev) =>
                 prev.map((l) => l._id === log._id ? { ...l, ...data.data } : l)
             );
@@ -184,7 +274,6 @@ export default function CounterInformationScreen() {
                 );
             }
         } catch {
-            // Roll back
             setLogs((prev) =>
                 prev.map((l) => l._id === log._id ? { ...l, flagged: log.flagged } : l)
             );
@@ -229,13 +318,13 @@ export default function CounterInformationScreen() {
                     <Text style={{ fontSize: 13, color: "#1F2937" }}>{householdId}</Text>
                     {log.evidencePhoto && (
                         <Text style={{ fontSize: 10, color: "#16A34A", marginTop: 2 }}>
-                            📷 Evidence attached
+                            Evidence attached
                         </Text>
                     )}
                 </View>
 
                 <TouchableOpacity
-                    disabled={isBusy}
+                    disabled={isBusy || isFlagged}
                     onPress={() => openFlagModal(log)}
                     style={{
                         flexDirection: "row",
@@ -247,7 +336,7 @@ export default function CounterInformationScreen() {
                         paddingVertical: 6,
                         borderColor: "#DC2626",
                         backgroundColor: isFlagged ? "#DC2626" : "#FFFFFF",
-                        opacity: isBusy ? 0.5 : 1,
+                        opacity: isBusy || isFlagged ? 0.5 : 1,
                     }}
                 >
                     <Feather name="flag" size={16} color={isFlagged ? "#fff" : "#DC2626"} />
@@ -262,6 +351,8 @@ export default function CounterInformationScreen() {
             </View>
         );
     };
+
+    const displayedDateLabel = selectedDate ?? anchorDate ?? "Latest day";
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
@@ -292,11 +383,73 @@ export default function CounterInformationScreen() {
                 </Text>
             </View>
 
+            {/* Search bar */}
+            <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+                <View style={{
+                    flexDirection: "row", alignItems: "center", gap: 8,
+                    borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 8,
+                    paddingHorizontal: 10, paddingVertical: 8,
+                }}>
+                    <Feather name="search" size={16} color="#9CA3AF" />
+                    <TextInput
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        placeholder="Search disposal order (e.g. 3)"
+                        placeholderTextColor="#9CA3AF"
+                        keyboardType="number-pad"
+                        style={{ flex: 1, fontSize: 13, color: "#111827", padding: 0 }}
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchQuery("")}>
+                            <Feather name="x" size={16} color="#9CA3AF" />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </View>
+
+            {/* Date filter row */}
+            <View style={{
+                flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                paddingHorizontal: 16, paddingBottom: 10,
+            }}>
+                <TouchableOpacity
+                    onPress={() => setPickerVisible(true)}
+                    style={{
+                        flexDirection: "row", alignItems: "center", gap: 6,
+                        borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 8,
+                        paddingHorizontal: 10, paddingVertical: 6,
+                    }}
+                >
+                    <Feather name="calendar" size={14} color="#4B5563" />
+                    <Text style={{ fontSize: 12, color: "#374151" }}>
+                        {displayedDateLabel}
+                    </Text>
+                </TouchableOpacity>
+
+                {selectedDate && (
+                    <TouchableOpacity onPress={clearDateFilter}>
+                        <Text style={{ fontSize: 13, color: "#DC2626", fontWeight: "600" }}>
+                            Clear
+                        </Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+
+            {pickerVisible && (
+                <DateTimePicker
+                    value={selectedDate ? new Date(selectedDate) : new Date()}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "inline" : "default"}
+                    maximumDate={new Date()}
+                    onChange={onChangeDate}
+                />
+            )}
+
             {/* Table header */}
             <View style={{
                 flexDirection: "row", alignItems: "center",
                 paddingHorizontal: 16, paddingVertical: 8,
-                backgroundColor: "#F9FAFB",
+                backgroundColor: "#abf7ce",
                 borderBottomWidth: 1, borderBottomColor: "#E5E7EB",
             }}>
                 <View style={{ width: 90 }}>
@@ -314,24 +467,40 @@ export default function CounterInformationScreen() {
             </View>
 
             {/* List */}
-            {loading ? (
-                <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-                    <ActivityIndicator color="#16A34A" />
+            <View style={{ flex: 1 }}>
+                {loading ? (
+                    <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                        <ActivityIndicator color="#16A34A" />
+                    </View>
+                ) : error ? (
+                    <Text style={{ textAlign: "center", color: "#EF4444", paddingVertical: 24 }}>{error}</Text>
+                ) : (
+                    <FlatList
+                        data={visibleLogs}
+                        keyExtractor={(item) => String(item._id)}
+                        renderItem={renderItem}
+                        ListEmptyComponent={
+                            <Text style={{ textAlign: "center", color: "#6B7280", paddingVertical: 24 }}>
+                                {searchQuery
+                                    ? `No results for order "${searchQuery}" on this page.`
+                                    : `No records found${selectedDate ? " for this date." : " for this bin."}`}
+                            </Text>
+                        }
+                        contentContainerStyle={{ paddingBottom: 24 }}
+                    />
+                )}
+            </View>
+
+            {/* Pagination — fixed below the list so it doesn't scroll away */}
+            {!loading && !error && logs.length > 0 && (
+                <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                    <Pagination
+                        currentPage={page}
+                        totalItems={total}
+                        itemsPerPage={LOGS_LIMIT}
+                        onPageChange={setPage}
+                    />
                 </View>
-            ) : error ? (
-                <Text style={{ textAlign: "center", color: "#EF4444", paddingVertical: 24 }}>{error}</Text>
-            ) : (
-                <FlatList
-                    data={logs}
-                    keyExtractor={(item) => String(item._id)}
-                    renderItem={renderItem}
-                    ListEmptyComponent={
-                        <Text style={{ textAlign: "center", color: "#6B7280", paddingVertical: 24 }}>
-                            No records found for this bin.
-                        </Text>
-                    }
-                    contentContainerStyle={{ paddingBottom: 24 }}
-                />
             )}
 
             {/* ── Camera / Evidence Modal ───────────────────────────────────── */}
@@ -342,7 +511,6 @@ export default function CounterInformationScreen() {
             >
                 <SafeAreaView style={{ flex: 1, backgroundColor: "#000" }}>
 
-                    {/* Modal header */}
                     <View style={{
                         flexDirection: "row", alignItems: "center", justifyContent: "space-between",
                         paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#111827",
@@ -362,7 +530,6 @@ export default function CounterInformationScreen() {
                     </View>
 
                     {capturedUri ? (
-                        /* Preview captured photo */
                         <View style={{ flex: 1 }}>
                             <Image
                                 source={{ uri: capturedUri }}
@@ -407,7 +574,6 @@ export default function CounterInformationScreen() {
                             </View>
                         </View>
                     ) : (
-                        /* Camera view */
                         <View style={{ flex: 1 }}>
                             <CameraView
                                 ref={cameraRef}
@@ -418,12 +584,10 @@ export default function CounterInformationScreen() {
                                 flexDirection: "row", alignItems: "center", justifyContent: "space-around",
                                 padding: 24, backgroundColor: "#111827",
                             }}>
-                                {/* Gallery picker */}
                                 <TouchableOpacity onPress={pickFromGallery}>
                                     <Feather name="image" size={28} color="#fff" />
                                 </TouchableOpacity>
 
-                                {/* Shutter */}
                                 <TouchableOpacity
                                     onPress={takePhoto}
                                     style={{
@@ -439,7 +603,6 @@ export default function CounterInformationScreen() {
                                     }} />
                                 </TouchableOpacity>
 
-                                {/* Flip placeholder to balance layout */}
                                 <View style={{ width: 28 }} />
                             </View>
                         </View>

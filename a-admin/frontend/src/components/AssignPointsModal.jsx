@@ -5,14 +5,15 @@ import SuccessToast from "../assets/Toast";
 import BASE_URL from "../config";
 
 export default function AssignPointsModal({ isOpen, onClose, household, onAwarded }) {
-    const [rules, setRules]           = useState([]);
+    const [rules, setRules] = useState([]);
     const [rulesLoading, setRulesLoading] = useState(true);
     const [selectedRule, setSelectedRule] = useState(null);
-    const [quantity, setQuantity]     = useState(1);
-    const [awarding, setAwarding]     = useState(false);
-    const [error, setError]           = useState("");
-    const [active, setActive]         = useState(false);
-    const [showToast, setShowToast]   = useState(false);
+    const [quantity, setQuantity] = useState(1);
+    const [awarding, setAwarding] = useState(false);
+    const [error, setError] = useState("");
+    const [active, setActive] = useState(false);
+    const [showToast, setShowToast] = useState(false);
+    const [awardedAmount, setAwardedAmount] = useState(0);
 
     // ── Fetch non-auto rules from database ────────────────────────────────────
     useEffect(() => {
@@ -24,9 +25,9 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
         const fetchRules = async () => {
             setRulesLoading(true);
             try {
-                const res  = await fetch(`${BASE_URL}/api/rules`);
+                const res = await fetch(`${BASE_URL}/api/rules`);
                 const json = await res.json();
-                const all  = Array.isArray(json) ? json : json.data ?? [];
+                const all = Array.isArray(json) ? json : json.data ?? [];
 
                 // Only show rules that are NOT auto-awarded
                 const manual = all.filter((r) => !r.auto);
@@ -48,11 +49,11 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
     if (!isOpen) return null;
 
     // ── Points calculation ────────────────────────────────────────────────────
-    const rulePoints    = parseInt(selectedRule?.points) || 0;
+    const rulePoints = parseInt(selectedRule?.points) || 0;
     const awardedPoints = rulePoints * quantity;
-    const currentTotal  = household?.points?.total ?? 0;
-    const newTotal      = currentTotal + awardedPoints;
-    const calculation   = selectedRule
+    const currentTotal = household?.points?.total ?? 0;
+    const newTotal = currentTotal + awardedPoints;
+    const calculation = selectedRule
         ? `${rulePoints} × ${quantity} = ${awardedPoints}`
         : "—";
 
@@ -63,16 +64,19 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
         setAwarding(true);
         setError("");
 
+        const resultPoints = awardedPoints;
+
+
         try {
             const res = await fetch(
                 `${BASE_URL}/api/households/${household._id}/award-points`,
                 {
-                    method:  "POST",
+                    method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        points:   awardedPoints,
-                        ruleId:   selectedRule._id,
-                        reason:   `${selectedRule.name} — ${quantity} × ${rulePoints} pts (manual award)`,
+                        points: awardedPoints,
+                        ruleId: selectedRule._id,
+                        reason: `${selectedRule.name} — ${quantity} × ${rulePoints} pts (manual award)`,
                         quantity,
                     }),
                 }
@@ -85,7 +89,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                 setActive(false);
                 return;
             }
-
+            setAwardedAmount(resultPoints);
             setActive(false);
             setShowToast(true);
             setQuantity(1);
@@ -247,7 +251,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                 <SuccessToast
                     show={showToast}
                     onClose={() => setShowToast(false)}
-                    message={`${awardedPoints} points awarded to ${household?.fullname}!`}
+                    message={`${awardedAmount} points awarded to ${household?.fullname}!`}
                 />
             </div>
         </div>

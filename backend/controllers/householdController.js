@@ -628,18 +628,36 @@ const penalizeHousehold = async (req, res) => {
 };
 
 // GET /api/households/:id/violations  — violation history
+// FIX: previously accepted only page/limit — from/to were sent by the
+// frontend but had no effect. Now applies a day-range filter on
+// `createdAt`, same pattern as getRfidLogs/getRfidHistory.
 const getViolationLogs = async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, from, to } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    const query = { household: req.params.id };
+    if (from || to) {
+      query.createdAt = {};
+      if (from) {
+        const start = new Date(from);
+        start.setHours(0, 0, 0, 0);
+        query.createdAt.$gte = start;
+      }
+      if (to) {
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+
     const [logs, total] = await Promise.all([
-      ViolationLog.find({ household: req.params.id })
+      ViolationLog.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
-      ViolationLog.countDocuments({ household: req.params.id }),
+      ViolationLog.countDocuments(query),
     ]);
 
     res.json({

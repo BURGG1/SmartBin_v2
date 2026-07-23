@@ -18,6 +18,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
 
     const abortRef = useRef(null);
 
+    // Fetch logs for a specific selected date (or unfiltered if fromDate is "").
     const fetchLogs = useCallback(async (pageArg = 1) => {
         if (!bin?.id) return;
 
@@ -54,18 +55,75 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
         }
     }, [bin?.id, fromDate]);
 
+    // No date picked yet: peek at the newest record to find its date, then
+    // set that as the active filter so only that day's records are shown
+    // (instead of the entire history). Assumes the backend returns logs
+    // sorted newest-first, same assumption the rest of this component makes.
+    const fetchInitialLogs = useCallback(async () => {
+        if (!bin?.id) return;
+
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        setLoading(true);
+        setError("");
+        try {
+            const peekParams = new URLSearchParams({
+                binId: bin.id,
+                action: "dispose",
+                page: 1,
+                limit: 1,
+            });
+
+            const peekRes = await fetch(`${BASE_URL}/api/rfid/logs?${peekParams}`, { signal: controller.signal });
+            if (!peekRes.ok) throw new Error(`Server error (${peekRes.status})`);
+            const peekData = await peekRes.json();
+
+            if (!peekData.success) {
+                setError(peekData.message || "Failed to load logs.");
+                setLoading(false);
+                return;
+            }
+
+            if (peekData.data.length === 0) {
+                setDisposalLogs([]);
+                setTotal(0);
+                setPage(1);
+                setLoading(false);
+                return;
+            }
+
+            const latestDate = new Date(peekData.data[0].scannedAt).toISOString().split("T")[0];
+            // Setting fromDate here triggers the fromDate-effect below,
+            // which re-fetches properly paginated results for that day.
+            setFromDate(latestDate);
+        } catch (err) {
+            if (err.name !== "AbortError") {
+                setError("Network error. Could not load logs.");
+                setLoading(false);
+            }
+        }
+    }, [bin?.id]);
+
+    // Reset the filter whenever a new bin is opened.
     useEffect(() => {
         if (!isOpen || !bin?.id) return;
         setFromDate("");
-        fetchLogs(1);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, bin?.id]);
 
+    // Fetch logs whenever the filter (or the open bin) changes: no date
+    // selected -> default to the latest day; date selected -> fetch that day.
     useEffect(() => {
         if (!isOpen || !bin?.id) return;
-        fetchLogs(1);
+        if (fromDate) {
+            fetchLogs(1);
+        } else {
+            fetchInitialLogs();
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fromDate]);
+    }, [fromDate, isOpen, bin?.id]);
 
     useEffect(() => () => abortRef.current?.abort(), []);
 

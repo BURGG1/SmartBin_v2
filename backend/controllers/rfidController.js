@@ -253,13 +253,37 @@ const getLatestScan = async (req, res) => {
 };
 
 // GET /api/rfid/logs
+// FIX: now reads `date` (single day, used by CounterInfoModal) and turns it
+// into a start-of-day/end-of-day range on `scannedAt`. Previously this
+// parameter was never read at all, so the filter had no effect.
+// GET /api/rfid/logs
 const getRfidLogs = async (req, res) => {
   try {
-    const { rfid, action, binId, page = 1, limit = 20 } = req.query;
+    const { rfid, action, binId, date, from, to, page = 1, limit = 20 } = req.query;
     const query = {};
     if (rfid) query.rfid = rfid;
     if (action) query.action = action;
-    if (binId) query.binId = binId; // filter by bin
+    if (binId) query.binId = binId;
+
+    if (date) {
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      query.scannedAt = { $gte: start, $lte: end };
+    } else if (from || to) {
+      query.scannedAt = {};
+      if (from) {
+        const start = new Date(from);
+        start.setHours(0, 0, 0, 0);
+        query.scannedAt.$gte = start;
+      }
+      if (to) {
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+        query.scannedAt.$lte = end;
+      }
+    }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const [logs, total] = await Promise.all([
@@ -287,13 +311,51 @@ const getRfidLogs = async (req, res) => {
 };
 
 // GET /api/rfid/logs/:rfid
+// FIX: this previously accepted no query params at all — no action filter,
+// no pagination, no date range — and just returned every log ever recorded
+// for that RFID. Now supports `action`, `from`/`to` (day range on
+// `scannedAt`), and real server-side `page`/`limit` with a matching total,
+// same shape as getRfidLogs above.
 const getRfidHistory = async (req, res) => {
   try {
-    const logs = await RfidLog.find({ rfid: req.params.rfid })
-      .populate("household", "fullname address contactNumber email")
-      .sort({ scannedAt: -1 });
+    const { action, from, to, page = 1, limit = 20 } = req.query;
+    const query = { rfid: req.params.rfid };
+    if (action) query.action = action;
 
-    res.json({ success: true, data: logs });
+    if (from || to) {
+      query.scannedAt = {};
+      if (from) {
+        const start = new Date(from);
+        start.setHours(0, 0, 0, 0);
+        query.scannedAt.$gte = start;
+      }
+      if (to) {
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+        query.scannedAt.$lte = end;
+      }
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [logs, total] = await Promise.all([
+      RfidLog.find(query)
+        .populate("household", "fullname address contactNumber email")
+        .sort({ scannedAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      RfidLog.countDocuments(query),
+    ]);
+
+    res.json({
+      success: true,
+      data: logs,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / parseInt(limit)),
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

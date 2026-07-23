@@ -33,7 +33,7 @@ const sendResetCodeEmail = async ({ to, code }) => {
   const expiryMinutes = process.env.RESET_CODE_EXPIRY_MINUTES || 10;
 
   await transporter.sendMail({
-    from: `"Smart Waste Management" <${process.env.SMTP_FROM}>`,
+    from: `"Smart Waste Management" <${process.env.GMAIL_USER}>`,
     to,
     subject: "Your password reset code",
     html: `

@@ -165,11 +165,7 @@ const createHousehold = async (req, res) => {
       note: `Assigned to ${fullname} during registration`,
     });
 
-    // Send plain password to email
-    if (normalizedEmail) {
-      await sendPasswordEmail({ to: normalizedEmail, fullname, password: plainPassword });
-    }
-
+    // ── Respond immediately — don't make the client wait on email delivery ──
     res.status(201).json({
       success: true,
       message: normalizedEmail
@@ -177,6 +173,15 @@ const createHousehold = async (req, res) => {
         : "Household registered. No email — credentials not sent.",
       data: household,
     });
+
+    // ── Fire-and-forget: email sends in the background after the response
+    //    has already gone out. A slow/unreachable SMTP connection (e.g. the
+    //    IPv6 ENETUNREACH issue on some hosts) no longer blocks the request.
+    if (normalizedEmail) {
+      sendPasswordEmail({ to: normalizedEmail, fullname, password: plainPassword }).catch((err) => {
+        console.error(`[Mailer] Failed to send password email to ${normalizedEmail}:`, err.message);
+      });
+    }
   } catch (error) {
     if (error.code === 11000 && error.keyPattern?.email) {
       return res.status(409).json({ success: false, message: "This email is already registered." });
@@ -340,9 +345,6 @@ const checkEmailExists = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid email format." });
     }
 
-    // Only active households count as a conflict — deactivated ones shouldn't
-    // block re-registration under the same email. Drop the isActive filter
-    // if you want deactivated accounts to still count.
     const existing = await Household.findOne({
       email,
       isActive: { $ne: false },
@@ -383,7 +385,7 @@ const checkContactExists = async (req, res) => {
 // POST /api/households/:id/award-points
 const awardPoints = async (req, res) => {
   try {
-    const { points, ruleId, reason, quantity } = req.body;  // ← add quantity
+    const { points, ruleId, reason, quantity } = req.body;
 
     if (!points || points < 1) {
       return res.status(400).json({ success: false, message: "Points must be at least 1." });
@@ -402,7 +404,7 @@ const awardPoints = async (req, res) => {
       household: household._id,
       rule: ruleId || null,
       points,
-      quantity: quantity || 1,   // ← save quantity
+      quantity: quantity || 1,
       reason: reason || "Manual award",
     });
 
@@ -427,7 +429,6 @@ const getHouseholdActivity = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // ── Date filter ───────────────────────────────────────────────────────────
     const dateFilter = {};
     if (from) dateFilter.$gte = new Date(from);
     if (to) {
@@ -436,7 +437,6 @@ const getHouseholdActivity = async (req, res) => {
       dateFilter.$lte = toDate;
     }
 
-    // ── Point logs (earned) ───────────────────────────────────────────────────
     const pointQuery = { household: id };
     if (from || to) pointQuery.awardedAt = dateFilter;
 
@@ -445,7 +445,6 @@ const getHouseholdActivity = async (req, res) => {
       .sort({ awardedAt: -1 })
       .lean();
 
-    // ── Reward logs (redeemed) ────────────────────────────────────────────────
     const rewardQuery = { household: id };
     if (from || to) rewardQuery.createdAt = dateFilter;
 
@@ -454,7 +453,6 @@ const getHouseholdActivity = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // ── Build quantity label based on rule frequency ──────────────────────────
     const buildQuantityLabel = (qty, freq) => {
       const unitMap = {
         "per kilo": `${qty} kilo${qty !== 1 ? "s" : ""}`,
@@ -468,7 +466,6 @@ const getHouseholdActivity = async (req, res) => {
       return unitMap[freq] ?? `${qty}×`;
     };
 
-    // ── Merge and sort by date ────────────────────────────────────────────────
     const combined = [
       ...pointLogs.map((log) => ({
         _id: log._id,
@@ -490,7 +487,6 @@ const getHouseholdActivity = async (req, res) => {
       })),
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-    // ── Paginate ──────────────────────────────────────────────────────────────
     const total = combined.length;
     const paginated = combined.slice(skip, skip + parseInt(limit));
 
@@ -520,8 +516,6 @@ const getLeaderboard = async (req, res) => {
       .limit(parseInt(limit))
       .lean();
 
-    // ── Count disposals from RfidLog (action: "dispose") ─────────────────────
-    // Same source as HouseholdRecordModal's disposal log tab
     const RfidLog = require("../models/RfidLog");
 
     const householdIds = households.map((h) => h._id);
@@ -576,12 +570,10 @@ const penalizeHousehold = async (req, res) => {
       return res.status(400).json({ success: false, message: "Cannot penalize an inactive household." });
     }
 
-    // Compute new offense number (cycles: 0→1→2→3→1→2→3→...)
     const prevViolation = household.violation ?? 0;
     const newViolation = prevViolation >= 3 ? 1 : prevViolation + 1;
     const penalty = PENALTY_CONFIG[newViolation];
 
-    // Apply point deduction (points can't go below 0)
     if (penalty.pointsDeducted > 0) {
       household.points.total = Math.max(0, (household.points.total ?? 0) - penalty.pointsDeducted);
       household.points.thisMonth = Math.max(0, (household.points.thisMonth ?? 0) - penalty.pointsDeducted);
@@ -590,7 +582,6 @@ const penalizeHousehold = async (req, res) => {
     household.violation = newViolation;
     await household.save();
 
-    // Log the violation
     const log = await ViolationLog.create({
       household: household._id,
       offenseNumber: newViolation,
@@ -628,9 +619,6 @@ const penalizeHousehold = async (req, res) => {
 };
 
 // GET /api/households/:id/violations  — violation history
-// FIX: previously accepted only page/limit — from/to were sent by the
-// frontend but had no effect. Now applies a day-range filter on
-// `createdAt`, same pattern as getRfidLogs/getRfidHistory.
 const getViolationLogs = async (req, res) => {
   try {
     const { page = 1, limit = 10, from, to } = req.query;
@@ -674,7 +662,6 @@ const getViolationLogs = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 module.exports = {
   getAllHouseholds,

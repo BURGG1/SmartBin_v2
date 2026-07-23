@@ -21,7 +21,7 @@ const authRoutes = require("./routes/authRoutes");
 const registrationRequestRoutes = require("./routes/registrationRequestRoutes");
 const { startBinStatusChecker } = require("./jobs/binStatusChecker");
 const { checkAndAutoSchedule } = require("./services/autoScheduleService");
-const {trasporter} = require("./config/mailer");
+const {transporter} = require("./config/mailer");
 
 const app = express();
 const PORT = process.env.PORT || 5000;

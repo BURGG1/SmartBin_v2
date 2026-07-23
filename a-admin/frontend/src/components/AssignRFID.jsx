@@ -1,6 +1,7 @@
 import { X, Asterisk } from "lucide-react";
 import { useState, useEffect } from "react";
 import SuccessToast from "../assets/Toast";
+import BASE_URL from "../config";
 
 export default function AssignRFIDModal({ isOpen, onClose, onAssign }) {
     const [rfid, setRfid] = useState("");
@@ -14,7 +15,7 @@ export default function AssignRFIDModal({ isOpen, onClose, onAssign }) {
             if (rfid) return; // stop polling if already filled
 
             try {
-                const res = await fetch("http://localhost:5000/api/rfid/latest-scan");
+                const res = await fetch(`${BASE_URL}/rfid/latest-scan`);
                 const data = await res.json();
                 if (data.success && data.rfid) {
                     setRfid(data.rfid); // ✅ use setRfid, not setForm

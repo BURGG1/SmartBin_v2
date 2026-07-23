@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "smartbin",
-    "slug": "smartbin",
+    "name": "SmartBin",
+    "slug": "SmartBin",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
-    "scheme": "smartbin",
+    "scheme": "SmartBin",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {

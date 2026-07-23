@@ -603,7 +603,7 @@ export default function Home() {
                                 const binTypeMatch = log.note?.match(/\((.+)\)/);
                                 const binType = binTypeMatch ? binTypeMatch[1] : "—";
                                 return (
-                                    <>
+                                    
                                         <View key={log._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
                                             <View className="flex-1">
                                                 <Text className="font-medium">
@@ -621,7 +621,7 @@ export default function Home() {
                                             </Text>
                                         </View>
 
-                                    </>
+                                    
 
                                 );
                             })}

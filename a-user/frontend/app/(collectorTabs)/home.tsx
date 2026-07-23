@@ -123,14 +123,13 @@ export default function CollectorHome() {
           ) : (
             assignedBins.map((bin, i) => (
               <TouchableOpacity
-                key={i}
+                key={bin.id}
                 activeOpacity={0.7}
-                onPress={() =>
-                  router.push({
-                    pathname: "/counterInfopage",
-                    params: { bin: JSON.stringify(bin) },
-                  })
-                }
+                onPress={() => {
+                  router.push(
+                    `/counterInfopage?bin=${encodeURIComponent(JSON.stringify(bin))}` as any
+                  );
+                }}
                 className="flex-row justify-between items-center mb-3 border p-3 rounded-lg"
               >
                 <View>
@@ -142,7 +141,6 @@ export default function CollectorHome() {
                       : "Not yet scheduled"}
                   </Text>
                 </View>
-
                 <View className="flex-row items-center gap-2">
                   <Text className="text-red-500 font-semibold">{bin.fill}%</Text>
                   <Feather name="chevron-right" size={18} color="#9ca3af" />
@@ -179,11 +177,10 @@ export default function CollectorHome() {
                 </View>
 
                 <Text
-                  className={`text-xs font-semibold ${
-                    activity.status === "Collected"
-                      ? "text-green-600"
-                      : "text-orange-500"
-                  }`}
+                  className={`text-xs font-semibold ${activity.status === "Collected"
+                    ? "text-green-600"
+                    : "text-orange-500"
+                    }`}
                 >
                   {activity.status}
                 </Text>

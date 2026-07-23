@@ -2,6 +2,7 @@ import { X, Asterisk } from "lucide-react";
 import { useState, useEffect } from "react";
 import ConfirmationModal from "./confirmationModal";
 import SuccessToast from "../assets/Toast";
+import BASE_URL from "../config";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PH_MOBILE_REGEX = /^09\d{9}$/;
@@ -51,7 +52,7 @@ export default function AddHousehold({ isOpen, onClose }) {
       if (form.rfid) return; // stop polling if already filled
 
       try {
-        const res = await fetch("http://localhost:5000/api/rfid/latest-scan");
+        const res = await fetch(`${BASE_URL}/rfid/latest-scan`);
         const data = await res.json();
         if (data.success && data.rfid) {
           setForm((prev) => ({ ...prev, rfid: data.rfid }));
@@ -73,7 +74,7 @@ export default function AddHousehold({ isOpen, onClose }) {
   const isEmailTaken = async (email) => {
     try {
       const res = await fetch(
-        `http://localhost:5000/api/households/check-email?email=${encodeURIComponent(email)}`
+        `${BASE_URL}/households/check-email?email=${encodeURIComponent(email)}`
       );
       const data = await res.json();
       if (!data?.success) return false; // fail open, server still enforces uniqueness
@@ -87,7 +88,7 @@ export default function AddHousehold({ isOpen, onClose }) {
   const isContactTaken = async (contactNumber) => {
     try {
       const res = await fetch(
-        `http://localhost:5000/api/households/check-contact?contactNumber=${encodeURIComponent(contactNumber)}`
+        `${BASE_URL}/households/check-contact?contactNumber=${encodeURIComponent(contactNumber)}`
       );
       const data = await res.json();
       if (!data?.success) return false;
@@ -154,7 +155,7 @@ export default function AddHousehold({ isOpen, onClose }) {
     setError("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/households", {
+      const response = await fetch(`${  BASE_URL}/households`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

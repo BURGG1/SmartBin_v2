@@ -10,7 +10,7 @@ const transporter = nodemailer.createTransport({
 
 const sendPasswordEmail = async ({ to, fullname, password }) => {
   await transporter.sendMail({
-    from: `"Smart Waste Management" <${process.env.SMTP_FROM}>`,
+    from: `"Smart Waste Management" <${process.env.GMAIL_USER}>`,
     to,
     subject: "Your Household Account Credentials",
     html: `

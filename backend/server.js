@@ -30,7 +30,6 @@ connectDB();
 startBinStatusChecker();
 
 getTransporter()
-  .then((transporter) => transporter.verify())
   .then(() => console.log("[Mailer] Ready to send emails."))
   .catch((err) => console.error("[Mailer] Verification failed:", err.message));
   

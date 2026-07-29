@@ -1,9 +1,9 @@
 import { QrCode, Recycle, Trophy, Leaf, ArrowRight } from "lucide-react";
 
-import recyc1 from "../resources/recyc1.jpg"
+import recyc1 from "../resources/recyc1.jpg";
+import recycVid from "../resources/smartbinC.mp4";
 
-
-export default function Hero() {
+export default function Hero({ learnMore}) {
     return (
         <div className="w-full min-h-screen bg-gradient-to-br from-green-400 to-white">
             <main className="w-full mx-auto">
@@ -31,7 +31,10 @@ export default function Hero() {
                                 make our barangay cleaner and greener.
                             </p>
 
-                            <button className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-xl font-medium flex items-center gap-2">
+                            <button
+                                onClick={learnMore}
+                                className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-xl font-medium flex items-center gap-2">
+                                    
                                 Learn More
                                 <ArrowRight className="w-5 h-5" />
                             </button>
@@ -39,10 +42,14 @@ export default function Hero() {
 
                         {/* RIGHT */}
                         <div className="relative h-[90vh]">
-                            <img
-                                src={recyc1}
-                                alt="Smart Bin"
-                                className="absolute inset-0 w-full h-full object-cover rounded-l-[60px]"
+                            <video
+                                src={recycVid}
+                                poster={recyc1}
+                                autoPlay
+                                muted
+                                loop
+                                playsInline
+                                className="absolute inset-0 w-full h-full blur-xs object-cover rounded-l-[60px]"
                             />
                         </div>
 

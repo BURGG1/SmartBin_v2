@@ -1,6 +1,6 @@
 import { Recycle, LogOut, Bell } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import ConfirmationModal from "./confirmationModal";
 
 export default function Navbar() {
@@ -8,7 +8,7 @@ export default function Navbar() {
   const navigate = useNavigate();
 
   const handleLogin = () => {
-    navigate("/");
+    navigate("/landing");
   };
 
   const handleLogout = () => {
@@ -25,7 +25,9 @@ export default function Navbar() {
           <div className="w-9 h-9 bg-green-500 rounded-lg flex items-center justify-center">
             <Recycle className="text-white" size={20} />
           </div>
-          <span className="font-bold text-lg text-black">SmartBin</span>
+          <Link to="/landing" className="text-lg font-semibold text-gray-800">
+            SmartBin
+          </Link>
         </div>
 
         <div className="flex gap-10">

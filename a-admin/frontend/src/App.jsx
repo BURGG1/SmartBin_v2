@@ -55,6 +55,7 @@ function App() {
       <Routes>
 
         {/* ── Public ──────────────────────────────────────────────────────── */}
+        <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/" element={<AuthPage />} />
         <Route path="/landing" element={<Landing />} />
 

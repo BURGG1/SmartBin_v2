@@ -1,6 +1,7 @@
 import {
     QrCode, Recycle, Trophy, Leaf, ArrowRight,
-    Target, Globe, Lightbulb, HandshakeIcon, Sparkles, Users
+    Target, Globe, Lightbulb, HandshakeIcon, Sparkles, Users,
+    ChevronDown
 } from "lucide-react";
 
 import recyc1 from "../resources/recyc1.jpg"
@@ -14,12 +15,12 @@ const features = [
 ];
 
 
-export default function AboutSection() {
+export default function AboutSection({ scrollDown }) {
     return (
         <div className="w-full bg-white">
             <main className="w-full mx-auto">
 
-                <section className="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24">
+                <section className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-16">
                     <div className="flex flex-col lg:flex-row items-center gap-10 lg:gap-16">
 
                         {/* Left: Image */}
@@ -78,49 +79,19 @@ export default function AboutSection() {
                             </div>
                         </div>
                     </div>
+                    <section className="max-w-6xl mx-auto px-4 sm:px-6 pt-10 sm:pt-15 flex justify-center">
+                        <button
+                            onClick={scrollDown}
+                            className="flex flex-col items-center gap-2 cursor-pointer transition-colors">
+                            <span className="w-10 h-10 rounded-full border border-gray-300 group-hover:border-green-500 flex items-center justify-center animate-bounce">
+                                <ChevronDown className="w-5 h-5" />
+                            </span>
+                        </button>
+                    </section>
                 </section>
 
-                {/* FEATURES SECTION
-                <section className="w-full">
-                    <div className="max-w-7xl mx-auto px-4 pt-20">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-
-                            <div className="bg-green-50 rounded-2xl p-8 text-center shadow-sm hover:shadow-md transition">
-                                <div className="w-14 h-14 mx-auto mb-4 bg-green-500 rounded-full flex items-center justify-center">
-                                    <QrCode className="text-white" size={28} />
-                                </div>
-                                <h3 className="text-lg font-semibold mb-2">Scan QR Code</h3>
-                                <p className="text-gray-600 text-sm">
-                                    Each household gets a unique QR code for tracking waste disposal
-                                </p>
-                            </div>
-
-                            <div className="bg-green-50 rounded-2xl p-8 text-center shadow-sm hover:shadow-md transition">
-                                <div className="w-14 h-14 mx-auto mb-4 bg-green-500 rounded-full flex items-center justify-center">
-                                    <Recycle className="text-white" size={28} />
-                                </div>
-                                <h3 className="text-lg font-semibold mb-2">Segregate Waste</h3>
-                                <p className="text-gray-600 text-sm">
-                                    Properly sort waste into biodegradable, non-biodegradable, and recyclable
-                                </p>
-                            </div>
-
-                            <div className="bg-green-50 rounded-2xl p-8 text-center shadow-sm hover:shadow-md transition">
-                                <div className="w-14 h-14 mx-auto mb-4 bg-green-500 rounded-full flex items-center justify-center">
-                                    <Trophy className="text-white" size={28} />
-                                </div>
-                                <h3 className="text-lg font-semibold mb-2">Rewards</h3>
-                                <p className="text-gray-600 text-sm">
-                                    Get points for compliance and redeem for eco-friendly items
-                                </p>
-                            </div>
-
-                        </div>
-                    </div>
-
-                </section> */}
 
             </main>
-        </div>
+        </div >
     );
 }

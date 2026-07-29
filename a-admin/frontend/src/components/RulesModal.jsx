@@ -197,14 +197,14 @@ export default function RulesModal({ isOpen, onClose, edit, ruleData, onSaved })
                                 value={freq}
                                 onChange={(e) => {
                                     setFreq(e.target.value);
-                                    // Auto-enable auto checkbox for automated frequencies
-                                    if (["per streak", "Weekly", "Monthly"].includes(e.target.value)) {
+                                    if (["per streak", "Daily", "Weekly", "Monthly"].includes(e.target.value)) {
                                         setAuto(true);
                                     }
                                 }}
                                 className="w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
                             >
                                 <option value="">Frequency</option>
+                                <option value="Daily">Daily (every day)</option>
                                 <option value="Weekly">Weekly (7 days)</option>
                                 <option value="Monthly">Monthly (30 days)</option>
                                 <option value="Per Collection">Per Collection</option>
@@ -231,12 +231,13 @@ export default function RulesModal({ isOpen, onClose, edit, ruleData, onSaved })
                         )}
 
                         {/* Info banner for auto frequencies */}
-                        {["per streak", "Weekly", "Monthly"].includes(freq) && (
+                        {["per streak", "Daily", "Weekly", "Monthly"].includes(freq) && (
                             <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700">
                                 This rule will be <strong>automatically awarded</strong> by the system
                                 {freq === "per streak" && streakDays && (
                                     <span> when a household reaches a <strong>{streakDays}-day streak</strong></span>
                                 )}
+                                {freq === "Daily" && <span> every day a household disposes waste</span>}
                                 {freq === "Weekly" && <span> every <strong>7 consecutive days</strong> of disposal</span>}
                                 {freq === "Monthly" && <span> every <strong>30 consecutive days</strong> of disposal</span>}
                                 .

@@ -29,10 +29,11 @@ const householdSchema = new mongoose.Schema(
 
     streak: {
       currentStreak: { type: Number, default: 0 },
+      awardedStreaks: { type: [Number], default: [] },
       lastDisposalDate: { type: Date, default: null },
+      lastDailyAward: { type: Date, default: null },   // ← add this
       lastWeeklyAward: { type: Date, default: null },
       lastMonthlyAward: { type: Date, default: null },
-      awardedStreaks: [{ type: Number }],
     },
 
     // ── Violation tracking ───────────────────────────

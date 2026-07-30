@@ -143,11 +143,18 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                     {/* Evidence Image */}
                     <div className="w-full h-56 bg-gray-100 border-b flex items-center justify-center overflow-hidden">
                         {evidenceImage ? (
-                            <img
-                                src={evidenceImage}
-                                alt="Reported violation evidence"
-                                className="w-full h-full object-cover"
-                            />
+                            <a
+                                href={evidenceImage}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full h-full block"
+                            >
+                                <img
+                                    src={evidenceImage}
+                                    alt="Reported violation evidence"
+                                    className="w-full h-full object-cover cursor-pointer"
+                                />
+                            </a>
                         ) : (
                             <div className="flex flex-col items-center text-gray-400">
                                 <ImageOff className="w-10 h-10 mb-2" />
@@ -239,10 +246,10 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                     decision === "decline"
                         ? "Violation report declined."
                         : resultPenalty
-                        ? `Penalty applied: ${resultPenalty.penaltyType} (Offense #${resultPenalty.offenseNumber})`
-                        : "Penalty successfully assigned!"
+                            ? `Penalty applied: ${resultPenalty.penaltyType} (Offense #${resultPenalty.offenseNumber})`
+                            : "Penalty successfully assigned!"
                 }
             />
-        </div>
+        </div >
     );
 }

@@ -7,7 +7,11 @@ import {
     BookCheck,
     Gavel,
     ClipboardCheck,
-    Clipboard
+    Clipboard,
+    Eye,
+    Pencil,
+    Award,
+    Zap
 } from "lucide-react";
 import NavigationShell from "../../navigation/mainNav";
 import Footer from "../../components/Footer";
@@ -339,7 +343,7 @@ export default function Gamified() {
                                         <input
                                             value={Name}
                                             onChange={(e) => setName(e.target.value)}
-                                            className="w-full px-3 py-2 text-black rounded-lg border"
+                                            className="w-full px-3 py-2 text-black rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-transparent"
                                             placeholder="Name"
                                         />
                                     </div>
@@ -349,7 +353,7 @@ export default function Gamified() {
                                         <input
                                             value={Points}
                                             onChange={(e) => setPoints(e.target.value)}
-                                            className="w-full px-3 py-2 text-black rounded-lg border"
+                                            className="w-full px-3 py-2 text-black rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-transparent"
                                             placeholder="Points"
                                             type="number"
                                             step="0.01"
@@ -361,7 +365,7 @@ export default function Gamified() {
                                         <input
                                             value={Stocks}
                                             onChange={(e) => setStocks(e.target.value)}
-                                            className="w-full px-3 py-2 text-black rounded-lg border"
+                                            className="w-full px-3 py-2 text-black rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-transparent"
                                             placeholder="Stock"
                                             type="number"
                                         />
@@ -400,123 +404,151 @@ export default function Gamified() {
                             {/* Redeemable Items */}
                             <section className="bg-white rounded-xl p-6 shadow">
 
-                                <div className="flex justify-between">
-                                    <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                                        <Gift className="text-green-600" />
-                                        Redeemable Rewards
-                                    </h2>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                                    <div>
+                                        <h2 className="text-lg font-semibold flex items-center gap-2">
+                                            <Gift className="text-green-600" />
+                                            Redeemable Rewards
+                                        </h2>
+
+                                    </div>
 
                                     <div className="relative">
-                                        <Search className="absolute left-3 top-5 -translate-y-1/2 text-gray-400" size={18} />
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                         <input
                                             type="text"
                                             placeholder="Search reward"
                                             value={search}
                                             onChange={(e) => setSearch(e.target.value)}
-                                            className="pl-10 pr-4 py-2 border rounded-lg w-full sm:w-64 focus:ring-2 focus:ring-green-500"
+                                            className="pl-10 pr-4 py-2 border rounded-xl w-full sm:w-64  focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                                         />
                                     </div>
                                 </div>
 
-                                {rewardsLoading && <p className="text-gray-500 mb-4">Loading rewards...</p>}
+                                {rewardsLoading && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-2">
+                                        {Array.from({ length: REWARDS_PER_PAGE }).map((_, i) => (
+                                            <div key={`reward-skel-${i}`} className="rounded-xl overflow-hidden shadow-sm animate-pulse">
+                                                <div className="h-28 bg-gray-200" />
+                                                <div className="p-4 space-y-2 bg-gray-50">
+                                                    <div className="h-4 bg-gray-200 rounded w-3/4" />
+                                                    <div className="h-3 bg-gray-200 rounded w-1/2" />
+                                                    <div className="h-8 bg-gray-200 rounded mt-3" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
                                 {rewardsError && (
-                                    <div className="mb-4">
-                                        <p className="text-red-500 mb-1">{rewardsError}</p>
+                                    <div className="mb-4 bg-red-50 border border-red-100 rounded-lg p-4 flex items-center justify-between">
+                                        <p className="text-red-600 text-sm">{rewardsError}</p>
                                         <button
                                             onClick={() => fetchRewards()}
-                                            className="text-sm text-gray-600 underline cursor-pointer"
+                                            className="text-sm font-medium text-red-600 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-100 transition cursor-pointer"
                                         >
                                             Retry
                                         </button>
                                     </div>
                                 )}
 
-                                <div className=" overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                                    {rewards.map((item) => (
-                                        <div
-                                            key={item._id}
-                                            className="bg-gray-50 rounded-xl p-4 flex flex-col shadow-lg"
-                                        >
-                                            {item.image ? (
-                                                <img
-                                                    src={item.image}
-                                                    alt={item.name}
-                                                    className="h-24 w-full object-cover rounded mb-4"
-                                                />
-                                            ) : (
-                                                <div className="h-24 bg-gray-200 rounded mb-4 flex items-center justify-center">
-                                                    ICON
-                                                </div>
-                                            )}
+                                {!rewardsLoading && (
+                                    <div className="overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                                        {rewards.map((item) => {
+                                            const outOfStock = Number(item.stocks) <= 0;
+                                            return (
+                                                <div
+                                                    key={item._id}
+                                                    className="group relative bg-gray-50 rounded-xl overflow-hidden flex flex-col shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
+                                                >
+                                                    <div className="relative">
+                                                        {item.image ? (
+                                                            <img
+                                                                src={item.image}
+                                                                alt={item.name}
+                                                                className="h-28 w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                                            />
+                                                        ) : (
+                                                            <div className="h-28 w-full bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center">
+                                                                <Gift className="text-green-300" size={28} />
+                                                            </div>
+                                                        )}
 
-                                            <h3 className="font-semibold">{item.name}</h3>
-
-                                            <div className="flex justify-between text-sm my-2">
-                                                <span className="text-green-600 font-semibold">
-                                                    {item.points} pts
-                                                </span>
-                                                <span className="text-gray-500">
-                                                    {item.stocks} left
-                                                </span>
-                                            </div>
-
-                                            <div className="flex flex-col gap-2">
-                                                <div className="w-full flex items-center gap-2">
-                                                    <div className="flex-1">
-                                                        <button
-                                                            onClick={() => {
-                                                                setOpenRewardModal(true);
-                                                                setClickReward(item.name);
-                                                            }}
-                                                            className="w-full cursor-pointer mt-auto bg-gray-900 text-white rounded-lg py-2 ">
-                                                            View
-                                                        </button>
+                                                        <span className="absolute top-2 right-2 bg-white text-green-600 text-xs font-bold px-2.5 py-1 rounded-full shadow">
+                                                            {item.points} pts
+                                                        </span>
                                                     </div>
 
-                                                    <div className="flex-1 relative">
-                                                        <button
-                                                            onClick={() => {
-                                                                setToEdit(true);
-                                                                handleRewardEdit(item._id);
-                                                            }}
-                                                            className="w-full cursor-pointer bg-green-600 text-white py-2 rounded-lg"
+                                                    <div className="p-4 flex flex-col flex-1">
+                                                        <h3 className="font-semibold text-gray-900 truncate" title={item.name}>
+                                                            {item.name}
+                                                        </h3>
+
+                                                        <span
+                                                            className={`mt-2 inline-flex w-fit items-center text-xs font-medium px-2 py-0.5 rounded-full ${outOfStock
+                                                                ? "bg-red-50 text-red-600"
+                                                                : "bg-green-50 text-green-700"
+                                                                }`}
                                                         >
-                                                            Edit
-                                                        </button>
+                                                            {outOfStock ? "Out of stock" : `${item.stocks} in stock`}
+                                                        </span>
+
+                                                        <div className="mt-auto pt-4 flex gap-2">
+                                                            <button
+                                                                onClick={() => {
+                                                                    setOpenRewardModal(true);
+                                                                    setClickReward(item.name);
+                                                                }}
+                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-gray-900 border border-gray-200 rounded-lg py-2 text-sm font-medium text-white"
+                                                            >
+                                                                <Eye size={15} />
+                                                                View
+                                                            </button>
+
+                                                            <button
+                                                                onClick={() => {
+                                                                    setToEdit(true);
+                                                                    handleRewardEdit(item._id);
+                                                                }}
+                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition"
+                                                            >
+                                                                <Pencil size={15} />
+                                                                Edit
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
+                                            );
+                                        })}
+
+                                        {rewards.length === 0 && (
+                                            <div className="col-span-full flex flex-col items-center justify-center py-12 text-gray-400">
+                                                <Gift size={36} className="mb-3 text-gray-300" />
+                                                <p className="font-medium text-gray-500">No rewards found</p>
+                                                <p className="text-sm">Try a different search or add a new reward above.</p>
                                             </div>
-                                        </div>
-                                    ))}
+                                        )}
 
-                                    {!rewardsLoading && rewards.length === 0 && (
-                                        <p className="text-gray-500 col-span-full text-center py-6">
-                                            No rewards found.
-                                        </p>
-                                    )}
-
-                                    {rewards.length > 0 &&
-                                        Array.from({ length: rewardEmptySlots }).map((_, i) => (
-                                            <div
-                                                key={`reward-empty-${i}`}
-                                                aria-hidden="true"
-                                                className="invisible pointer-events-none rounded-xl p-4 flex flex-col"
-                                            >
-                                                <div className="h-24 w-full mb-4" />
-                                                <h3 className="font-semibold">&nbsp;</h3>
-                                                <div className="flex justify-between text-sm my-2">
-                                                    <span>&nbsp;</span>
-                                                    <span>&nbsp;</span>
-                                                </div>
-                                                <div className="flex flex-col gap-2">
-                                                    <div className="w-full flex items-center gap-2">
-                                                        <div className="flex-1 py-2">&nbsp;</div>
-                                                        <div className="flex-1 py-2">&nbsp;</div>
+                                        {rewards.length > 0 &&
+                                            Array.from({ length: rewardEmptySlots }).map((_, i) => (
+                                                <div
+                                                    key={`reward-empty-${i}`}
+                                                    aria-hidden="true"
+                                                    className="invisible pointer-events-none rounded-xl overflow-hidden flex flex-col"
+                                                >
+                                                    <div className="h-28 w-full" />
+                                                    <div className="p-4 flex-1">
+                                                        <h3 className="font-semibold">&nbsp;</h3>
+                                                        <span className="inline-block mt-2">&nbsp;</span>
+                                                        <div className="mt-auto pt-4 flex gap-2">
+                                                            <div className="flex-1 py-2">&nbsp;</div>
+                                                            <div className="flex-1 py-2">&nbsp;</div>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))}
-                                </div>
+                                            ))}
+                                    </div>
+                                )}
 
                                 <Pagination
                                     currentPage={rewardPage}
@@ -600,151 +632,178 @@ export default function Gamified() {
                         <>
                             <section className="bg-white rounded-xl p-6 shadow">
 
-                                <div className="flex flex-col lg:flex-row justify-between py-4">
-                                    <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                                        <ClipboardCheck className="text-green-600" />
-                                        How to Earn Points
-                                    </h2>
-                                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-6">
+                                    <div>
+                                        <h2 className="text-lg font-semibold flex items-center gap-2">
+                                            <ClipboardCheck className="text-green-600" />
+                                            How to Earn Points
+                                        </h2>
+                                        
+                                    </div>
 
+                                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                                         <div className="relative">
-                                            <Search className="absolute left-3 top-5 -translate-y-1/2 text-gray-400" size={18} />
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                             <input
                                                 type="text"
                                                 placeholder="Search reward"
                                                 value={search}
                                                 onChange={(e) => setSearch(e.target.value)}
-                                                className="pl-10 pr-4 py-2 border rounded-lg w-full sm:w-64 focus:ring-2 focus:ring-green-500"
+                                                className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl w-full sm:w-64 focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
                                             />
                                         </div>
 
-                                        <div className="relative">
-                                            <button
-                                                title="Add new rule"
-                                                onClick={() => {
-                                                    setToEdit(false);
-                                                    setEditRuleData(null);
-                                                    setOpenRulesModal(true);
-                                                }}
-                                                className="bg-green-600 text-white w-full flex p-2 rounded-lg cursor-pointer hover:bg-green-700"
-                                            >
-                                                <Plus />
-                                                <p>Add new rule</p>
-                                            </button>
-                                        </div>
+                                        <button
+                                            title="Add new rule"
+                                            onClick={() => {
+                                                setToEdit(false);
+                                                setEditRuleData(null);
+                                                setOpenRulesModal(true);
+                                            }}
+                                            className="cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white font-medium px-4 py-2 rounded-xl hover:bg-green-700 transition whitespace-nowrap"
+                                        >
+                                            <Plus size={18} />
+                                            Add new rule
+                                        </button>
                                     </div>
                                 </div>
 
-                                {rulesLoading && <p className="text-gray-500 mb-4">Loading rules...</p>}
+                                {rulesLoading && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-2">
+                                        {Array.from({ length: RULES_PER_PAGE }).map((_, i) => (
+                                            <div key={`rule-skel-${i}`} className="rounded-xl overflow-hidden shadow-sm animate-pulse">
+                                                <div className="h-48 bg-gray-200" />
+                                                <div className="p-4 space-y-2 bg-gray-50">
+                                                    <div className="h-4 bg-gray-200 rounded w-2/3" />
+                                                    <div className="h-3 bg-gray-200 rounded w-full" />
+                                                    <div className="h-8 bg-gray-200 rounded mt-3" />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
                                 {rulesError && (
-                                    <div className="mb-4">
-                                        <p className="text-red-500 mb-1">{rulesError}</p>
+                                    <div className="mb-4 bg-red-50 border border-red-100 rounded-lg p-4 flex items-center justify-between">
+                                        <p className="text-red-600 text-sm">{rulesError}</p>
                                         <button
                                             onClick={() => fetchRules()}
-                                            className="text-sm text-gray-600 underline cursor-pointer"
+                                            className="text-sm font-medium text-red-600 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-100 transition cursor-pointer"
                                         >
                                             Retry
                                         </button>
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                    {rules.map((r, idx) => (
-                                        <div
-                                            key={r._id}
-                                            className="relative bg-gray-50 rounded-xl flex flex-col shadow-lg"
-                                        >
-                                            <div className="overflow-hidden">
-                                                {r.image ? (
-                                                    <img
-                                                        src={r.image}
-                                                        alt={r.name}
-                                                        className="w-full h-90 object-cover transform transition-transform rounded-tr-lg rounded-tl-lg duration-500 group-hover:scale-110"
-                                                    />
-                                                ) : (
-                                                    <div className="w-full h-40 bg-gray-200 flex items-center justify-center rounded-tr-lg rounded-tl-lg text-gray-400">
-                                                        No image
-                                                    </div>
-                                                )}
-                                            </div>
+                                {!rulesLoading && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        {rules.map((r, idx) => (
+                                            <div
+                                                key={r._id}
+                                                className="group relative bg-gray-50 rounded-xl overflow-hidden flex flex-col shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
+                                            >
+                                                <div className="relative overflow-hidden">
+                                                    {r.image ? (
+                                                        <img
+                                                            src={r.image}
+                                                            alt={r.name}
+                                                            className="w-full h-48 object-cover transition-transform duration-500 group-hover:scale-105"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-full h-48 bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center">
+                                                            <ClipboardCheck className="text-green-300" size={28} />
+                                                        </div>
+                                                    )}
 
-                                            <div className="flex flex-col p-4 gap-2">
-                                                <div className="flex justify-between items-center">
-                                                    <h1 className="text-lg font-bold"><span>Rule {(rulePage - 1) * RULES_PER_PAGE + idx + 1}</span> - {r.name}</h1>
-                                                    <p className="text-sm text-gray-400 font-semibold text-center px-4 py-1 rounded-full">
-                                                        {r.freq}
-                                                    </p>
+                                                    <span className="absolute w-15 h-15 top-2 right-2 bg-white text-green-600 text-xs font-bold px-2.5 py-1.5 rounded-full shadow flex flex-col items-center leading-tight">
+                                                        <span className="font-bold text-lg">+{r.points}</span>
+                                                        <span className="text-[12px] text-gray-400 font-medium">pts</span>
+                                                    </span>
+
+                                                    {r.auto && (
+                                                        <span className="absolute top-2 left-2 bg-gray-900/80 text-white text-[11px] font-medium px-2 py-1 rounded-full flex items-center gap-1">
+                                                            <Zap size={11} />
+                                                            Auto-awarded
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                <p className="text-gray-500">
-                                                    {r.decs}
-                                                </p>
-                                                <div className="w-full flex items-center gap-2 mt-4">
 
-                                                    {!r.auto && (
-                                                        <div className="flex-1">
+                                                <div className="p-4 flex flex-col flex-1 gap-1.5">
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <h3 className="font-semibold text-gray-900 leading-snug">
+                                                            <span className="text-gray-400 font-medium">
+                                                                Rule {(rulePage - 1) * RULES_PER_PAGE + idx + 1}
+                                                            </span>{" "}
+                                                            — {r.name}
+                                                        </h3>
+                                                    </div>
+
+                                                    <span className="inline-flex w-fit items-center text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                                                        {r.freq}
+                                                    </span>
+
+                                                    <p className="text-gray-500 text-sm mt-1">
+                                                        {r.decs}
+                                                    </p>
+
+                                                    <div className="w-full flex items-center gap-2 mt-auto pt-4">
+                                                        {!r.auto && (
                                                             <button
                                                                 onClick={() => {
                                                                     setClickRule(r);
                                                                     setopenAwardModal(true);
                                                                 }}
-                                                                className="w-full cursor-pointer bg-green-600 text-white py-2 rounded-lg"
+                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-gray-900 text-white border border-gray-200 text-gray-700 rounded-lg py-2 text-sm font-medium"
                                                             >
+                                                                <Award size={15} />
                                                                 Award
                                                             </button>
-                                                        </div>
-                                                    )}
-                                                    <div className="flex-1">
+                                                        )}
                                                         <button
                                                             onClick={() => {
                                                                 setToEdit(true);
                                                                 setEditRuleData(r);
                                                                 setOpenRulesModal(true);
                                                             }}
-                                                            className="w-full cursor-pointer bg-green-600 text-white py-2 rounded-lg"
+                                                            className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition"
                                                         >
+                                                            <Pencil size={15} />
                                                             Edit
                                                         </button>
                                                     </div>
                                                 </div>
                                             </div>
+                                        ))}
 
-                                            <div className="bg-white absolute top-2 right-2 rounded-lg p-2 shadow-md">
-                                                <h2 className="flex flex-col text-center text-green-500 font-bold text-xl">
-                                                    +{r.points}
-                                                    <span className="text-gray-500 text-sm font-semibold">points</span>
-                                                </h2>
+                                        {rules.length === 0 && (
+                                            <div className="col-span-full flex flex-col items-center justify-center py-12 text-gray-400">
+                                                <ClipboardCheck size={36} className="mb-3 text-gray-300" />
+                                                <p className="font-medium text-gray-500">No rules found</p>
+                                                <p className="text-sm">Try a different search or add a new rule above.</p>
                                             </div>
-                                        </div>
-                                    ))}
+                                        )}
 
-                                    {!rulesLoading && rules.length === 0 && (
-                                        <p className="text-gray-500 col-span-full text-center py-6">
-                                            No rules found.
-                                        </p>
-                                    )}
-
-                                    {rules.length > 0 &&
-                                        Array.from({ length: ruleEmptySlots }).map((_, i) => (
-                                            <div
-                                                key={`rule-empty-${i}`}
-                                                aria-hidden="true"
-                                                className="invisible pointer-events-none rounded-xl flex flex-col"
-                                            >
-                                                <div className="w-full h-40" />
-                                                <div className="flex flex-col p-4 gap-2">
-                                                    <div className="flex justify-between items-center">
-                                                        <h1 className="text-lg font-bold">&nbsp;</h1>
+                                        {rules.length > 0 &&
+                                            Array.from({ length: ruleEmptySlots }).map((_, i) => (
+                                                <div
+                                                    key={`rule-empty-${i}`}
+                                                    aria-hidden="true"
+                                                    className="invisible pointer-events-none rounded-xl overflow-hidden flex flex-col"
+                                                >
+                                                    <div className="w-full h-48" />
+                                                    <div className="p-4 flex flex-col gap-1.5">
+                                                        <h3 className="font-semibold">&nbsp;</h3>
+                                                        <span className="inline-block">&nbsp;</span>
                                                         <p>&nbsp;</p>
-                                                    </div>
-                                                    <p>&nbsp;</p>
-                                                    <div className="w-full flex items-center gap-2 mt-4">
-                                                        <div className="flex-1 py-2">&nbsp;</div>
-                                                        <div className="flex-1 py-2">&nbsp;</div>
+                                                        <div className="w-full flex items-center gap-2 mt-auto pt-4">
+                                                            <div className="flex-1 py-2">&nbsp;</div>
+                                                            <div className="flex-1 py-2">&nbsp;</div>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ))}
-                                </div>
+                                            ))}
+                                    </div>
+                                )}
 
                                 <Pagination
                                     currentPage={rulePage}

@@ -13,8 +13,10 @@ import {
     MapPin,
     Search,
     Asterisk,
+    Eye,
     Plus,
     Filter,
+    Pencil,
 } from "lucide-react";
 
 import ConfirmationModal from "../../components/confirmationModal";
@@ -331,7 +333,7 @@ export default function WasteBin() {
                                     type="text"
                                     value={binName}
                                     onChange={(e) => setBinName(e.target.value)}
-                                    className="ml-2 px-3 py-2 rounded-lg border w-full"
+                                    className="ml-2 px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-green-500 focus:border-transparent"
                                     placeholder="Bin Name.."
                                 />
                             </div>
@@ -404,6 +406,7 @@ export default function WasteBin() {
                                 disabled={adding}
                                 className="cursor-pointer px-5 mt-auto bg-green-600 flex items-center justify-center gap-1 text-white rounded-lg p-2 hover:bg-green-700 transition disabled:opacity-50"
                             >
+                                <Plus size={16} />
                                 {adding ? "Adding..." : "Add"}
                             </button>
                         </div>
@@ -501,12 +504,13 @@ export default function WasteBin() {
                                                             </button>
                                                         ) : (
                                                             <button
-                                                                className="bg-green-600 text-white cursor-pointer px-3 py-1 rounded-lg"
+                                                                className="flex justify-center items-center gap-1 bg-green-600 text-white cursor-pointer px-3 py-1 rounded-lg"
                                                                 onClick={() => {
                                                                     setEditingId(item._id);
                                                                     setEditedLocation(item.location);
                                                                 }}
                                                             >
+                                                                <Pencil size={14} />
                                                                 Edit
                                                             </button>
                                                         )}
@@ -558,8 +562,8 @@ export default function WasteBin() {
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <h3 className="font-bold">{bin.id} - {bin.name}</h3>
                                                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full font-medium ${bin.status === "online"
-                                                            ? "bg-green-100 text-green-700"
-                                                            : "bg-gray-100 text-gray-500"
+                                                        ? "bg-green-100 text-green-700"
+                                                        : "bg-gray-100 text-gray-500"
                                                         }`}>
                                                         <span className={`w-1.5 h-1.5 rounded-full ${bin.status === "online" ? "bg-green-500" : "bg-gray-400"
                                                             }`} />
@@ -597,6 +601,7 @@ export default function WasteBin() {
                                             }}
                                             className="w-full mt-4 bg-gray-900 cursor-pointer text-white py-2 rounded-lg hover:bg-gray-800 flex items-center justify-center gap-2"
                                         >
+                                            <Eye size={16} />
                                             View
                                         </button>
                                     </div>

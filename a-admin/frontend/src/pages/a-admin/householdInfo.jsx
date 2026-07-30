@@ -10,7 +10,8 @@ import {
     MailPlus,
     Search,
     Plus,
-    Home
+    Home,
+    Eye,
 } from "lucide-react";
 import BASE_URL from "../../config";
 import HouseholdRecordModal from "../../components/HHrecordModal";
@@ -501,11 +502,12 @@ export default function HouseholdInfo() {
                                                             <td className="px-4 py-3 font-mono text-sm text-gray-600">
                                                                 {item.rfid || "—"}
                                                             </td>
-                                                            <td className="px-4 py-3">
+                                                            <td className="px-4 py-3 flex justify-center items-center gap-2">
                                                                 <button
                                                                     onClick={() => setActiveHousehold(item)}
-                                                                    className="cursor-pointer bg-gray-900 text-white px-3 py-1 rounded-lg"
+                                                                    className="flex items-center gap-1 cursor-pointer bg-gray-900 text-white px-3 py-1 rounded-lg"
                                                                 >
+                                                                    <Eye size={16} />
                                                                     View
                                                                 </button>
                                                             </td>

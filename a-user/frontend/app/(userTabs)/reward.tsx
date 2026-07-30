@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Modal, Alert } from "react-native";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Modal, Alert, Animated, PanResponder, Dimensions } from "react-native";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 
 import { getRewards, redeemReward, getHouseholdActivity } from "../../api/rewardAPI";
@@ -29,6 +29,9 @@ const ACTIVITY_PER_PAGE     = 7;
 const ACTIVITY_FETCH_LIMIT  = 50;
 const ACTIVITY_HISTORY_CAP  = 50;
 const REDEEMED_PER_PAGE     = 8;
+const FAB_SIZE               = 58;
+const FAB_EDGE_MARGIN        = 16;
+const DRAG_THRESHOLD         = 6; // px of movement before a press is treated as a drag
 
 export default function Rewards() {
     const household = useHousehold();
@@ -49,6 +52,72 @@ export default function Rewards() {
     // ── Redeemed history (chest FAB) ──
     const [historyVisible, setHistoryVisible] = useState(false);
     const [historyPage, setHistoryPage]       = useState(1);
+
+    // ── Draggable floating chest button ──
+    const insets = useSafeAreaInsets();
+    const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
+    const fabBounds = {
+        minX: FAB_EDGE_MARGIN,
+        maxX: screenWidth - FAB_SIZE - FAB_EDGE_MARGIN,
+        minY: insets.top + FAB_EDGE_MARGIN,
+        maxY: screenHeight - FAB_SIZE - insets.bottom - FAB_EDGE_MARGIN,
+    };
+    const fabPan   = useRef(
+        new Animated.ValueXY({
+            x: fabBounds.maxX,
+            y: fabBounds.maxY - 80, // start a bit above the bottom edge
+        })
+    ).current;
+    const didDrag  = useRef(false);
+
+    const fabPanResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: (_evt, gestureState) =>
+                Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2,
+            onPanResponderGrant: () => {
+                didDrag.current = false;
+                fabPan.setOffset({
+                    // @ts-ignore - internal value read, standard RN pattern for drag handles
+                    x: fabPan.x._value,
+                    // @ts-ignore
+                    y: fabPan.y._value,
+                });
+                fabPan.setValue({ x: 0, y: 0 });
+            },
+            onPanResponderMove: (evt, gestureState) => {
+                if (Math.abs(gestureState.dx) > DRAG_THRESHOLD || Math.abs(gestureState.dy) > DRAG_THRESHOLD) {
+                    didDrag.current = true;
+                }
+                Animated.event([null, { dx: fabPan.x, dy: fabPan.y }], { useNativeDriver: false })(evt, gestureState);
+            },
+            onPanResponderRelease: () => {
+                fabPan.flattenOffset();
+
+                if (!didDrag.current) {
+                    setHistoryPage(1);
+                    setHistoryVisible(true);
+                    return;
+                }
+
+                // @ts-ignore - internal value read, standard RN pattern for drag handles
+                const currentX: number = fabPan.x._value;
+                // @ts-ignore
+                const currentY: number = fabPan.y._value;
+
+                const clampedY = Math.min(Math.max(currentY, fabBounds.minY), fabBounds.maxY);
+                // Snap to whichever horizontal edge is closer, like most chat-head style FABs
+                const center = currentX + FAB_SIZE / 2;
+                const snappedX = center < screenWidth / 2 ? fabBounds.minX : fabBounds.maxX;
+
+                Animated.spring(fabPan, {
+                    toValue: { x: snappedX, y: clampedY },
+                    useNativeDriver: false,
+                    friction: 7,
+                }).start();
+            },
+        })
+    ).current;
 
     const loadHousehold = useCallback(async () => {
         setHouseholdLoading(true);
@@ -521,24 +590,26 @@ export default function Rewards() {
                 </View>
             </ScrollView>
 
-            {/* ── Floating chest button → redeemed items history ── */}
-            <TouchableOpacity
-                onPress={() => { setHistoryPage(1); setHistoryVisible(true); }}
-                activeOpacity={0.85}
-                accessibilityLabel="View redeemed rewards history"
-                className="absolute items-center justify-center"
+            {/* ── Floating chest button → redeemed items history (draggable) ── */}
+            <Animated.View
+                {...fabPanResponder.panHandlers}
+                accessibilityLabel="Drag to move, tap to view redeemed rewards history"
                 style={{
-                    bottom: 24,
-                    right: 20,
-                    height: 58,
-                    width: 58,
-                    borderRadius: 29,
+                    position: "absolute",
+                    left: 0,
+                    top: 0,
+                    height: FAB_SIZE,
+                    width: FAB_SIZE,
+                    borderRadius: FAB_SIZE / 2,
                     backgroundColor: "#16A34A",
+                    alignItems: "center",
+                    justifyContent: "center",
                     shadowColor: "#000",
                     shadowOpacity: 0.25,
                     shadowRadius: 8,
                     shadowOffset: { width: 0, height: 4 },
                     elevation: 6,
+                    transform: fabPan.getTranslateTransform(),
                 }}
             >
                 <MaterialCommunityIcons name="treasure-chest" size={28} color="#fff" />
@@ -562,7 +633,7 @@ export default function Rewards() {
                         </Text>
                     </View>
                 )}
-            </TouchableOpacity>
+            </Animated.View>
 
             {/* Redeem confirmation modal */}
             <Modal

@@ -281,23 +281,26 @@ export default function AuthPage() {
             {loading
               ? "Logging in..."
               : isLocked
-              ? `Try again in ${lockoutSecondsLeft}s`
-              : "Login"}
+                ? `Try again in ${lockoutSecondsLeft}s`
+                : "Login"}
           </button>
 
           <p className="text-sm text-gray-500">
             Forgot your password?{" "}
             <span
               onClick={() => !loading && !isLocked && setIsForgotPasswordOpen(true)}
-              className={`text-green-600 font-medium hover:underline ${
-                loading || isLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-              }`}
+              className={`text-green-600 font-medium hover:underline ${loading || isLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                }`}
             >
               Reset here
             </span>
           </p>
-
         </div>
+        <p className="text-xs text-gray-400 hover:text-green-600 cursor-pointer transition-colors"
+          onClick={() => navigate("/landing")}
+        >
+          About SmartBin
+        </p>
       </div>
 
       <ForgotPasswordModal

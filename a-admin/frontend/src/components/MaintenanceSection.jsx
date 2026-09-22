@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { UserPlus, QrCode, Trash2, Gift, Play, ArrowRight } from "lucide-react";
+import {
+    UserPlus, QrCode, Trash2, Gift, Play, ArrowRight, ChevronDown
+} from "lucide-react";
 
 import recyc1 from "../resources/recyc1.jpg";
+import recycVid from "../resources/smartbinC.mp4";
 
 const steps = [
     {
@@ -36,19 +39,17 @@ const videos = [
         title: "System Demonstration",
         desc: "Watch how residents interact with SmartBin using QR technology.",
         bg: recyc1,
+        video: recycVid,
     },
     {
         id: 1,
         title: "Maintenance & Operations",
         desc: "Learn how barangay personnel manage and maintain the SmartBin system.",
         bg: recyc1,
+        video: recycVid,
     },
 ];
 
-/**
- * Fires `true` once, the first time the element scrolls into view,
- * and never resets — used to drive one-shot slide/fade-in reveals.
- */
 function useInView(options = {}) {
     const ref = useRef(null);
     const [inView, setInView] = useState(false);
@@ -102,14 +103,22 @@ function PlayButton() {
     );
 }
 
-export default function Maintenance() {
-    const [activeVideo, setActiveVideo] = useState(null);
+export default function Maintenance({ scrollDown }) {
+    const videoSectionRef = useRef(null);
+
+    const scrollToVideos = () => {
+        videoSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const openVideo = (videoSrc) => {
+        window.open(videoSrc, "_blank", "noopener,noreferrer");
+    };
 
     return (
         <>
             {/* HOW IT WORKS SECTION */}
             <section className="bg-gradient-to-b from-emerald-50/60 via-white to-white py-16 sm:py-24">
-                <div className="max-w-6xl mx-auto px-4 sm:px-6">
+                <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
                     <Reveal className="text-center mb-16">
                         <span className="inline-block text-xs font-bold tracking-widest text-emerald-600 uppercase mb-3">
                             The Process
@@ -153,10 +162,26 @@ export default function Maintenance() {
                         </div>
                     </div>
                 </div>
+
+                {/* Scroll-down cue: jumps to the "SmartBin in Action" video section below, not past it */}
+                <div className="pt-12 sm:pt-16 flex justify-center">
+                    <button
+                        onClick={scrollToVideos}
+                        className="group flex flex-col items-center gap-2 cursor-pointer"
+                        aria-label="Scroll to SmartBin in Action"
+                    >
+                        <span className="w-10 h-10 rounded-full border border-gray-300 group-hover:border-green-500 flex items-center justify-center animate-bounce transition-colors">
+                            <ChevronDown className="w-5 h-5 text-gray-500 group-hover:text-green-500" />
+                        </span>
+                    </button>
+                </div>
             </section>
 
             {/* VIDEO SECTION */}
-            <section className="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24">
+            <section
+                ref={videoSectionRef}
+                className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24 scroll-mt-20"
+            >
                 <Reveal className="text-center mb-12">
                     <span className="inline-block text-xs font-bold tracking-widest text-emerald-600 uppercase mb-3">
                         Watch &amp; Learn
@@ -170,8 +195,10 @@ export default function Maintenance() {
                     {videos.map((v, i) => (
                         <Reveal key={v.id} delay={i * 150} direction={i % 2 === 0 ? "left" : "right"}>
                             <div
-                                className="rounded-2xl overflow-hidden shadow-md hover:shadow-xl border border-gray-100 bg-white cursor-pointer group transition-shadow duration-300"
-                                onClick={() => setActiveVideo(activeVideo === v.id ? null : v.id)}
+                                className="group rounded-2xl overflow-hidden shadow-md hover:shadow-xl border border-gray-100 bg-white cursor-pointer transition-shadow duration-300"
+                                onClick={() => openVideo(v.video)}
+                                role="button"
+                                aria-label={`Play ${v.title} in a new tab`}
                             >
                                 {/* Thumbnail */}
                                 <div className="relative h-56 sm:h-72 overflow-hidden">
@@ -180,18 +207,8 @@ export default function Maintenance() {
                                         alt={v.title}
                                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                                     />
-                                    <div
-                                        className={`absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent transition-opacity duration-300 ${activeVideo === v.id ? "opacity-90" : "opacity-70 group-hover:opacity-80"
-                                            }`}
-                                    />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent opacity-70 group-hover:opacity-80 transition-opacity duration-300" />
                                     <PlayButton />
-                                    {activeVideo === v.id && (
-                                        <div className="absolute inset-0 bg-black/70 flex items-center justify-center animate-[fadeIn_0.3s_ease-out]">
-                                            <p className="text-white font-medium text-sm px-8 text-center">
-                                                Video playback placeholder — connect your video source here.
-                                            </p>
-                                        </div>
-                                    )}
                                 </div>
 
                                 {/* Caption */}

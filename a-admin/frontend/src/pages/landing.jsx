@@ -1,35 +1,50 @@
 import { useRef } from "react";
-import Navbar from "../components/Navbar";
-import Footer from "../components/Footer";
-import Hero from "../components/hero";
-import CTAsection from "../components/CTAsection";
+import Header from "../components/Header";
 import LandingFooter from "../components/LandingFooter";
-import Maintenance from "../components/MaintenanceSection";
+import Hero from "../components/hero";
 import AboutSection from "../components/AboutSection";
+import Maintenance from "../components/MaintenanceSection";
+import CTAsection from "../components/CTAsection";
 
 export default function Landing() {
-
     const aboutRef = useRef(null);
     const maintenanceRef = useRef(null);
+    const ctaRef = useRef(null);
+
 
     const scrollToAbout = () => {
-        aboutRef.current?.scrollIntoView({ behavior: "smooth" });
+        aboutRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
     const scrollToMaintenance = () => {
-        maintenanceRef.current?.scrollIntoView({ behavior: "smooth" });
+        maintenanceRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    const scrollToCTA = () => {
+        ctaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
     return (
         <>
-            <Hero learnMore={scrollToAbout} />
-            <div ref={aboutRef}>
-                <AboutSection scrollDown={scrollToMaintenance} />
+            <Header
+                onAboutClick={scrollToAbout}
+                onMaintenanceClick={scrollToMaintenance}
+            />
+
+            <Hero learnMore={scrollToCTA} />
+
+            <div ref={maintenanceRef} className="scroll-mt-20">
+                <Maintenance scrollDown={scrollToAbout} />
             </div>
-            <div ref={maintenanceRef}>
-                <Maintenance />
+
+            <div ref={aboutRef} className="scroll-mt-20">
+                <AboutSection scrollDown={scrollToCTA} />
             </div>
-            <CTAsection />
+
+            <div ref={ctaRef} className="scroll-mt-20">
+                <CTAsection />
+            </div>
+
             <LandingFooter />
         </>
     );

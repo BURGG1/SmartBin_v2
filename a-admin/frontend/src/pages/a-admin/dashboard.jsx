@@ -22,15 +22,6 @@ import Footer from "../../components/Footer";
 
 // ── Static data ───────────────────────────────────────────────────────────────
 
-const monthlyCompliance = [
-    { month: "Oct", compliant: 85, nonCompliant: 1 },
-    { month: "Nov", compliant: 85, nonCompliant: 1 },
-    { month: "Dec", compliant: 85, nonCompliant: 1 },
-    { month: "Jan", compliant: 85, nonCompliant: 1 },
-    { month: "Feb", compliant: 88, nonCompliant: 1 },
-    { month: "Mar", compliant: 92, nonCompliant: 2 },
-];
-
 const medalStyles = {
     Gold: { ring: "border-yellow-400 text-yellow-500", podium: "bg-yellow-400" },
     Silver: { ring: "border-gray-300 text-gray-400", podium: "bg-gray-300" },
@@ -56,6 +47,10 @@ export default function ComplianceDashboard() {
     const [leaderboard, setLeaderboard] = useState([]);
     const [leaderboardLoading, setLeaderboardLoading] = useState(true);
     const [leaderboardError, setLeaderboardError] = useState(false);
+
+    const [monthlyCompliance, setMonthlyCompliance] = useState([]);
+    const [complianceLoading, setComplianceLoading] = useState(true);
+    const [complianceError, setComplianceError] = useState(false); 
 
     useEffect(() => {
         const fetchCounts = async () => {
@@ -94,6 +89,20 @@ export default function ComplianceDashboard() {
             }
         };
 
+        const fetchCompliance = async () => {
+            try {
+                const res = await fetch(`${BASE_URL}/api/analytics/compliance?months=6`);
+                const data = await res.json();
+                if (!data.success) throw new Error("Failed to fetch compliance trend");
+                setMonthlyCompliance(data.data);
+                setComplianceError(false);
+            } catch (err) {
+                console.error("Compliance fetch error:", err);
+                setComplianceError(true);
+            } finally {
+                setComplianceLoading(false);
+            }
+        };
         // ── Leaderboard fetch ─────────────────────────────────────────────────────
         const fetchLeaderboard = async () => {
             try {
@@ -127,10 +136,12 @@ export default function ComplianceDashboard() {
         };
 
         fetchCounts();
+        fetchCompliance();
         fetchLeaderboard();
 
         const intervalId = setInterval(() => {
             fetchCounts();
+            fetchCompliance();
             fetchLeaderboard();
         }, 5000);
 
@@ -240,9 +251,17 @@ export default function ComplianceDashboard() {
                         </div>
 
                         {/* Bar Chart */}
-                        <div className="flex flex-col xl:flex-row gap-6">
-                            <div className="bg-white w-full rounded-xl shadow-sm p-6">
-                                <h3 className="text-lg font-semibold mb-4">Monthly Compliance Trend</h3>
+                        <div className="bg-white w-full rounded-xl shadow-sm p-6">
+                            <h3 className="text-lg font-semibold mb-4">Monthly Compliance Trend</h3>
+                            {complianceLoading ? (
+                                <div className="h-84 flex items-center justify-center">
+                                    <div className="h-8 w-48 bg-gray-200 animate-pulse rounded" />
+                                </div>
+                            ) : complianceError ? (
+                                <p className="text-center text-red-400 py-8">Unable to load compliance trend.</p>
+                            ) : monthlyCompliance.length === 0 ? (
+                                <p className="text-center text-gray-400 py-8">No disposal data yet.</p>
+                            ) : (
                                 <div className="h-84">
                                     <ResponsiveContainer width="100%" height={366}>
                                         <BarChart data={monthlyCompliance}>
@@ -255,7 +274,7 @@ export default function ComplianceDashboard() {
                                         </BarChart>
                                     </ResponsiveContainer>
                                 </div>
-                            </div>
+                            )}
                         </div>
 
                     </section>

@@ -16,7 +16,7 @@ export default function Navbar() {
     sessionStorage.removeItem("role");
     sessionStorage.removeItem("user");
     navigate("/");
-};
+  };
 
   return (
     <header className="w-full bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -26,7 +26,9 @@ export default function Navbar() {
             <Recycle className="text-white" size={20} />
           </div>
           <Link to="/landing" className="text-lg font-semibold text-gray-800">
-            SmartBin
+            <span className="text-xl font-bold text-gray-900">
+              Smart<span className="text-green-500">Bin</span>
+            </span>
           </Link>
         </div>
 
@@ -45,8 +47,9 @@ export default function Navbar() {
       </div>
       <ConfirmationModal
         isOpen={OpenConModal}
-        onClose={()=> {
-          setOpenConModal(false)}
+        onClose={() => {
+          setOpenConModal(false)
+        }
         }
         onConfirm={handleLogout}
       />

@@ -3,14 +3,14 @@ import { QrCode, Recycle, Trophy, Leaf, ArrowRight } from "lucide-react";
 import recyc1 from "../resources/recyc1.jpg";
 import recycVid from "../resources/smartbinC.mp4";
 
-export default function Hero({ learnMore}) {
+export default function Hero({ learnMore }) {
     return (
         <div className="w-full min-h-screen bg-gradient-to-br from-green-400 to-white">
             <main className="w-full mx-auto">
 
                 {/* HERO SECTION */}
                 <section className="w-full min-h-screen flex items-center">
-                    <div className="w-full px-8 lg:px-20 py-12 grid lg:grid-cols-2 gap-12 items-center">
+                    <div className="w-full px-8 lg:px-20 pb-12 grid lg:grid-cols-2 gap-12 items-center">
 
                         {/* LEFT */}
                         <div>
@@ -19,7 +19,7 @@ export default function Hero({ learnMore}) {
                                 Eco-Friendly Waste Management
                             </span>
 
-                            <h1 className="text-5xl lg:text-7xl font-bold text-gray-900 leading-tight mb-6">
+                            <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight mb-6">
                                 Smart Bin Waste
                                 <br />
                                 Management System
@@ -34,8 +34,8 @@ export default function Hero({ learnMore}) {
                             <button
                                 onClick={learnMore}
                                 className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-xl font-medium flex items-center gap-2">
-                                    
-                                Learn More
+
+                                Get Started
                                 <ArrowRight className="w-5 h-5" />
                             </button>
                         </div>

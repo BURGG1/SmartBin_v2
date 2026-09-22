@@ -9,7 +9,6 @@ const socialLinks = [
   { name: "Facebook",  icon: <Facebook  className="w-4 h-4 text-gray-300" /> },
   { name: "Twitter",   icon: <Twitter   className="w-4 h-4 text-gray-300" /> },
   { name: "Instagram", icon: <Instagram className="w-4 h-4 text-gray-300" /> },
-  { name: "LinkedIn",  icon: <MailIcon  className="w-4 h-4 text-gray-300" /> },
 ];
 
 export default function LandingFooter() {

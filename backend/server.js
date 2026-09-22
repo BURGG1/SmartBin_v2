@@ -13,6 +13,7 @@ const deviceRoutes = require("./routes/deviceRoutes");
 const householdRoutes = require("./routes/householdRoutes");
 const rfidRoutes = require("./routes/rfidRoutes");
 const binRoutes = require("./routes/binRoutes");
+const complianceRoutes = require("./routes/analytics");
 const rewardRoutes = require("./routes/rewardRoutes");
 const ruleRoutes = require("./routes/ruleRoutes");
 const collectorRoutes = require("./routes/collectorRoutes");
@@ -137,6 +138,7 @@ app.use("/api/requests", registrationRequestRoutes);
 app.use("/api/bins", binRoutes);
 app.use("/api/collectors", collectorRoutes);
 app.use("/api/devices", deviceRoutes);
+app.use("/api/analytics", complianceRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "Server is running" });

@@ -298,6 +298,7 @@ export default function AddHousehold({ isOpen, onClose }) {
                         <div className="flex items-center gap-2">
                             <div className="relative flex-1">
                                 <input
+                                    readOnly
                                     type="text"
                                     name="rfid"
                                     value={form.rfid}

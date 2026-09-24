@@ -99,12 +99,14 @@ const generalLimiter = rateLimit({
   message: { success: false, message: "Too many requests. Please try again later." },
 });
 
+// ── Auth limiter — strict, resets on successful login ────────────────────────
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 15,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
+    windowMs:               15 * 60 * 1000, // 15 minutes
+    max:                    20,             // 20 attempts per 15 min
+    standardHeaders:        true,
+    legacyHeaders:          false,
+    skipSuccessfulRequests: true,           // successful logins don't count
+    message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
 });
 
 const rfidLimiter = rateLimit({
@@ -115,7 +117,6 @@ const rfidLimiter = rateLimit({
   message: { success: false, message: "RFID scan rate limit exceeded." },
 });
 
-app.use("/api/", generalLimiter);
 app.use("/api/auth", authLimiter);
 app.use("/api/rfid", rfidLimiter);
 

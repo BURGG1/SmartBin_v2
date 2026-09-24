@@ -60,12 +60,8 @@ const updateFillLevel = async (req, res) => {
         lastFillUpdate: new Date(),
         lastSeen: new Date(),
       },
-      { new: true }
+      { new: true, upsert: true, setDefaultsOnInsert: true }
     );
-
-    if (!device) {
-      return res.status(404).json({ success: false, message: "Device not found" });
-    }
 
     // ── Sync to the assigned bin ──
     if (device.assignedBin) {

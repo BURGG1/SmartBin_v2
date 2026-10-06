@@ -6,6 +6,7 @@ import BASE_URL from "../config"; // ✅ import config
 
 const EMAIL_REGEX    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PH_MOBILE_REGEX = /^09\d{9}$/;
+const MIN_BIRTH_DATE = "1900-01-01";
 
 const normalizeContactNumber = (input) => {
     if (!input || typeof input !== "string") return null;
@@ -13,6 +14,82 @@ const normalizeContactNumber = (input) => {
     if (digits.startsWith("63") && digits.length === 12) digits = "0" + digits.slice(2);
     else if (digits.length === 10 && digits.startsWith("9")) digits = "0" + digits;
     return digits;
+};
+
+// ── Auto-formatting helpers (same rules as the mobile registration form) ────
+
+// Capitalizes the first letter of each word (and after a hyphen) WITHOUT
+// lowercasing the rest, so "McDonald" / "dela Cruz" typed deliberately survive.
+const capitalizeWords = (str) =>
+    str.replace(/(^|[\s-])(\S)/g, (_m, sep, ch) => sep + ch.toUpperCase());
+
+// Fullname: strips digits/symbols that never belong in a name, collapses
+// repeated spaces, drops leading spaces, capitalizes each word.
+const formatFullnameInput = (raw) =>
+    capitalizeWords(
+        raw
+            .replace(/[0-9_!@#$%^&*()+=[\]{};:"\\|<>/?~`]/g, "")
+            .replace(/^\s+/, "")
+            .replace(/\s{2,}/g, " ")
+    );
+
+// House No.: letters, digits and separators real house numbers use
+// ("12-A", "Blk 3 Lot 5", "45/B").
+const formatHouseNoInput = (raw) =>
+    raw
+        .replace(/[^A-Za-z0-9\s\-/#.,]/g, "")
+        .replace(/^\s+/, "")
+        .replace(/\s{2,}/g, " ");
+
+// Street / Block: same as above, plus apostrophes, and capitalized per word
+// ("rizal st." -> "Rizal St.", "purok 1" -> "Purok 1").
+const formatStreetInput = (raw) =>
+    capitalizeWords(
+        raw
+            .replace(/[^A-Za-z0-9\s\-/#.,'’]/g, "")
+            .replace(/^\s+/, "")
+            .replace(/\s{2,}/g, " ")
+    );
+
+// Email: never contains spaces and is stored lowercase.
+const formatEmailInput = (raw) => raw.replace(/\s/g, "").toLowerCase();
+
+// Family member: whole numbers only, max 2 digits (same as mobile).
+const formatFamilyMemberInput = (raw) => raw.replace(/\D/g, "").slice(0, 2);
+
+// Contact number: state keeps ONLY the 10-digit local part (the +63 badge is
+// separate), so normalizeContactNumber / PH_MOBILE_REGEX behave as before.
+// Handles pasted "09123456789", "+63 912 345 6789", "912-345-6789", etc.
+const extractContactDigits = (raw) => {
+    let digits = raw.replace(/\D/g, "");
+    if (digits.startsWith("63") && digits.length > 10) digits = digits.slice(2);
+    if (digits.startsWith("0")) digits = digits.slice(1);
+    return digits.slice(0, 10);
+};
+
+// Display-only: "9123456789" -> "912-345-6789" (matches the placeholder).
+const formatContactDisplay = (digits) => {
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+};
+
+// Field name -> formatter, applied automatically inside handleChange.
+const FIELD_FORMATTERS = {
+    fullname:      formatFullnameInput,
+    houseNo:       formatHouseNoInput,
+    street:        formatStreetInput,
+    email:         formatEmailInput,
+    familyMember:  formatFamilyMemberInput,
+    contactNumber: extractContactDigits,
+};
+
+// Local (not UTC) today as YYYY-MM-DD, used to block future birthdays.
+const getTodayISO = () => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${mm}-${dd}`;
 };
 
 export default function AddHousehold({ isOpen, onClose }) {
@@ -72,8 +149,11 @@ export default function AddHousehold({ isOpen, onClose }) {
         }
     }, [isOpen]);
 
+    // Runs the field's formatter (if it has one) before storing the value.
     const handleChange = (e) => {
-        setForm({ ...form, [e.target.name]: e.target.value });
+        const { name, value } = e.target;
+        const formatter = FIELD_FORMATTERS[name];
+        setForm((prev) => ({ ...prev, [name]: formatter ? formatter(value) : value }));
         setError("");
     };
 
@@ -98,7 +178,7 @@ export default function AddHousehold({ isOpen, onClose }) {
     };
 
     const handleRegisterClick = async () => {
-        if (!form.fullname || !form.contactNumber || !form.rfid) {
+        if (!form.fullname.trim() || !form.contactNumber || !form.rfid) {
             setError("Fullname, Contact Number, and RFID are required.");
             return;
         }
@@ -145,12 +225,12 @@ export default function AddHousehold({ isOpen, onClose }) {
                 method:  "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    fullname:     form.fullname,
+                    fullname:     form.fullname.trim(),
                     birthday:     form.birthday || null,
                     familyMember: form.familyMember ? parseInt(form.familyMember) : null,
                     address: {
-                        houseNo: form.houseNo || null,
-                        street:  form.street  || null,
+                        houseNo: form.houseNo.trim() || null,
+                        street:  form.street.trim()  || null,
                     },
                     contactNumber: form.contactNumber,
                     email:         form.email || null,
@@ -201,6 +281,8 @@ export default function AddHousehold({ isOpen, onClose }) {
                             <input
                                 type="text" name="fullname" value={form.fullname}
                                 onChange={handleChange}
+                                maxLength={100}
+                                autoCapitalize="words"
                                 className="mt-1 px-3 py-2 rounded-lg border w-full"
                                 placeholder="ex. Janice Dela Cruz"
                             />
@@ -213,14 +295,17 @@ export default function AddHousehold({ isOpen, onClose }) {
                                 <input
                                     type="date" name="birthday" value={form.birthday}
                                     onChange={handleChange}
+                                    min={MIN_BIRTH_DATE}
+                                    max={getTodayISO()}
                                     className="mt-1 px-3 py-2 rounded-lg border w-full"
                                 />
                             </div>
                             <div className="flex flex-col">
                                 <label className="font-semibold">Family Member</label>
                                 <input
-                                    type="number" name="familyMember" value={form.familyMember}
+                                    type="text" inputMode="numeric" name="familyMember" value={form.familyMember}
                                     onChange={handleChange}
+                                    maxLength={2}
                                     className="mt-1 px-3 py-2 rounded-lg border w-full"
                                     placeholder="ex. 5"
                                 />
@@ -238,6 +323,7 @@ export default function AddHousehold({ isOpen, onClose }) {
                                     <input
                                         type="text" name="houseNo" value={form.houseNo}
                                         onChange={handleChange}
+                                        maxLength={20}
                                         className="mt-1 px-3 py-2 rounded-lg border w-full"
                                         placeholder="ex. 0123"
                                     />
@@ -247,6 +333,7 @@ export default function AddHousehold({ isOpen, onClose }) {
                                     <input
                                         type="text" name="street" value={form.street}
                                         onChange={handleChange}
+                                        maxLength={60}
                                         className="mt-1 px-3 py-2 rounded-lg border w-full"
                                         placeholder="ex. Rizal St."
                                     />
@@ -263,8 +350,10 @@ export default function AddHousehold({ isOpen, onClose }) {
                                 <div className="bg-gray-100 px-3 py-2 text-gray-700 text-sm">
                                     🇵🇭 +63
                                 </div>
+                                {/* State keeps raw digits; the dashes are display-only. */}
                                 <input
-                                    type="tel" name="contactNumber" value={form.contactNumber}
+                                    type="tel" inputMode="numeric" name="contactNumber"
+                                    value={formatContactDisplay(form.contactNumber)}
                                     onChange={handleChange}
                                     placeholder="912-345-6789"
                                     className="flex-1 px-3 py-2 outline-none"
@@ -278,6 +367,9 @@ export default function AddHousehold({ isOpen, onClose }) {
                             <input
                                 type="email" name="email" value={form.email}
                                 onChange={handleChange}
+                                maxLength={100}
+                                autoCapitalize="none"
+                                autoCorrect="off"
                                 className="mt-1 px-3 py-2 rounded-lg border w-full"
                                 placeholder="jdelacruz@email.com"
                             />

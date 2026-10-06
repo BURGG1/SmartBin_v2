@@ -1,7 +1,7 @@
 import { QrCode, Recycle, Trophy, Leaf, ArrowRight } from "lucide-react";
 
 import recyc1 from "../resources/recyc1.jpg";
-import recycVid from "../resources/smartbinC.mp4";
+import recycVid from "../resources/smartbinVid.mp4";
 
 export default function Hero({ learnMore }) {
     return (
@@ -49,7 +49,7 @@ export default function Hero({ learnMore }) {
                                 muted
                                 loop
                                 playsInline
-                                className="absolute inset-0 w-full h-full blur-xs object-cover rounded-l-[60px]"
+                                className="absolute inset-0 w-full h-full object-cover rounded-l-[60px]"
                             />
                         </div>
 

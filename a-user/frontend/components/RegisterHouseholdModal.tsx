@@ -87,6 +87,51 @@ const normalizeContactNumber = (input: string): string | null => {
     return digits;
 };
 
+// ── Auto-formatting helpers ─────────────────────────────────────────────────
+
+// Fullname: removes digits/symbols that never belong in a name, collapses
+// repeated spaces, drops leading spaces, and capitalizes the first letter of
+// each word (and after a hyphen). It does NOT lowercase the rest, so
+// "McDonald" / "dela Cruz" typed deliberately are left alone.
+const formatFullnameInput = (raw: string): string => {
+    return raw
+        .replace(/[0-9_!@#$%^&*()+=[\]{};:"\\|<>/?~`]/g, "")
+        .replace(/^\s+/, "")
+        .replace(/\s{2,}/g, " ")
+        .replace(/(^|[\s-])(\S)/g, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
+};
+
+// House No.: letters, digits and the few separators real house numbers use
+// ("12-A", "Blk 3 Lot 5", "45/B"). Collapses repeated spaces.
+const formatHouseNoInput = (raw: string): string => {
+    return raw
+        .replace(/[^A-Za-z0-9\s\-/#.,]/g, "")
+        .replace(/^\s+/, "")
+        .replace(/\s{2,}/g, " ");
+};
+
+// Email: never contains spaces and is stored lowercase.
+const formatEmailInput = (raw: string): string => {
+    return raw.replace(/\s/g, "").toLowerCase();
+};
+
+// Contact number: keeps ONLY the 10-digit local part in state (so
+// normalizeContactNumber / validation keep working exactly as before).
+// Handles pasted "09123456789", "+63 912 345 6789", "912-345-6789", etc.
+const extractContactDigits = (raw: string): string => {
+    let digits = raw.replace(/\D/g, "");
+    if (digits.startsWith("63") && digits.length > 10) digits = digits.slice(2);
+    if (digits.startsWith("0")) digits = digits.slice(1);
+    return digits.slice(0, 10);
+};
+
+// Display-only: "9123456789" -> "912-345-6789" (matches the placeholder).
+const formatContactDisplay = (digits: string): string => {
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+};
+
 // Lets the user type digits plus "/" as a separator, in whatever order feels
 // natural to them, while still auto-inserting "/" when they just type digits
 // straight through:
@@ -397,7 +442,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 <TextInput
                                     placeholder="ex. Janice S. Dela Cruz"
                                     value={form.fullname}
-                                    onChangeText={(v) => handleChange("fullname", v)}
+                                    onChangeText={(v) => handleChange("fullname", formatFullnameInput(v))}
+                                    autoCapitalize="words"
                                     maxLength={100}
                                     editable={!loading}
                                     className={`border rounded-lg px-3 py-2 mt-1 ${errors.fullname ? "border-red-500" : "border-gray-300"
@@ -460,7 +506,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                         <TextInput
                                             placeholder="ex. 0123"
                                             value={form.houseNo}
-                                            onChangeText={(v) => handleChange("houseNo", v)}
+                                            onChangeText={(v) => handleChange("houseNo", formatHouseNoInput(v))}
                                             maxLength={20}
                                             editable={!loading}
                                             className={`border rounded-lg px-3 py-2 mt-1 ${errors.houseNo ? "border-red-500" : "border-gray-300"
@@ -507,7 +553,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     autoCapitalize="none"
                                     autoCorrect={false}
                                     value={form.email}
-                                    onChangeText={(v) => handleChange("email", v)}
+                                    onChangeText={(v) => handleChange("email", formatEmailInput(v))}
                                     maxLength={100}
                                     editable={!loading}
                                     className={`border rounded-lg px-3 py-2 mt-1 ${errors.email ? "border-red-500" : "border-gray-300"
@@ -531,12 +577,14 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     <View className="bg-gray-100 px-3 py-2">
                                         <Text className="text-gray-700 text-sm">🇵🇭 +63</Text>
                                     </View>
+                                    {/* State keeps raw digits; the dashes are display-only.
+                                        No maxLength here: extractContactDigits caps at 10 digits
+                                        and a hard limit would truncate pasted numbers. */}
                                     <TextInput
                                         placeholder="912-345-6789"
                                         keyboardType="phone-pad"
-                                        value={form.contactNumber}
-                                        onChangeText={(v) => handleChange("contactNumber", v.replace(/[^0-9]/g, ""))}
-                                        maxLength={10}
+                                        value={formatContactDisplay(form.contactNumber)}
+                                        onChangeText={(v) => handleChange("contactNumber", extractContactDigits(v))}
                                         editable={!loading}
                                         className="flex-1 px-3 py-2"
                                     />

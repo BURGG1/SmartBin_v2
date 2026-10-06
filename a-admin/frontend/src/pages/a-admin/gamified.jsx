@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Navbar from "../../components/Navbar";
 import {
     Star,
@@ -11,7 +11,10 @@ import {
     Eye,
     Pencil,
     Award,
-    Zap
+    Zap,
+    MoreVertical,
+    Trash2,
+    X
 } from "lucide-react";
 import NavigationShell from "../../navigation/mainNav";
 import Footer from "../../components/Footer";
@@ -25,8 +28,8 @@ import BASE_URL from "../../config";
 import Pagination from "../../components/Pagination";
 import useDebounce from "../../hooks/useDebounce";
 
-import { getRewards, createReward, updateReward } from "../../api/rewardAPI";
-import { getRules } from "../../api/rulesAPI";
+import { getRewards, createReward, updateReward, deleteReward } from "../../api/rewardAPI";
+import { getRules, deleteRule } from "../../api/rulesAPI";
 
 const REWARDS_PER_PAGE = 4;
 const RULES_PER_PAGE = 4;
@@ -43,14 +46,14 @@ export default function Gamified() {
     const [pointNeed, setPointNeed] = useState();
     const [clickedRule, setClickRule] = useState(null);
 
-    // ---- Rewards now come from the database (server-paginated) ----
+    // ---- Rewards come from the database (server-paginated) ----
     const [rewards, setRewards] = useState([]);
     const [rewardsTotal, setRewardsTotal] = useState(0);
     const [rewardsLoading, setRewardsLoading] = useState(true);
     const [rewardsError, setRewardsError] = useState("");
     const [editingRewardId, setEditingRewardId] = useState(null);
 
-    // ---- Rules now come from the database (server-paginated) ----
+    // ---- Rules come from the database (server-paginated) ----
     const [rules, setRules] = useState([]);
     const [rulesTotal, setRulesTotal] = useState(0);
     const [rulesLoading, setRulesLoading] = useState(true);
@@ -68,8 +71,16 @@ export default function Gamified() {
     const [Stocks, setStocks] = useState("");
     const [imageFile, setImageFile] = useState(null);
 
-    const [ToEdit, setToEdit] = useState(false);
+    // Separate edit flags so the reward form and the rule modal can't interfere
+    const [ToEdit, setToEdit] = useState(false);          // reward form
+    const [ruleEditing, setRuleEditing] = useState(false); // rule modal
     const [openRewardModal, setOpenRewardModal] = useState(false);
+
+    // ---- Three-dot menu + remove confirmation (shared by rewards & rules) ----
+    const [openMenuId, setOpenMenuId] = useState(null);
+    const [removeTarget, setRemoveTarget] = useState(null); // { type: "reward" | "rule", item }
+    const [removing, setRemoving] = useState(false);
+    const menuRef = useRef(null);
 
     const [search, setSearch] = useState("");
     const debouncedSearch = useDebounce(search, 400);
@@ -79,10 +90,6 @@ export default function Gamified() {
     const [rulePage, setRulePage] = useState(1);
     const [logPage, setLogPage] = useState(1);
 
-    // NOTE: `getRewards` / `getRules` (in api/rewardApi.js and
-    // api/rulesAPI.js) need to be updated to accept
-    // `({ search, page, limit }, signal)` and return `{ data, total }`
-    // (or plain array + total) instead of the full unfiltered collection.
     const fetchRewards = async (signal) => {
         try {
             setRewardsLoading(true);
@@ -151,16 +158,23 @@ export default function Gamified() {
         }
     };
 
-    // Lazy-load per tab: only fetch a dataset once its tab is actually
-    // visible, and refetch when its own search/page state changes.
+    // Rewards: refetch when its own search/page changes
     useEffect(() => {
         if (activeTab !== "rewards") return;
         const controller = new AbortController();
         fetchRewards(controller.signal);
+        return () => controller.abort();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, debouncedSearch, rewardPage]);
+
+    // Logs: separate effect so paging rewards doesn't reload the logs
+    useEffect(() => {
+        if (activeTab !== "rewards") return;
+        const controller = new AbortController();
         fetchRewardLogs(controller.signal);
         return () => controller.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, debouncedSearch, rewardPage, logPage]);
+    }, [activeTab, logPage]);
 
     useEffect(() => {
         if (activeTab !== "rules") return;
@@ -176,7 +190,7 @@ export default function Gamified() {
         setRulePage(1);
     }, [debouncedSearch]);
 
-    // Step back if a page becomes invalid (e.g. after a delete elsewhere)
+    // Step back if a page becomes invalid (e.g. after a delete)
     useEffect(() => {
         const totalPages = Math.max(1, Math.ceil(rewardsTotal / REWARDS_PER_PAGE));
         if (rewardPage > totalPages) setRewardPage(totalPages);
@@ -191,6 +205,22 @@ export default function Gamified() {
         const totalPages = Math.max(1, Math.ceil(rewardLogsTotal / LOGS_PER_PAGE));
         if (logPage > totalPages) setLogPage(totalPages);
     }, [rewardLogsTotal, logPage]);
+
+    // Close the three-dot dropdown when clicking anywhere outside it
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (menuRef.current && !menuRef.current.contains(e.target)) {
+                setOpenMenuId(null);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    // Close any open dropdown when switching tabs
+    useEffect(() => {
+        setOpenMenuId(null);
+    }, [activeTab]);
 
     const handleRewardEdit = (id) => {
         const item = rewards.find((reward) => reward._id === id);
@@ -243,10 +273,40 @@ export default function Gamified() {
         }
     };
 
+    // Remove a reward or a rule (whichever is in removeTarget)
+    const handleConfirmRemove = async () => {
+        if (!removeTarget) return;
+        const { type, item } = removeTarget;
+
+        try {
+            setRemoving(true);
+
+            if (type === "reward") {
+                await deleteReward(item._id);
+
+                // If this reward is currently loaded in the edit form, reset the form
+                if (editingRewardId === item._id) {
+                    setToEdit(false);
+                    ClearRewardEdit();
+                }
+                setRemoveTarget(null);
+                await fetchRewards();
+            } else {
+                await deleteRule(item._id);
+                setRemoveTarget(null);
+                await fetchRules();
+            }
+        } catch (err) {
+            console.error(err);
+            alert(err.message || `Failed to remove ${type}`);
+        } finally {
+            setRemoving(false);
+        }
+    };
+
     // Placeholder counts so each paginated section keeps a constant number
     // of slots (cards/rows) on screen, regardless of how many real items
     // land on the current page — but only once there's more than one page.
-    // On a single page, let each section hug its real content height.
     const rewardTotalPages = Math.max(1, Math.ceil(rewardsTotal / REWARDS_PER_PAGE));
     const rewardEmptySlots = rewardTotalPages > 1
         ? Math.max(0, REWARDS_PER_PAGE - rewards.length)
@@ -272,7 +332,7 @@ export default function Gamified() {
                     <NavigationShell />
                     <div className="py-2 md:hidden">
                         <h1 className="text-lg sm:text-3xl font-bold text-gray-900">
-                            Gamified Rewards Management
+                            Reward Management
                         </h1>
                         <p className="text-gray-500 text-xs sm:text-lg ">
                             Process reward and pointing system
@@ -284,7 +344,7 @@ export default function Gamified() {
 
                     <div className="hidden md:block">
                         <h1 className="text-lg sm:text-3xl font-bold text-gray-900">
-                            Gamified Rewards Management
+                            Reward Management
                         </h1>
                         <p className="text-gray-500 text-xs sm:text-lg ">
                             Process reward and pointing system
@@ -474,9 +534,41 @@ export default function Gamified() {
                                                             </div>
                                                         )}
 
-                                                        <span className="absolute top-2 right-2 bg-white text-green-600 text-xs font-bold px-2.5 py-1 rounded-full shadow">
+                                                        {/* Points - left */}
+                                                        <span className="absolute border top-2 left-2 bg-white text-green-600 text-xs font-bold px-2.5 py-1 rounded-full shadow">
                                                             {item.points} pts
                                                         </span>
+
+                                                        {/* Three-dot menu - right */}
+                                                        <div
+                                                            className="absolute top-2 right-2 z-20"
+                                                            ref={openMenuId === item._id ? menuRef : null}
+                                                        >
+                                                            <button
+                                                                onClick={() =>
+                                                                    setOpenMenuId(openMenuId === item._id ? null : item._id)
+                                                                }
+                                                                className="p-1.5 bg-white rounded-full shadow text-gray-600 hover:bg-gray-100 cursor-pointer transition"
+                                                                aria-label="More options"
+                                                            >
+                                                                <MoreVertical size={16} />
+                                                            </button>
+
+                                                            {openMenuId === item._id && (
+                                                                <div className="absolute right-0 mt-1 w-28 bg-white border border-gray-100 rounded-lg shadow-lg overflow-hidden">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setRemoveTarget({ type: "reward", item });
+                                                                            setOpenMenuId(null);
+                                                                        }}
+                                                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition"
+                                                                    >
+                                                                        <Trash2 size={14} />
+                                                                        Remove
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
 
                                                     <div className="p-4 flex flex-col flex-1">
@@ -638,7 +730,7 @@ export default function Gamified() {
                                             <ClipboardCheck className="text-green-600" />
                                             How to Earn Points
                                         </h2>
-                                        
+
                                     </div>
 
                                     <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
@@ -646,7 +738,7 @@ export default function Gamified() {
                                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                             <input
                                                 type="text"
-                                                placeholder="Search reward"
+                                                placeholder="Search rule"
                                                 value={search}
                                                 onChange={(e) => setSearch(e.target.value)}
                                                 className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl w-full sm:w-64 focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
@@ -656,7 +748,7 @@ export default function Gamified() {
                                         <button
                                             title="Add new rule"
                                             onClick={() => {
-                                                setToEdit(false);
+                                                setRuleEditing(false);
                                                 setEditRuleData(null);
                                                 setOpenRulesModal(true);
                                             }}
@@ -702,30 +794,67 @@ export default function Gamified() {
                                                 key={r._id}
                                                 className="group relative bg-gray-50 rounded-xl overflow-hidden flex flex-col shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
                                             >
-                                                <div className="relative overflow-hidden">
-                                                    {r.image ? (
-                                                        <img
-                                                            src={r.image}
-                                                            alt={r.name}
-                                                            className="w-full h-48 object-cover transition-transform duration-500 group-hover:scale-105"
-                                                        />
-                                                    ) : (
-                                                        <div className="w-full h-48 bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center">
-                                                            <ClipboardCheck className="text-green-300" size={28} />
-                                                        </div>
-                                                    )}
+                                                <div className="relative">
+                                                    <div className="overflow-hidden">
+                                                        {r.image ? (
+                                                            <img
+                                                                src={r.image}
+                                                                alt={r.name}
+                                                                className="w-full h-48 object-cover transition-transform duration-500 group-hover:scale-105"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-full h-48 bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center">
+                                                                <ClipboardCheck className="text-green-300" size={28} />
+                                                            </div>
+                                                        )}
+                                                    </div>
 
-                                                    <span className="absolute w-15 h-15 top-2 right-2 bg-white text-green-600 text-xs font-bold px-2.5 py-1.5 rounded-full shadow flex flex-col items-center leading-tight">
-                                                        <span className="font-bold text-lg">+{r.points}</span>
-                                                        <span className="text-[12px] text-gray-400 font-medium">pts</span>
-                                                    </span>
-
-                                                    {r.auto && (
-                                                        <span className="absolute top-2 left-2 bg-gray-900/80 text-white text-[11px] font-medium px-2 py-1 rounded-full flex items-center gap-1">
-                                                            <Zap size={11} />
-                                                            Auto-awarded
+                                                    {/* Left column: points on top, auto-awarded below */}
+                                                    <div className="absolute top-2 left-2 flex flex-col items-start gap-1.5">
+                                                        <span className="bg-white w-15 h-15 text-green-600 text-xs font-bold border px-2.5 py-1.5 rounded-full shadow flex flex-col items-center leading-tight">
+                                                            <span className="font-bold text-lg">+{r.points}</span>
+                                                            <span className="text-[12px] text-gray-400 font-medium">pts</span>
                                                         </span>
-                                                    )}
+
+                                                       
+                                                    </div>
+
+                                                    {/* Three-dot menu - right */}
+                                                    <div
+                                                        className="absolute top-2 right-2 z-20 flex items-center gap-2"
+                                                        ref={openMenuId === r._id ? menuRef : null}
+                                                    >
+                                                         {r.auto && (
+                                                            <span className="bg-gray-900/80 text-white text-[11px] font-medium px-2 py-1 rounded-full flex items-center gap-1">
+                                                                <Zap size={11} />
+                                                                Auto-awarded
+                                                            </span>
+                                                        )}
+                                                        <button
+                                                            onClick={() =>
+                                                                setOpenMenuId(openMenuId === r._id ? null : r._id)
+                                                            }
+                                                            className="p-1.5 bg-white rounded-full shadow text-gray-600 hover:bg-gray-100 cursor-pointer transition"
+                                                            aria-label="More options"
+                                                        >
+                                                            <MoreVertical size={16} />
+                                                        </button>
+
+                                                        {openMenuId === r._id && (
+                                                            <div className="absolute right-0 top-6 mt-1 w-28 bg-white border border-gray-100 rounded-lg shadow-lg overflow-hidden">
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setRemoveTarget({ type: "rule", item: r });
+                                                                        setOpenMenuId(null);
+                                                                    }}
+                                                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition"
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
 
                                                 <div className="p-4 flex flex-col flex-1 gap-1.5">
@@ -753,7 +882,7 @@ export default function Gamified() {
                                                                     setClickRule(r);
                                                                     setopenAwardModal(true);
                                                                 }}
-                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-gray-900 text-white border border-gray-200 text-gray-700 rounded-lg py-2 text-sm font-medium"
+                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-gray-900 text-white border border-gray-200 rounded-lg py-2 text-sm font-medium"
                                                             >
                                                                 <Award size={15} />
                                                                 Award
@@ -761,7 +890,7 @@ export default function Gamified() {
                                                         )}
                                                         <button
                                                             onClick={() => {
-                                                                setToEdit(true);
+                                                                setRuleEditing(true);
                                                                 setEditRuleData(r);
                                                                 setOpenRulesModal(true);
                                                             }}
@@ -834,10 +963,10 @@ export default function Gamified() {
                     isOpen={openRulesModal}
                     onClose={() => {
                         setOpenRulesModal(false);
-                        setToEdit(false);
+                        setRuleEditing(false);
                         setEditRuleData(null);
                     }}
-                    edit={ToEdit}
+                    edit={ruleEditing}
                     ruleData={editRuleData}
                     onSaved={fetchRules}
                 />
@@ -853,6 +982,52 @@ export default function Gamified() {
                     onClose={() => { setopenAwardModal(false) }}
                     rule={clickedRule}
                 />
+
+                {/* Remove confirmation (rewards & rules) — same look as ConfirmationModal */}
+                {removeTarget && (
+                    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                        <div className="bg-white w-auto max-w-lg rounded-2xl shadow-lg overflow-hidden">
+
+                            {/* HEADER */}
+                            <div className="flex justify-between items-center px-6 py-4 border-b">
+                                <h3 className="text-md">Confirmation Modal</h3>
+                                <button
+                                    onClick={() => setRemoveTarget(null)}
+                                    disabled={removing}
+                                >
+                                    <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                                </button>
+                            </div>
+
+                            <main className="flex flex-col justify-center gap-5 p-5 items-center">
+
+                                <h1 className="text-lg font-bold text-center">
+                                    Are you sure to remove{" "}
+                                    <span className="text-red-600">{removeTarget.item.name}</span>?
+                                </h1>
+                                <p className="text-sm text-gray-500 text-center -mt-3">
+                                    This {removeTarget.type} will be permanently removed. This can't be undone.
+                                </p>
+
+                                <div className="flex gap-3 items-center">
+                                    <button
+                                        onClick={handleConfirmRemove}
+                                        disabled={removing}
+                                        className="bg-green-600 cursor-pointer text-white p-2 px-5 rounded-lg disabled:opacity-50">
+                                        {removing ? "Removing..." : "Confirm"}
+                                    </button>
+                                    <button
+                                        onClick={() => setRemoveTarget(null)}
+                                        disabled={removing}
+                                        className="bg-gray-600 cursor-pointer text-white p-2 px-5 rounded-lg disabled:opacity-50">
+                                        Cancel
+                                    </button>
+                                </div>
+                            </main>
+
+                        </div>
+                    </div>
+                )}
 
             </div>
             <Footer />

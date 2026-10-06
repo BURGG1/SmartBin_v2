@@ -173,7 +173,7 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                             />
                         </div>
 
-                        {/* Location filter */}
+                        {/* Location filter
                         <div className="relative">
                             <Pin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                             <select
@@ -186,7 +186,7 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                                 <option value="Mabini">Mabini Street</option>
                                 <option value="Bonifacio">Bonifacio Street</option>
                             </select>
-                        </div>
+                        </div> */}
                     </div>
                 </div>
 
@@ -195,15 +195,15 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                     {loadingHH ? (
                         <p className="text-center text-gray-400 py-8">Loading households...</p>
                     ) : (
-                        <table className="w-full text-sm">
+                        <table className="w-full text-sm text-center">
                             <thead className="bg-gray-100 sticky top-0">
                                 <tr>
-                                    <th className="px-4 py-3 text-left">Household ID</th>
-                                    <th className="px-4 py-3 text-left">Name</th>
-                                    <th className="px-4 py-3 text-left">Address</th>
-                                    <th className="px-4 py-3 text-left">Contact</th>
-                                    <th className="px-4 py-3 text-left">Email</th>
-                                    <th className="px-4 py-3 text-left">Points</th>
+                                    <th className="px-4 py-3 text-center">Household ID</th>
+                                    <th className="px-4 py-3 text-center">Name</th>
+                                    <th className="px-4 py-3 text-center">Address</th>
+                                    <th className="px-4 py-3 text-center">Contact</th>
+                                    <th className="px-4 py-3 text-center">Email</th>
+                                    <th className="px-4 py-3 text-center">Points</th>
                                     <th className="px-4 py-3 text-center">Select</th>
                                 </tr>
                             </thead>
@@ -219,22 +219,22 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                                         <tr
                                             key={hh._id}
                                             onClick={() => handleSelect(hh)}
-                                            className={`cursor-pointer border-b hover:bg-gray-50 ${
+                                            className={`cursor-pointer hover:bg-gray-50 ${
                                                 selectedId === hh._id ? "bg-green-50" : ""
                                             }`}
                                         >
-                                            <td className="px-4 py-3 font-mono text-xs">
+                                            <td className="px-4 py-3 font-mono text-xs text-center">
                                                 {hh._id.slice(-8).toUpperCase()}
                                             </td>
-                                            <td className="px-4 py-3 font-medium">{hh.fullname}</td>
-                                            <td className="px-4 py-3 text-gray-500">
+                                            <td className="px-4 py-3 font-medium text-center">{hh.fullname}</td>
+                                            <td className="px-4 py-3 text-gray-500 text-center">
                                                 {[hh.address?.houseNo, hh.address?.street]
                                                     .filter(Boolean)
                                                     .join(", ") || "—"}
                                             </td>
-                                            <td className="px-4 py-3">+63 {hh.contactNumber}</td>
-                                            <td className="px-4 py-3">{hh.email || "—"}</td>
-                                            <td className="px-4 py-3 font-bold text-green-600">
+                                            <td className="px-4 py-3 text-center">+63 {hh.contactNumber}</td>
+                                            <td className="px-4 py-3 text-center">{hh.email || "—"}</td>
+                                            <td className="px-4 py-3 font-bold text-green-600 text-center">
                                                 {hh.points?.total ?? 0}
                                             </td>
                                             <td className="px-4 py-3 text-center">

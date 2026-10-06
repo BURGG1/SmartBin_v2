@@ -497,7 +497,7 @@ export default function HouseholdInfo() {
                                                                     .join(", ") || "—"}
                                                             </td>
                                                             <td className="px-4 py-3 text-gray-600">
-                                                                +63 {item.contactNumber}
+                                                                {item.contactNumber}
                                                             </td>
                                                             <td className="px-4 py-3 font-mono text-sm text-gray-600">
                                                                 {item.rfid || "—"}

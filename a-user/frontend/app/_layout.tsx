@@ -31,7 +31,8 @@ function Gate() {
     <Stack>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="terms_condition" options={{ headerShown: false }} />
-      <Stack.Screen name="counterInfopage" options={{ headerShown: false }} />
+      <Stack.Screen name="ScanScreen" options={{ headerShown: false }} />
+      <Stack.Screen name="counterInfo" options={{ headerShown: false }} />
       <Stack.Screen name="(userTabs)" options={{ headerShown: false }} />
       <Stack.Screen name="(collectorTabs)" options={{ headerShown: false }} />
     </Stack>

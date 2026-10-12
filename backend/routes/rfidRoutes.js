@@ -1,15 +1,11 @@
 const express = require("express");
 const router  = express.Router();
-const { upload } = require("../middleware/upload");
+const { upload, uploadMemory } = require("../middleware/upload");
+const { protect, allowRoles } = require("../middleware/authMiddleware");
 
 const {
-    binScan,
-    webScan,
-    getLatestScan,
-    checkRfid,
-    getRfidLogs,
-    getRfidHistory,
-    flagLog,
+    binScan, webScan, getLatestScan, checkRfid, getRfidLogs, getRfidHistory, flagLog,
+    prepareBag, rejectIfAlreadyFlagged, getBagByStamp, scanStampImage, flagBagByStamp,
 } = require("../controllers/rfidController");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,5 +44,18 @@ router.get("/logs/:rfid", getRfidHistory);
 
 // Flag or unflag a disposal log entry with optional evidence photo
 router.patch("/logs/:id/flag", upload.single("evidencePhoto"), flagLog);
+
+const collectorOnly = [protect, allowRoles("collector")];
+
+router.post("/stamp/scan", ...collectorOnly, uploadMemory.single("photo"), scanStampImage);
+router.get("/stamp/:binId/:stamp", ...collectorOnly, prepareBag, getBagByStamp);
+router.patch(
+    "/stamp/:binId/:stamp/flag",
+    ...collectorOnly,
+    prepareBag,
+    rejectIfAlreadyFlagged,
+    upload.single("evidencePhoto"),
+    flagBagByStamp
+);
 
 module.exports = router;

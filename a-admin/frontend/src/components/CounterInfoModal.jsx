@@ -1,25 +1,34 @@
 import { X, Calendar } from "lucide-react";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ViolationModal from "./ViolationModal";
 import Pagination from "./Pagination";
 import BASE_URL from "../config";
 
-const LOGS_LIMIT = 7;
+const LOGS_LIMIT = 7;       // rows per page in the table
+const FETCH_LIMIT = 100;    // records requested per API call
+const MAX_FETCH_PAGES = 20; // safety cap (20 x 100 = 2000 records)
+
+// Returns YYYY-MM-DD in the user's LOCAL timezone (not UTC)
+const toLocalDateString = (d = new Date()) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+};
 
 export default function CounterInfoModal({ isOpen, onClose, bin }) {
     const [openModal, setOpenModal] = useState(false);
     const [activeHH, setActiveHH] = useState(null);
-    const [fromDate, setFromDate] = useState("");
-    const [disposalLogs, setDisposalLogs] = useState([]);
-    const [total, setTotal] = useState(0);
+    const [fromDate, setFromDate] = useState(toLocalDateString());
+    const [allLogs, setAllLogs] = useState([]); // every disposal log of this bin
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [page, setPage] = useState(1);
 
     const abortRef = useRef(null);
 
-    // Fetch logs for a specific selected date (or unfiltered if fromDate is "").
-    const fetchLogs = useCallback(async (pageArg = 1) => {
+    // Load all disposal logs for the bin (filtering by day happens below).
+    const fetchLogs = useCallback(async () => {
         if (!bin?.id) return;
 
         abortRef.current?.abort();
@@ -29,107 +38,70 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
         setLoading(true);
         setError("");
         try {
-            const params = new URLSearchParams({
-                binId: bin.id,
-                action: "dispose",
-                page: pageArg,
-                limit: LOGS_LIMIT,
-                ...(fromDate && { date: fromDate }),
-            });
+            const collected = [];
+            let totalCount = Infinity;
+            let p = 1;
 
-            const res = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
-            if (!res.ok) throw new Error(`Server error (${res.status})`);
-            const data = await res.json();
+            while (collected.length < totalCount && p <= MAX_FETCH_PAGES) {
+                const params = new URLSearchParams({
+                    binId: bin.id,
+                    action: "dispose",
+                    page: p,
+                    limit: FETCH_LIMIT,
+                });
 
-            if (data.success) {
-                setDisposalLogs(data.data);
-                setTotal(data.pagination?.total ?? data.data.length);
-                setPage(pageArg);
-            } else {
-                setError(data.message || "Failed to load logs.");
+                const res = await fetch(`${BASE_URL}/api/rfid/logs?${params}`, { signal: controller.signal });
+                if (!res.ok) throw new Error(`Server error (${res.status})`);
+                const data = await res.json();
+
+                if (!data.success) throw new Error(data.message || "Failed to load logs.");
+                if (!data.data || data.data.length === 0) break;
+
+                collected.push(...data.data);
+                totalCount = data.pagination?.total ?? collected.length;
+                p++;
             }
+
+            setAllLogs(collected);
         } catch (err) {
-            if (err.name !== "AbortError") setError("Network error. Could not load logs.");
+            if (err.name !== "AbortError") {
+                setError(err.message?.startsWith("Server error") || err.message === "Failed to load logs."
+                    ? err.message
+                    : err.message || "Network error. Could not load logs.");
+            }
         } finally {
             if (abortRef.current === controller) setLoading(false);
         }
-    }, [bin?.id, fromDate]);
-
-    // No date picked yet: peek at the newest record to find its date, then
-    // set that as the active filter so only that day's records are shown
-    // (instead of the entire history). Assumes the backend returns logs
-    // sorted newest-first, same assumption the rest of this component makes.
-    const fetchInitialLogs = useCallback(async () => {
-        if (!bin?.id) return;
-
-        abortRef.current?.abort();
-        const controller = new AbortController();
-        abortRef.current = controller;
-
-        setLoading(true);
-        setError("");
-        try {
-            const peekParams = new URLSearchParams({
-                binId: bin.id,
-                action: "dispose",
-                page: 1,
-                limit: 1,
-            });
-
-            const peekRes = await fetch(`${BASE_URL}/api/rfid/logs?${peekParams}`, { signal: controller.signal });
-            if (!peekRes.ok) throw new Error(`Server error (${peekRes.status})`);
-            const peekData = await peekRes.json();
-
-            if (!peekData.success) {
-                setError(peekData.message || "Failed to load logs.");
-                setLoading(false);
-                return;
-            }
-
-            if (peekData.data.length === 0) {
-                setDisposalLogs([]);
-                setTotal(0);
-                setPage(1);
-                setLoading(false);
-                return;
-            }
-
-            const latestDate = new Date(peekData.data[0].scannedAt).toISOString().split("T")[0];
-            // Setting fromDate here triggers the fromDate-effect below,
-            // which re-fetches properly paginated results for that day.
-            setFromDate(latestDate);
-        } catch (err) {
-            if (err.name !== "AbortError") {
-                setError("Network error. Could not load logs.");
-                setLoading(false);
-            }
-        }
     }, [bin?.id]);
 
-    // Reset the filter whenever a new bin is opened.
+    // When a bin is opened: reset to TODAY, page 1, and load its logs.
     useEffect(() => {
         if (!isOpen || !bin?.id) return;
-        setFromDate("");
+        setFromDate(toLocalDateString());
+        setPage(1);
+        setAllLogs([]);
+        fetchLogs();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, bin?.id]);
 
-    // Fetch logs whenever the filter (or the open bin) changes: no date
-    // selected -> default to the latest day; date selected -> fetch that day.
-    useEffect(() => {
-        if (!isOpen || !bin?.id) return;
-        if (fromDate) {
-            fetchLogs(1);
-        } else {
-            fetchInitialLogs();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fromDate, isOpen, bin?.id]);
-
     useEffect(() => () => abortRef.current?.abort(), []);
+
+    // Only the logs that belong to the selected day (local time).
+    const dayLogs = useMemo(
+        () => allLogs.filter((log) => toLocalDateString(new Date(log.scannedAt)) === fromDate),
+        [allLogs, fromDate]
+    );
+
+    // Current page of that day's logs.
+    const pagedLogs = useMemo(
+        () => dayLogs.slice((page - 1) * LOGS_LIMIT, page * LOGS_LIMIT),
+        [dayLogs, page]
+    );
 
     if (!isOpen || !bin) return null;
 
-    const emptyRows = Math.max(0, LOGS_LIMIT - disposalLogs.length);
+    const isToday = fromDate === toLocalDateString();
+    const emptyRows = Math.max(0, LOGS_LIMIT - pagedLogs.length);
 
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -156,7 +128,11 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                         <input
                             type="date"
                             value={fromDate}
-                            onChange={(e) => setFromDate(e.target.value)}
+                            max={toLocalDateString()}
+                            onChange={(e) => {
+                                setFromDate(e.target.value || toLocalDateString());
+                                setPage(1);
+                            }}
                             className="border rounded-lg px-3 py-2 text-sm w-50"
                         />
                     </div>
@@ -182,16 +158,18 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                 </tr>
                             </thead>
                             <tbody className="text-center">
-                                {disposalLogs.length === 0 ? (
+                                {pagedLogs.length === 0 ? (
                                     <tr>
                                         <td colSpan="7" className="text-center py-6 text-gray-500">
-                                            No records found for selected dates
+                                            {isToday
+                                                ? "No disposal today"
+                                                : `No disposal on ${fromDate}`}
                                         </td>
                                     </tr>
                                 ) : (
-                                    disposalLogs.map((log) => {
+                                    pagedLogs.map((log) => {
                                         const scannedAt = new Date(log.scannedAt);
-                                        const date = scannedAt.toISOString().split("T")[0];
+                                        const date = toLocalDateString(scannedAt);
                                         const time = scannedAt.toLocaleTimeString("en-US", {
                                             hour: "2-digit", minute: "2-digit", second: "2-digit",
                                         });
@@ -255,7 +233,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                     })
                                 )}
 
-                                {disposalLogs.length > 0 &&
+                                {pagedLogs.length > 0 &&
                                     Array.from({ length: emptyRows }).map((_, i) => (
                                         <tr key={`counter-empty-${i}`} aria-hidden="true">
                                             <td className="py-3" colSpan="7">&nbsp;</td>
@@ -266,13 +244,13 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                     )}
                 </div>
 
-                {!loading && !error && (
+                {!loading && !error && dayLogs.length > 0 && (
                     <div className="px-6 pb-2">
                         <Pagination
                             currentPage={page}
-                            totalItems={total}
+                            totalItems={dayLogs.length}
                             itemsPerPage={LOGS_LIMIT}
-                            onPageChange={fetchLogs}
+                            onPageChange={setPage}
                         />
                     </div>
                 )}
@@ -284,7 +262,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 household={activeHH}
                 onPenalized={() => {
                     setOpenModal(false);
-                    fetchLogs(page);
+                    fetchLogs();
                 }}
             />
         </div>

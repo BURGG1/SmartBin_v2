@@ -18,9 +18,9 @@ import {
 } from "lucide-react";
 import NavigationShell from "../../navigation/mainNav";
 import Footer from "../../components/Footer";
-import { Plus, Camera, Asterisk, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { ViewRewardModal } from "../../components/RewardModal";
-import ConfirmationModal from "../../components/confirmationModal";
+import RewardFormModal from "../../components/AddRewardModal";
 import RulesModal from "../../components/RulesModal";
 import AwardModal from "../../components/AwardModal";
 import ClaimReward from "../../components/ClaimReward";
@@ -28,16 +28,34 @@ import BASE_URL from "../../config";
 import Pagination from "../../components/Pagination";
 import useDebounce from "../../hooks/useDebounce";
 
-import { getRewards, createReward, updateReward, deleteReward } from "../../api/rewardAPI";
+import { getRewards, deleteReward } from "../../api/rewardAPI";
 import { getRules, deleteRule } from "../../api/rulesAPI";
 
 const REWARDS_PER_PAGE = 4;
 const RULES_PER_PAGE = 4;
 const LOGS_PER_PAGE = 10;
 
+// Normalises an API response into { list, total } for the current page.
+// Works whether the server paginates properly or just returns everything:
+//  - if more than `limit` items come back, the server didn't paginate,
+//    so we slice the requested page ourselves
+//  - otherwise the server already gave us exactly this page
+const paginateResponse = (res, page, limit) => {
+    const all = Array.isArray(res) ? res : res?.data ?? [];
+    if (all.length > limit) {
+        return {
+            list: all.slice((page - 1) * limit, page * limit),
+            total: all.length,
+        };
+    }
+    return {
+        list: all,
+        total: Array.isArray(res) ? all.length : res?.total ?? all.length,
+    };
+};
+
 export default function Gamified() {
     const [activeTab, setActiveTab] = useState("rewards");
-    const [openConModal, setOpenConModal] = useState(false);
     const [openRulesModal, setOpenRulesModal] = useState(false);
     const [openAwardModal, setopenAwardModal] = useState(false);
     const [openClaimModal, setopenClaimModal] = useState(false);
@@ -51,7 +69,6 @@ export default function Gamified() {
     const [rewardsTotal, setRewardsTotal] = useState(0);
     const [rewardsLoading, setRewardsLoading] = useState(true);
     const [rewardsError, setRewardsError] = useState("");
-    const [editingRewardId, setEditingRewardId] = useState(null);
 
     // ---- Rules come from the database (server-paginated) ----
     const [rules, setRules] = useState([]);
@@ -65,15 +82,11 @@ export default function Gamified() {
     const [rewardLogsLoading, setRewardLogsLoading] = useState(true);
     const [rewardLogsError, setRewardLogsError] = useState("");
 
-    // for reward form -----------
-    const [Name, setName] = useState("");
-    const [Points, setPoints] = useState("");
-    const [Stocks, setStocks] = useState("");
-    const [imageFile, setImageFile] = useState(null);
-
-    // Separate edit flags so the reward form and the rule modal can't interfere
-    const [ToEdit, setToEdit] = useState(false);          // reward form
-    const [ruleEditing, setRuleEditing] = useState(false); // rule modal
+    // Separate edit flags so the reward modal and the rule modal can't interfere
+    const [rewardEditing, setRewardEditing] = useState(false);   // reward modal
+    const [editRewardData, setEditRewardData] = useState(null);  // which reward is being edited
+    const [openRewardFormModal, setOpenRewardFormModal] = useState(false);
+    const [ruleEditing, setRuleEditing] = useState(false);       // rule modal
     const [openRewardModal, setOpenRewardModal] = useState(false);
 
     // ---- Three-dot menu + remove confirmation (shared by rewards & rules) ----
@@ -99,8 +112,7 @@ export default function Gamified() {
                 signal
             );
 
-            const list = Array.isArray(res) ? res : res?.data ?? [];
-            const total = Array.isArray(res) ? list.length : res?.total ?? list.length;
+            const { list, total } = paginateResponse(res, rewardPage, REWARDS_PER_PAGE);
             setRewards(list);
             setRewardsTotal(total);
         } catch (err) {
@@ -122,8 +134,7 @@ export default function Gamified() {
                 signal
             );
 
-            const list = Array.isArray(res) ? res : res?.data ?? [];
-            const total = Array.isArray(res) ? list.length : res?.total ?? list.length;
+            const { list, total } = paginateResponse(res, rulePage, RULES_PER_PAGE);
             setRules(list);
             setRulesTotal(total);
         } catch (err) {
@@ -222,57 +233,6 @@ export default function Gamified() {
         setOpenMenuId(null);
     }, [activeTab]);
 
-    const handleRewardEdit = (id) => {
-        const item = rewards.find((reward) => reward._id === id);
-        if (!item) return;
-
-        setEditingRewardId(item._id);
-        setName(item.name);
-        setPoints(item.points);
-        setStocks(item.stocks);
-    };
-
-    const ClearRewardEdit = () => {
-        setName("");
-        setPoints("");
-        setStocks("");
-        setImageFile(null);
-        setEditingRewardId(null);
-    };
-
-    const handleAddReward = async () => {
-        if (!Name || !Points || !Stocks) {
-            alert("Name, points, and stock are required");
-            return;
-        }
-        try {
-            await createReward({ name: Name, points: Points, stocks: Stocks, imageFile });
-            await fetchRewards();
-            ClearRewardEdit();
-        } catch (err) {
-            console.error(err);
-            alert("Failed to add reward");
-        }
-    };
-
-    const handleUpdateReward = async () => {
-        try {
-            await updateReward(editingRewardId, {
-                name: Name,
-                points: Points,
-                stocks: Stocks,
-                imageFile,
-            });
-            await fetchRewards();
-            setToEdit(false);
-            setOpenConModal(false);
-            ClearRewardEdit();
-        } catch (err) {
-            console.error(err);
-            alert("Failed to update reward");
-        }
-    };
-
     // Remove a reward or a rule (whichever is in removeTarget)
     const handleConfirmRemove = async () => {
         if (!removeTarget) return;
@@ -283,12 +243,6 @@ export default function Gamified() {
 
             if (type === "reward") {
                 await deleteReward(item._id);
-
-                // If this reward is currently loaded in the edit form, reset the form
-                if (editingRewardId === item._id) {
-                    setToEdit(false);
-                    ClearRewardEdit();
-                }
                 setRemoveTarget(null);
                 await fetchRewards();
             } else {
@@ -332,7 +286,7 @@ export default function Gamified() {
                     <NavigationShell />
                     <div className="py-2 md:hidden">
                         <h1 className="text-lg sm:text-3xl font-bold text-gray-900">
-                            Reward Management
+                            Reward and Rules Management
                         </h1>
                         <p className="text-gray-500 text-xs sm:text-lg ">
                             Process reward and pointing system
@@ -344,7 +298,7 @@ export default function Gamified() {
 
                     <div className="hidden md:block">
                         <h1 className="text-lg sm:text-3xl font-bold text-gray-900">
-                            Reward Management
+                            Reward and Rules Management
                         </h1>
                         <p className="text-gray-500 text-xs sm:text-lg ">
                             Process reward and pointing system
@@ -374,125 +328,52 @@ export default function Gamified() {
                     {/* REWARDS TAB */}
                     {activeTab == "rewards" && (
                         <>
-                            <section className="bg-white rounded-xl p-6 shadow">
-                                <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                                    <Plus className="text-green-600" />
-                                    {ToEdit ? ("Update Reward") : ("Add New Reward")}
-                                </h2>
-
-                                {/* Image Upload */}
-                                <div className="mb-4 flex flex-col md:flex-row gap-3 items-center">
-                                    <label className="flex items-center gap-2 cursor-pointer text-white bg-green-600 px-3 py-2 rounded-lg hover:bg-green-700 transition">
-                                        <Camera size={16} />
-                                        Upload Image
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            className="hidden"
-                                            onChange={(e) => setImageFile(e.target.files[0] || null)}
-                                        />
-                                    </label>
-                                    {imageFile && (
-                                        <span className="text-sm text-gray-500">{imageFile.name}</span>
-                                    )}
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                    <div className="flex items-center">
-                                        <Asterisk className="text-red-500 w-4 h-4" />
-                                        <input
-                                            value={Name}
-                                            onChange={(e) => setName(e.target.value)}
-                                            className="w-full px-3 py-2 text-black rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                            placeholder="Name"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center">
-                                        <Asterisk className="text-red-500 w-4 h-4" />
-                                        <input
-                                            value={Points}
-                                            onChange={(e) => setPoints(e.target.value)}
-                                            className="w-full px-3 py-2 text-black rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                            placeholder="Points"
-                                            type="number"
-                                            step="0.01"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center">
-                                        <Asterisk className="text-red-500 w-4 h-4" />
-                                        <input
-                                            value={Stocks}
-                                            onChange={(e) => setStocks(e.target.value)}
-                                            className="w-full px-3 py-2 text-black rounded-lg border focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                            placeholder="Stock"
-                                            type="number"
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Buttons */}
-                                <div className="mt-3 flex justify-end gap-2">
-                                    {ToEdit ? (
-                                        <div className="flex gap-2 items-center">
-                                            <button
-                                                onClick={() => setOpenConModal(true)}
-                                                className="cursor-pointer mt-auto bg-green-600 flex items-center justify-center gap-1 text-white rounded-lg p-2 hover:bg-green-700 transition">
-                                                Update Reward
-                                            </button>
-
-                                            <button
-                                                onClick={() => {
-                                                    setToEdit(false);
-                                                    ClearRewardEdit();
-                                                }}
-                                                className="cursor-pointer mt-auto bg-gray-600 flex items-center justify-center gap-1 text-white rounded-lg p-2 hover:bg-gray-700 transition">
-                                                Cancel
-                                            </button>
-                                        </div>) : (
-                                        <button
-                                            onClick={handleAddReward}
-                                            className="cursor-pointer mt-auto bg-green-600 flex items-center justify-center gap-1 text-white rounded-lg p-2 hover:bg-green-700 transition">
-                                            <Plus size={16} />
-                                            Add New Reward
-                                        </button>
-                                    )}
-                                </div>
-                            </section>
-
                             {/* Redeemable Items */}
                             <section className="bg-white rounded-xl p-6 shadow">
 
-                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+                                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-6">
                                     <div>
                                         <h2 className="text-lg font-semibold flex items-center gap-2">
                                             <Gift className="text-green-600" />
                                             Redeemable Rewards
                                         </h2>
-
                                     </div>
 
-                                    <div className="relative">
-                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                                        <input
-                                            type="text"
-                                            placeholder="Search reward"
-                                            value={search}
-                                            onChange={(e) => setSearch(e.target.value)}
-                                            className="pl-10 pr-4 py-2 border rounded-xl w-full sm:w-64  focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
-                                        />
+                                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                                        <div className="relative">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                            <input
+                                                type="text"
+                                                placeholder="Search reward"
+                                                value={search}
+                                                onChange={(e) => setSearch(e.target.value)}
+                                                className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl w-full sm:w-64 focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
+                                            />
+                                        </div>
+
+                                        <button
+                                            title="Add new reward"
+                                            onClick={() => {
+                                                setRewardEditing(false);
+                                                setEditRewardData(null);
+                                                setOpenRewardFormModal(true);
+                                            }}
+                                            className="cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white font-medium px-4 py-2 rounded-xl hover:bg-green-700 transition whitespace-nowrap"
+                                        >
+                                            <Plus size={18} />
+                                            Add new reward
+                                        </button>
                                     </div>
                                 </div>
 
                                 {rewardsLoading && (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-2">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-2">
                                         {Array.from({ length: REWARDS_PER_PAGE }).map((_, i) => (
                                             <div key={`reward-skel-${i}`} className="rounded-xl overflow-hidden shadow-sm animate-pulse">
-                                                <div className="h-28 bg-gray-200" />
+                                                <div className="h-48 bg-gray-200" />
                                                 <div className="p-4 space-y-2 bg-gray-50">
-                                                    <div className="h-4 bg-gray-200 rounded w-3/4" />
-                                                    <div className="h-3 bg-gray-200 rounded w-1/2" />
+                                                    <div className="h-4 bg-gray-200 rounded w-2/3" />
+                                                    <div className="h-3 bg-gray-200 rounded w-full" />
                                                     <div className="h-8 bg-gray-200 rounded mt-3" />
                                                 </div>
                                             </div>
@@ -513,8 +394,8 @@ export default function Gamified() {
                                 )}
 
                                 {!rewardsLoading && (
-                                    <div className="overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                                        {rewards.map((item) => {
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        {rewards.map((item, idx) => {
                                             const outOfStock = Number(item.stocks) <= 0;
                                             return (
                                                 <div
@@ -522,26 +403,31 @@ export default function Gamified() {
                                                     className="group relative bg-gray-50 rounded-xl overflow-hidden flex flex-col shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
                                                 >
                                                     <div className="relative">
-                                                        {item.image ? (
-                                                            <img
-                                                                src={item.image}
-                                                                alt={item.name}
-                                                                className="h-28 w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                                                            />
-                                                        ) : (
-                                                            <div className="h-28 w-full bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center">
-                                                                <Gift className="text-green-300" size={28} />
-                                                            </div>
-                                                        )}
+                                                        <div className="overflow-hidden">
+                                                            {item.image ? (
+                                                                <img
+                                                                    src={item.image}
+                                                                    alt={item.name}
+                                                                    className="w-full h-48 object-cover transition-transform duration-500 group-hover:scale-105"
+                                                                />
+                                                            ) : (
+                                                                <div className="w-full h-48 bg-gradient-to-br from-green-50 to-gray-100 flex items-center justify-center">
+                                                                    <Gift className="text-green-300" size={28} />
+                                                                </div>
+                                                            )}
+                                                        </div>
 
-                                                        {/* Points - left */}
-                                                        <span className="absolute border top-2 left-2 bg-white text-green-600 text-xs font-bold px-2.5 py-1 rounded-full shadow">
-                                                            {item.points} pts
-                                                        </span>
+                                                        {/* Left column: points */}
+                                                        <div className="absolute top-2 left-2 flex flex-col items-start gap-1.5">
+                                                            <span className="bg-white w-15 h-15 text-green-600 text-xs font-bold border px-2.5 py-1.5 rounded-full shadow flex flex-col items-center leading-tight">
+                                                                <span className="font-bold text-lg">{item.points}</span>
+                                                                <span className="text-[12px] text-gray-400 font-medium">pts</span>
+                                                            </span>
+                                                        </div>
 
                                                         {/* Three-dot menu - right */}
                                                         <div
-                                                            className="absolute top-2 right-2 z-20"
+                                                            className="absolute top-2 right-2 z-20 flex items-center gap-2"
                                                             ref={openMenuId === item._id ? menuRef : null}
                                                         >
                                                             <button
@@ -555,7 +441,7 @@ export default function Gamified() {
                                                             </button>
 
                                                             {openMenuId === item._id && (
-                                                                <div className="absolute right-0 mt-1 w-28 bg-white border border-gray-100 rounded-lg shadow-lg overflow-hidden">
+                                                                <div className="absolute right-0 top-6 mt-1 w-28 bg-white border border-gray-100 rounded-lg shadow-lg overflow-hidden">
                                                                     <button
                                                                         onClick={() => {
                                                                             setRemoveTarget({ type: "reward", item });
@@ -571,27 +457,32 @@ export default function Gamified() {
                                                         </div>
                                                     </div>
 
-                                                    <div className="p-4 flex flex-col flex-1">
-                                                        <h3 className="font-semibold text-gray-900 truncate" title={item.name}>
-                                                            {item.name}
-                                                        </h3>
+                                                    <div className="p-4 flex flex-col flex-1 gap-1.5">
+                                                        <div className="flex justify-between items-start gap-2">
+                                                            <h3 className="font-semibold text-gray-900 leading-snug">
+                                                                <span className="text-gray-400 font-medium">
+                                                                    Reward {(rewardPage - 1) * REWARDS_PER_PAGE + idx + 1}
+                                                                </span>{" "}
+                                                                - {item.name}
+                                                            </h3>
+                                                        </div>
 
                                                         <span
-                                                            className={`mt-2 inline-flex w-fit items-center text-xs font-medium px-2 py-0.5 rounded-full ${outOfStock
+                                                            className={`inline-flex w-fit items-center text-xs font-medium px-2 py-0.5 rounded-full ${outOfStock
                                                                 ? "bg-red-50 text-red-600"
-                                                                : "bg-green-50 text-green-700"
+                                                                : "bg-gray-100 text-gray-500"
                                                                 }`}
                                                         >
                                                             {outOfStock ? "Out of stock" : `${item.stocks} in stock`}
                                                         </span>
 
-                                                        <div className="mt-auto pt-4 flex gap-2">
+                                                        <div className="w-full flex items-center gap-2 mt-auto pt-4">
                                                             <button
                                                                 onClick={() => {
                                                                     setOpenRewardModal(true);
                                                                     setClickReward(item.name);
                                                                 }}
-                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-gray-900 border border-gray-200 rounded-lg py-2 text-sm font-medium text-white"
+                                                                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-gray-900 text-white border border-gray-200 rounded-lg py-2 text-sm font-medium"
                                                             >
                                                                 <Eye size={15} />
                                                                 View
@@ -599,8 +490,9 @@ export default function Gamified() {
 
                                                             <button
                                                                 onClick={() => {
-                                                                    setToEdit(true);
-                                                                    handleRewardEdit(item._id);
+                                                                    setRewardEditing(true);
+                                                                    setEditRewardData(item);
+                                                                    setOpenRewardFormModal(true);
                                                                 }}
                                                                 className="flex-1 cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition"
                                                             >
@@ -628,11 +520,11 @@ export default function Gamified() {
                                                     aria-hidden="true"
                                                     className="invisible pointer-events-none rounded-xl overflow-hidden flex flex-col"
                                                 >
-                                                    <div className="h-28 w-full" />
-                                                    <div className="p-4 flex-1">
+                                                    <div className="w-full h-48" />
+                                                    <div className="p-4 flex flex-col gap-1.5">
                                                         <h3 className="font-semibold">&nbsp;</h3>
-                                                        <span className="inline-block mt-2">&nbsp;</span>
-                                                        <div className="mt-auto pt-4 flex gap-2">
+                                                        <span className="inline-block">&nbsp;</span>
+                                                        <div className="w-full flex items-center gap-2 mt-auto pt-4">
                                                             <div className="flex-1 py-2">&nbsp;</div>
                                                             <div className="flex-1 py-2">&nbsp;</div>
                                                         </div>
@@ -816,7 +708,7 @@ export default function Gamified() {
                                                             <span className="text-[12px] text-gray-400 font-medium">pts</span>
                                                         </span>
 
-                                                       
+
                                                     </div>
 
                                                     {/* Three-dot menu - right */}
@@ -824,7 +716,7 @@ export default function Gamified() {
                                                         className="absolute top-2 right-2 z-20 flex items-center gap-2"
                                                         ref={openMenuId === r._id ? menuRef : null}
                                                     >
-                                                         {r.auto && (
+                                                        {r.auto && (
                                                             <span className="bg-gray-900/80 text-white text-[11px] font-medium px-2 py-1 rounded-full flex items-center gap-1">
                                                                 <Zap size={11} />
                                                                 Auto-awarded
@@ -863,7 +755,7 @@ export default function Gamified() {
                                                             <span className="text-gray-400 font-medium">
                                                                 Rule {(rulePage - 1) * RULES_PER_PAGE + idx + 1}
                                                             </span>{" "}
-                                                            — {r.name}
+                                                            - {r.name}
                                                         </h3>
                                                     </div>
 
@@ -959,6 +851,18 @@ export default function Gamified() {
                     rName={clickedReward}
                 />
 
+                <RewardFormModal
+                    isOpen={openRewardFormModal}
+                    onClose={() => {
+                        setOpenRewardFormModal(false);
+                        setRewardEditing(false);
+                        setEditRewardData(null);
+                    }}
+                    edit={rewardEditing}
+                    rewardData={editRewardData}
+                    onSaved={fetchRewards}
+                />
+
                 <RulesModal
                     isOpen={openRulesModal}
                     onClose={() => {
@@ -969,12 +873,6 @@ export default function Gamified() {
                     edit={ruleEditing}
                     ruleData={editRuleData}
                     onSaved={fetchRules}
-                />
-
-                <ConfirmationModal
-                    isOpen={openConModal}
-                    onClose={() => setOpenConModal(false)}
-                    onConfirm={handleUpdateReward}
                 />
 
                 <AwardModal

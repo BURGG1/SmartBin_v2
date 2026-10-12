@@ -17,6 +17,7 @@ import {
     Plus,
     Filter,
     Pencil,
+    X,
 } from "lucide-react";
 
 import ConfirmationModal from "../../components/confirmationModal";
@@ -67,6 +68,7 @@ export default function WasteBin() {
     const [openConModal, setOpenConModal] = useState(false);
     const [activeBin, setActiveBin] = useState(null);
     const [openCounterModal, setOpenCounterModal] = useState(false);
+    const [openAddModal, setOpenAddModal] = useState(false);
 
     // Pending bin
     const [pendingBin, setPendingBin] = useState(null);
@@ -76,8 +78,6 @@ export default function WasteBin() {
     const [category, setCategory] = useState("");
     const [capacity, setCapacity] = useState("");
     const [location, setLocation] = useState("");
-    const [lat, setLat] = useState("");
-    const [lng, setLng] = useState("");
     const [addError, setAddError] = useState("");
     const [adding, setAdding] = useState(false);
     const [devices, setDevices] = useState([]);
@@ -178,6 +178,12 @@ export default function WasteBin() {
         };
     }
 
+    function closeAddModal() {
+        if (adding) return;
+        setOpenAddModal(false);
+        setAddError("");
+    }
+
     function handleAddBin() {
         setAddError("");
         if (!binName.trim() || !category || !capacity || !location || !deviceId) {
@@ -222,6 +228,7 @@ export default function WasteBin() {
                 setLocation("");
                 setDeviceId("");
                 setPendingBin(null);
+                setOpenAddModal(false);
                 fetchDevices(); // refresh so the just-assigned device drops out of the list
                 fetchBins(); // re-pull from the server instead of hand-patching local state
             } else {
@@ -313,105 +320,6 @@ export default function WasteBin() {
                         </p>
                     </div>
 
-                    {/* ── Add Bin ───────────────────────────────────────────── */}
-                    <section className="bg-white rounded-xl p-6 shadow">
-                        <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                            <Plus className="text-green-600" />
-                            Add Bin Information
-                        </h2>
-
-                        {addError && (
-                            <p className="mb-3 text-sm text-red-600">{addError}</p>
-                        )}
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-
-                            {/* Bin Name */}
-                            <div className="flex items-center">
-                                <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
-                                <input
-                                    type="text"
-                                    value={binName}
-                                    onChange={(e) => setBinName(e.target.value)}
-                                    className="ml-2 px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                    placeholder="Bin Name.."
-                                />
-                            </div>
-
-                            {/* Bin Type */}
-                            <div className="flex items-center">
-                                <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
-                                <select
-                                    value={category}
-                                    onChange={(e) => setCategory(e.target.value)}
-                                    className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
-                                >
-                                    <option value="">Bin Type</option>
-                                    <option value="Biodegradable">Biodegradable</option>
-                                    <option value="Non-biodegradable">Non-Biodegradable</option>
-                                </select>
-                            </div>
-
-                            {/* Capacity */}
-                            <div className="flex items-center">
-                                <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
-                                <select
-                                    value={capacity}
-                                    onChange={(e) => setCapacity(e.target.value)}
-                                    className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
-                                >
-                                    <option value="">Capacity</option>
-                                    <option value="100L">100L</option>
-                                    <option value="500L">500L</option>
-                                </select>
-                            </div>
-
-                            {/* Location */}
-                            <div className="flex items-center">
-                                <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
-                                <select
-                                    value={location}
-                                    onChange={(e) => setLocation(e.target.value)}
-                                    className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
-                                >
-                                    <option value="">Bin Location</option>
-                                    <option value="Rizal St.">Rizal St.</option>
-                                    <option value="Mabini St.">Mabini St.</option>
-                                    <option value="Bonifacio St.">Bonifacio St.</option>
-                                </select>
-                            </div>
-
-                            {/* Bin Device */}
-                            <div className="flex items-center">
-                                <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
-                                <select
-                                    value={deviceId}
-                                    onChange={(e) => setDeviceId(e.target.value)}
-                                    className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
-                                >
-                                    <option value="">Select Bin Device (e.g. BIN-001)</option>
-                                    {devices.map((d) => (
-                                        <option key={d.deviceId} value={d.deviceId}>
-                                            {d.deviceId} ({d.lat?.toFixed(5)}, {d.lng?.toFixed(5)})
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                        </div>
-
-                        <div className="mt-3 flex justify-end gap-2">
-                            <button
-                                onClick={handleAddBin}
-                                disabled={adding}
-                                className="cursor-pointer px-5 mt-auto bg-green-600 flex items-center justify-center gap-1 text-white rounded-lg p-2 hover:bg-green-700 transition disabled:opacity-50"
-                            >
-                                <Plus size={16} />
-                                {adding ? "Adding..." : "Add"}
-                            </button>
-                        </div>
-                    </section>
-
                     {/* ── Bin Information Table ─────────────────────────────── */}
                     <section className="bg-white rounded-2xl shadow p-6">
                         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
@@ -443,6 +351,18 @@ export default function WasteBin() {
                                         <option value="Non-biodegradable">Non-Biodegradable</option>
                                     </select>
                                 </div>
+
+                                <button
+                                    title="Add new bin"
+                                    onClick={() => {
+                                        setAddError("");
+                                        setOpenAddModal(true);
+                                    }}
+                                    className="cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white font-medium px-4 py-2 rounded-lg hover:bg-green-700 transition whitespace-nowrap"
+                                >
+                                    <Plus size={18} />
+                                    Add new bin
+                                </button>
                             </div>
                         </div>
 
@@ -613,6 +533,128 @@ export default function WasteBin() {
                 </main>
             </div>
 
+            {/* ── Add Bin Information Modal ─────────────────────────────── */}
+            {openAddModal && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-2xl rounded-2xl shadow-lg overflow-hidden max-h-[90vh] flex flex-col">
+
+                        {/* HEADER */}
+                        <div className="flex justify-between items-center px-6 py-4 border-b">
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                <Plus className="text-green-600" />
+                                Add Bin Information
+                            </h3>
+                            <button onClick={closeAddModal} disabled={adding}>
+                                <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                            </button>
+                        </div>
+
+                        {/* BODY */}
+                        <div className="p-6 overflow-y-auto">
+                            {addError && (
+                                <p className="mb-3 text-sm text-red-600">{addError}</p>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                                {/* Bin Name */}
+                                <div className="flex items-center">
+                                    <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
+                                    <input
+                                        type="text"
+                                        value={binName}
+                                        onChange={(e) => setBinName(e.target.value)}
+                                        className="ml-2 px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                        placeholder="Bin Name.."
+                                    />
+                                </div>
+
+                                {/* Bin Type */}
+                                <div className="flex items-center">
+                                    <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
+                                    <select
+                                        value={category}
+                                        onChange={(e) => setCategory(e.target.value)}
+                                        className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
+                                    >
+                                        <option value="">Bin Type</option>
+                                        <option value="Biodegradable">Biodegradable</option>
+                                        <option value="Non-biodegradable">Non-Biodegradable</option>
+                                    </select>
+                                </div>
+
+                                {/* Capacity */}
+                                <div className="flex items-center">
+                                    <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
+                                    <select
+                                        value={capacity}
+                                        onChange={(e) => setCapacity(e.target.value)}
+                                        className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
+                                    >
+                                        <option value="">Capacity</option>
+                                        <option value="100L">100L</option>
+                                        <option value="500L">500L</option>
+                                    </select>
+                                </div>
+
+                                {/* Location */}
+                                <div className="flex items-center">
+                                    <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
+                                    <select
+                                        value={location}
+                                        onChange={(e) => setLocation(e.target.value)}
+                                        className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
+                                    >
+                                        <option value="">Bin Location</option>
+                                        <option value="Rizal St.">Rizal St.</option>
+                                        <option value="Mabini St.">Mabini St.</option>
+                                        <option value="Bonifacio St.">Bonifacio St.</option>
+                                    </select>
+                                </div>
+
+                                {/* Bin Device */}
+                                <div className="flex items-center md:col-span-2">
+                                    <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
+                                    <select
+                                        value={deviceId}
+                                        onChange={(e) => setDeviceId(e.target.value)}
+                                        className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
+                                    >
+                                        <option value="">Select Bin Device (e.g. BIN-001)</option>
+                                        {devices.map((d) => (
+                                            <option key={d.deviceId} value={d.deviceId}>
+                                                {d.deviceId} ({d.lat?.toFixed(5)}, {d.lng?.toFixed(5)})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        {/* FOOTER */}
+                        <div className="flex justify-end gap-2 px-6 py-4 border-t">
+                            <button
+                                onClick={closeAddModal}
+                                disabled={adding}
+                                className="cursor-pointer bg-gray-600 text-white px-5 py-2 rounded-lg hover:bg-gray-700 transition disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleAddBin}
+                                disabled={adding}
+                                className="cursor-pointer px-5 bg-green-600 flex items-center justify-center gap-1 text-white rounded-lg py-2 hover:bg-green-700 transition disabled:opacity-50"
+                            >
+                                <Plus size={16} />
+                                {adding ? "Adding..." : "Add"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Rendered after the add modal so it stacks on top */}
             <ConfirmationModal
                 isOpen={openConModal}
                 onClose={handleCancelModal}

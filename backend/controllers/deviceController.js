@@ -1,5 +1,8 @@
 const Device = require("../models/Device");
 const Bin = require("../models/Bin");
+const { createNotification } = require("./notificationController");
+const { checkAutoConfirm, checkAndAutoSchedule } = require("../services/autoScheduleService");
+const CRITICAL_LEVEL = 90; // adjust to your definition of critical
 
 // POST /api/devices/location — ESP32 calls this every 30s
 const updateDeviceLocation = async (req, res) => {
@@ -43,7 +46,7 @@ const getAvailableDevices = async (req, res) => {
   }
 };
 
-// controllers/deviceController.js
+// POST /api/devices/fill — ESP32 reports fill level
 const updateFillLevel = async (req, res) => {
   try {
     const { deviceId, fillLevel, distanceCm } = req.body;
@@ -52,10 +55,19 @@ const updateFillLevel = async (req, res) => {
       return res.status(400).json({ success: false, message: "deviceId and fillLevel required" });
     }
 
+    const newLevel = Number(fillLevel);
+    if (Number.isNaN(newLevel)) {
+      return res.status(400).json({ success: false, message: "fillLevel must be a number" });
+    }
+
+    // Read the OLD level BEFORE it gets overwritten
+    const existing = await Device.findOne({ deviceId });
+    const previousLevel = existing?.fillLevel ?? 0;
+
     const device = await Device.findOneAndUpdate(
       { deviceId },
       {
-        fillLevel,
+        fillLevel: newLevel,
         distanceCm,
         lastFillUpdate: new Date(),
         lastSeen: new Date(),
@@ -65,7 +77,30 @@ const updateFillLevel = async (req, res) => {
 
     // ── Sync to the assigned bin ──
     if (device.assignedBin) {
-      await Bin.findByIdAndUpdate(device.assignedBin, { fill: fillLevel });
+      const bin = await Bin.findByIdAndUpdate(
+        device.assignedBin,
+        { fill: newLevel },
+        { new: true }
+      );
+
+      // ── Notify admin when the bin crosses into critical ──
+      if (bin && newLevel >= CRITICAL_LEVEL && previousLevel < CRITICAL_LEVEL) {
+        const binLabel = bin.binId ?? bin.id ?? String(bin._id);
+        await createNotification({
+          title: "Bin fill level critical",
+          message: `${binLabel} is ${newLevel}% full and needs collection.`,
+          type: "bin_critical",
+          meta: { binId: binLabel, fillLevel: newLevel },
+          dedupe: { type: "bin_critical", "meta.binId": binLabel },
+        });
+      }
+
+      // ── Auto-confirm collection: runs on EVERY reading ──
+      if (bin && newLevel >= 75 && previousLevel < 75) {
+        checkAndAutoSchedule().catch((err) =>
+          console.error("[AutoSchedule] Error after fill update:", err.message)
+        );
+      }
     }
 
     res.json({ success: true, data: device });

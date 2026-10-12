@@ -7,12 +7,12 @@ const REWARD_LIMIT = 7;
 
 export function ViewRewardModal({ isOpen, onClose, rName }) {
     const [fromDate, setFromDate] = useState("");
-    const [toDate, setToDate]     = useState("");
-    const [page, setPage]         = useState(1);
-    const [logs, setLogs]         = useState([]);
-    const [total, setTotal]       = useState(0);
-    const [loading, setLoading]   = useState(false);
-    const [error, setError]       = useState("");
+    const [toDate, setToDate] = useState("");
+    const [page, setPage] = useState(1);
+    const [logs, setLogs] = useState([]);
+    const [total, setTotal] = useState(0);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
 
     const abortRef = useRef(null);
 
@@ -28,18 +28,22 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
             const params = new URLSearchParams({
                 page: pageArg,
                 limit: REWARD_LIMIT,
-                ...(rName    && { rewardName: rName }),
+                ...(rName && { rewardName: rName }),
                 ...(fromDate && { from: fromDate }),
-                ...(toDate   && { to: toDate }),
+                ...(toDate && { to: toDate }),
             });
 
             // NOTE: adjust this endpoint path to match your actual backend route
-            const res  = await fetch(`${BASE_URL}/api/rewards/logs?${params}`, { signal: controller.signal });
+            const res = await fetch(`${BASE_URL}/api/rewards/logs?${params}`, { signal: controller.signal });
             const data = await res.json();
 
             if (data.success) {
-                setLogs(data.data);
-                setTotal(data.pagination?.total ?? data.data.length);
+                // Only keep logs that belong to the reward being viewed
+                const onlyThisReward = rName
+                    ? data.data.filter((l) => l.rewardName === rName)
+                    : data.data;
+                setLogs(onlyThisReward);
+                setTotal(data.pagination?.total ?? onlyThisReward.length);
                 setPage(pageArg);
             } else {
                 setError("Failed to load reward history.");
@@ -51,9 +55,20 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
         }
     }, [rName, fromDate, toDate]);
 
+    // Clear the previous reward's rows when the modal closes
+    useEffect(() => {
+        if (isOpen) return;
+        abortRef.current?.abort();
+        setLogs([]);
+        setTotal(0);
+        setPage(1);
+    }, [isOpen]);
+
     // Reset filters and load page 1 whenever the modal opens (or the reward changes)
     useEffect(() => {
         if (!isOpen) return;
+        setLogs([]);
+        setTotal(0);
         setFromDate("");
         setToDate("");
         fetchLogs(1);
@@ -83,7 +98,10 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
 
                 {/* HEADER */}
                 <div className="flex justify-between items-center px-6 py-4 border-b">
-                    <h2 className="text-lg font-bold">Reward History</h2>
+                    <div>
+                        <h2 className="text-lg font-bold">Reward History</h2>
+                        <p className="text-gray-500 text-sm">Showing redemption history for: <span className="font-medium">{rName}</span></p>
+                    </div>
                     <button onClick={onClose}>
                         <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
                     </button>

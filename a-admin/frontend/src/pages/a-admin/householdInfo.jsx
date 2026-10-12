@@ -436,10 +436,10 @@ export default function HouseholdInfo() {
                                         <button
                                             title="Register household"
                                             onClick={() => setOpenAddModal(true)}
-                                            className="bg-green-600 text-white w-full flex p-2 rounded-lg cursor-pointer md:w-10 h-10 hover:bg-green-700"
+                                            className="bg-green-600 text-white w-full flex justify-center items-center p-2 rounded-lg cursor-pointer hover:bg-green-700"
                                         >
-                                            <Plus />
-                                            <p className="block md:hidden">Register Household</p>
+                                            <Plus size={20} />
+                                            <p className="px-1"> Register Household</p>
                                         </button>
                                     </div>
                                 </div>
@@ -478,7 +478,7 @@ export default function HouseholdInfo() {
 
                                         <tbody>
                                             {householdRecords.length === 0 ? (
-                                                <tr>
+                                                 <tr>
                                                     <td colSpan={6} className="text-center py-8 text-gray-400">
                                                         No households found.
                                                     </td>

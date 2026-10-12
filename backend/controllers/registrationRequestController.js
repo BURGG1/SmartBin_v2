@@ -1,4 +1,5 @@
 const RegistrationRequest = require("../models/RegistrationRequest");
+const { createNotification } = require("./notificationController");
 
 // POST /api/requests  — mobile app submits registration
 const createRequest = async (req, res) => {
@@ -34,6 +35,21 @@ const createRequest = async (req, res) => {
       },
       email: email ? email.toLowerCase().trim() : null,
       contactNumber: contactNumber || null,
+    });
+
+    // ── Notify admin: new registration request ──
+    const addressText = [request.address?.houseNo, request.address?.street]
+      .filter(Boolean)
+      .join(" ");
+
+    await createNotification({
+      title: "New registration request",
+      message: `${request.fullname}${addressText ? ` (${addressText})` : ""} submitted a registration request.`,
+      type: "registration_request",
+      meta: {
+        requestId: String(request._id),
+        applicantName: request.fullname,
+      },
     });
 
     res.status(201).json({

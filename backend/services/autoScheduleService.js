@@ -3,7 +3,9 @@ const Collector = require("../models/Collector");
 const BinSchedule = require("../models/BinSchedule");
 
 const FILL_THRESHOLD = 75;
-
+const EMPTIED_THRESHOLD = 10;
+const MIN_SCHEDULE_AGE_MS = 5 * 60 * 20;
+const LOW_CONFIRM_MS = 90 * 20;
 // ── Find the best available collector ────────────────────────────────────────
 // Uses assignedBins.length to pick the least-loaded collector evenly.
 const findBestCollector = async () => {
@@ -100,9 +102,48 @@ const unassignBinFromCollector = async (binId) => {
     );
 };
 
+const completeScheduleForBin = async (binId, method = "manual") => {
+    const schedule = await BinSchedule.findOneAndUpdate(
+        { binId, status: "pending" },
+        { status: "completed", completedAt: new Date(), completionMethod: method },
+        { new: true }
+    );
+    if (!schedule) return null;
+
+    // clean up any stray duplicate pending schedules for this bin
+    await BinSchedule.updateMany({ binId, status: "pending" }, { status: "cancelled" });
+
+    await Bin.findOneAndUpdate({ binId }, { lastEmptied: new Date(), lowSince: null });
+    await unassignBinFromCollector(binId);
+    await Collector.findByIdAndUpdate(schedule.collector, { $inc: { totalCollections: 1 } });
+    return schedule;
+};
+
+// `bin` = the document returned AFTER the fill update (includes lowSince)
+const checkAutoConfirm = async (bin, newLevel) => {
+    if (newLevel > EMPTIED_THRESHOLD) {
+        if (bin.lowSince) await Bin.updateOne({ _id: bin._id }, { lowSince: null });
+        return null;
+    }
+
+    const schedule = await BinSchedule.findOne({ binId: bin.binId, status: "pending" });
+    if (!schedule) return null;
+    if (Date.now() - schedule.createdAt.getTime() < MIN_SCHEDULE_AGE_MS) return null;
+
+    if (!bin.lowSince) {
+        await Bin.updateOne({ _id: bin._id }, { lowSince: new Date() });
+        return null;
+    }
+    if (Date.now() - bin.lowSince.getTime() < LOW_CONFIRM_MS) return null;
+
+    return completeScheduleForBin(bin.binId, "auto");
+};
+
 module.exports = {
     checkAndAutoSchedule,
     autoScheduleBin,
     findBestCollector,
     unassignBinFromCollector,
+    completeScheduleForBin,
+    checkAutoConfirm,
 };

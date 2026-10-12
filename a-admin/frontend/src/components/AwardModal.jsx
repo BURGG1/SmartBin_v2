@@ -6,8 +6,8 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
 
     const [households, setHouseholds]       = useState([]);
     const [loadingHH, setLoadingHH]         = useState(true);
-    const [selectedId, setSelectedId]       = useState(null);   // single selection
-    const [selectedHH, setSelectedHH]       = useState(null);   // full object
+    const [selectedId, setSelectedId]       = useState(null);  
+    const [selectedHH, setSelectedHH]       = useState(null);  
     const [search, setSearch]               = useState("");
     const [location, setLocation]           = useState("all");
     const [quantity, setQuantity]           = useState(1);

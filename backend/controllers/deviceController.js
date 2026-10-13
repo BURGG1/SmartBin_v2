@@ -47,66 +47,130 @@ const getAvailableDevices = async (req, res) => {
 };
 
 // POST /api/devices/fill — ESP32 reports fill level
+
 const updateFillLevel = async (req, res) => {
   try {
     const { deviceId, fillLevel, distanceCm } = req.body;
 
     if (!deviceId || fillLevel === undefined) {
-      return res.status(400).json({ success: false, message: "deviceId and fillLevel required" });
+      return res.status(400).json({
+        success: false,
+        message: "deviceId and fillLevel are required.",
+      });
     }
 
     const newLevel = Number(fillLevel);
-    if (Number.isNaN(newLevel)) {
-      return res.status(400).json({ success: false, message: "fillLevel must be a number" });
+
+    if (
+      !Number.isFinite(newLevel) ||
+      newLevel < 0 ||
+      newLevel > 100
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "fillLevel must be a number between 0 and 100.",
+      });
     }
 
-    // Read the OLD level BEFORE it gets overwritten
     const existing = await Device.findOne({ deviceId });
-    const previousLevel = existing?.fillLevel ?? 0;
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Device not found. Register or pair the device first.",
+      });
+    }
+
+    const now = new Date();
 
     const device = await Device.findOneAndUpdate(
-      { deviceId },
+      { _id: existing._id },
       {
-        fillLevel: newLevel,
-        distanceCm,
-        lastFillUpdate: new Date(),
-        lastSeen: new Date(),
+        $set: {
+          fillLevel: newLevel,
+          distanceCm,
+          lastFillUpdate: now,
+          lastSeen: now,
+        },
       },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
+      { new: true, runValidators: true }
     );
 
-    // ── Sync to the assigned bin ──
     if (device.assignedBin) {
       const bin = await Bin.findByIdAndUpdate(
         device.assignedBin,
-        { fill: newLevel },
-        { new: true }
+        { $set: { fill: newLevel } },
+        { new: true, runValidators: true }
       );
 
-      // ── Notify admin when the bin crosses into critical ──
-      if (bin && newLevel >= CRITICAL_LEVEL && previousLevel < CRITICAL_LEVEL) {
-        const binLabel = bin.binId ?? bin.id ?? String(bin._id);
-        await createNotification({
-          title: "Bin fill level critical",
-          message: `${binLabel} is ${newLevel}% full and needs collection.`,
-          type: "bin_critical",
-          meta: { binId: binLabel, fillLevel: newLevel },
-          dedupe: { type: "bin_critical", "meta.binId": binLabel },
-        });
-      }
+      if (bin) {
+        // Check an existing collection on every reading.
+        try {
+          await checkAutoConfirm(bin, newLevel);
+        } catch (err) {
+          console.error(
+            "[AutoConfirm] Failed:",
+            err.message
+          );
+        }
 
-      // ── Auto-confirm collection: runs on EVERY reading ──
-      if (bin && newLevel >= 75 && previousLevel < 75) {
-        checkAndAutoSchedule().catch((err) =>
-          console.error("[AutoSchedule] Error after fill update:", err.message)
-        );
+        // Keep retrying scheduling whenever the bin is >= 75%.
+        // The scheduler itself checks for an existing pending schedule.
+        if (newLevel >= 75) {
+          try {
+            await checkAndAutoSchedule();
+          } catch (err) {
+            console.error(
+              "[AutoSchedule] Failed:",
+              err.message
+            );
+          }
+        }
+
+        // Notify only when the reading crosses the critical threshold.
+        if (
+          newLevel >= CRITICAL_LEVEL &&
+          (existing.fillLevel ?? 0) < CRITICAL_LEVEL
+        ) {
+          const binLabel = bin.binId;
+
+          try {
+            await createNotification({
+              title: "Bin fill level critical",
+              message: `${binLabel} is ${newLevel}% full and needs collection.`,
+              type: "bin_critical",
+              meta: {
+                binId: binLabel,
+                fillLevel: newLevel,
+              },
+              dedupe: {
+                type: "bin_critical",
+                "meta.binId": binLabel,
+              },
+            });
+          } catch (err) {
+            console.error(
+              "[Notification] Failed:",
+              err.message
+            );
+          }
+        }
       }
     }
 
-    res.json({ success: true, data: device });
+    return res.json({
+      success: true,
+      data: device,
+    });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error("[FillUpdate] Failed:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update fill level.",
+    });
   }
 };
+
 
 module.exports = { updateDeviceLocation, getAvailableDevices, updateFillLevel };

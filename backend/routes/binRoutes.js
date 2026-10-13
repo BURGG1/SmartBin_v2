@@ -7,6 +7,7 @@ const {
     checkAndAutoSchedule,
     findBestCollector,
     unassignBinFromCollector,
+    completeScheduleForBin,
 } = require("../services/autoScheduleService");
 const {
     dispose,
@@ -117,10 +118,21 @@ router.post("/:binId/schedule", async (req, res) => {
         const bin = await Bin.findOne({ binId });
         if (!bin) return res.status(404).json({ success: false, message: "Bin not found" });
 
-        const existingSchedule = await BinSchedule.findOne({ binId, status: "pending" });
+        const existingSchedule = await BinSchedule.findOne({
+        binId,
+        status: "pending",
+        });
+
         if (existingSchedule) {
-            await BinSchedule.updateMany({ binId, status: "pending" }, { status: "cancelled" });
-            await unassignBinFromCollector(binId);
+        return res.status(409).json({
+            success: false,
+            message: "This bin already has a pending collection.",
+            data: {
+            binId,
+            scheduleId: existingSchedule._id,
+            collector: existingSchedule.collectorName,
+            },
+        });
         }
 
         let collector;
@@ -174,27 +186,37 @@ router.post("/:binId/schedule", async (req, res) => {
     }
 });
 
+
 router.post("/:binId/schedule/complete", async (req, res) => {
-    try {
-        const { binId } = req.params;
+  try {
+    const { binId } = req.params;
 
-        const schedule = await BinSchedule.findOneAndUpdate(
-            { binId, status: "pending" },
-            { status: "completed", completedAt: new Date() },
-            { new: true }
-        );
-        if (!schedule) {
-            return res.status(404).json({ success: false, message: "No pending schedule found." });
-        }
+    const schedule = await completeScheduleForBin(
+      binId,
+      "manual"
+    );
 
-        await Bin.findOneAndUpdate({ binId }, { fill: 0, lastEmptied: new Date() });
-        await unassignBinFromCollector(binId);
-        await Collector.findByIdAndUpdate(schedule.collector, { $inc: { totalCollections: 1 } });
-
-        res.json({ success: true, message: `${binId} marked as collected.`, data: schedule });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+    if (!schedule) {
+      return res.status(404).json({
+        success: false,
+        message: "No pending collection found for this bin.",
+      });
     }
+
+    return res.json({
+      success: true,
+      message: `${binId} marked as collected. History preserved.`,
+      data: schedule,
+    });
+  } catch (err) {
+    console.error("[CompleteCollection] Failed:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to complete collection.",
+    });
+  }
 });
+
 
 module.exports = router;

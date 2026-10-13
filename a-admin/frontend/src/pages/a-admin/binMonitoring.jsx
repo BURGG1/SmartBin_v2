@@ -129,55 +129,105 @@ export default function BinMonitoring() {
   // fill/lastEmptied data into the bins we already have, so we don't
   // clobber locally-set schedules with server data that doesn't know
   // about them yet.
-  const fetchBins = useCallback(async (isInitial = false) => {
-    // Cancel any still-in-flight previous request before starting a new
-    // one — with a 10s poll interval, a slow response can otherwise
-    // resolve after a newer one and stomp fresher data.
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
 
-    if (isInitial) setBinsLoading(true);
-    try {
-      const params = new URLSearchParams({ limit: BINS_FETCH_LIMIT });
-      const res = await fetch(`${API}?${params}`, { signal: controller.signal });
-      const data = await res.json();
-      if (!data.success) throw new Error("Server returned an unsuccessful response");
+const fetchBins = useCallback(async (isInitial = false) => {
+  // Cancel any previous requests to prevent stale responses.
+  abortRef.current?.abort();
 
-      const prevById = new Map(binsRef.current.map((b) => [b.id, b]));
+  const controller = new AbortController();
+  abortRef.current = controller;
 
-      const nextBins = data.data.map((bin) => {
-        const prev = prevById.get(bin.binId);
-        return {
-          id: bin.binId,
-          _id: bin._id,
-          name: bin.name,
-          location: bin.location,
-          type: bin.type,
-          fill: bin.fill ?? 0,
-          capacity: bin.capacity,
-          lastEmptied: bin.lastEmptied ? new Date(bin.lastEmptied) : null,
-          // Preserve any schedule we already know about locally, unless
-          // the server tells us about one directly.
-          schedule: bin.schedule ?? prev?.schedule ?? null,
-          lat: bin.lat ?? 14.86515,
-          lng: bin.lng ?? 120.75615,
-          status: bin.status ?? "offline",
-        };
-      });
+  if (isInitial) setBinsLoading(true);
 
-      setBins(nextBins);
-      setBinsError("");
-      failureCountRef.current = 0;
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      console.error("Failed to fetch bins:", err);
-      failureCountRef.current += 1;
-      setBinsError("Live bin data is unavailable right now.");
-    } finally {
-      if (isInitial) setBinsLoading(false);
+  try {
+    const params = new URLSearchParams({
+      limit: String(BINS_FETCH_LIMIT),
+    });
+
+    // Fetch bins and active schedules together.
+    const [binsRes, schedulesRes] = await Promise.all([
+      fetch(`${API}?${params}`, {
+        signal: controller.signal,
+      }),
+      fetch(`${API}/schedules`, {
+        signal: controller.signal,
+      }),
+    ]);
+
+    if (!binsRes.ok || !schedulesRes.ok) {
+      throw new Error("Failed to fetch bins or schedules.");
     }
-  }, []);
+
+    const [binsData, schedulesData] = await Promise.all([
+      binsRes.json(),
+      schedulesRes.json(),
+    ]);
+
+    if (!binsData.success || !schedulesData.success) {
+      throw new Error("Server returned an unsuccessful response.");
+    }
+
+    // The backend schedules endpoint returns pending schedules only.
+    const scheduleByBin = new Map(
+      schedulesData.data.map((schedule) => [
+        schedule.binId,
+        {
+          id: schedule._id,
+          collector:
+            schedule.collectorName ??
+            schedule.collector?.name ??
+            "Assigned",
+          date: schedule.scheduledAt
+            ? new Date(schedule.scheduledAt).toLocaleString()
+            : "—",
+        },
+      ])
+    );
+
+    const nextBins = binsData.data.map((bin) => ({
+      id: bin.binId,
+      _id: bin._id,
+      name: bin.name,
+      location: bin.location,
+      type: bin.type,
+      fill: bin.fill ?? 0,
+      capacity: bin.capacity,
+      lastEmptied: bin.lastEmptied
+        ? new Date(bin.lastEmptied)
+        : null,
+
+      // Always use the server's current pending schedule.
+      // Do not preserve a completed schedule from previous UI state.
+      schedule: scheduleByBin.get(bin.binId) ?? null,
+
+      lat: bin.lat ?? 14.86515,
+      lng: bin.lng ?? 120.75615,
+      status: bin.status ?? "offline",
+    }));
+
+    // Ignore results if this request has been superseded.
+    if (controller.signal.aborted) return;
+
+    binsRef.current = nextBins;
+    setBins(nextBins);
+    setBinsError("");
+    failureCountRef.current = 0;
+  } catch (err) {
+    if (err.name === "AbortError") return;
+
+    console.error("Failed to fetch bins:", err);
+    failureCountRef.current += 1;
+    setBinsError("Live bin data is unavailable right now.");
+  } finally {
+    if (
+      isInitial &&
+      !controller.signal.aborted
+    ) {
+      setBinsLoading(false);
+    }
+  }
+}, []);
+
 
   // ── Fetch collectors from database ────────────────────────────────────────
   // Matches your actual Collector schema: availability is `isActive`

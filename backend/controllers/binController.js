@@ -18,7 +18,7 @@ async function generateBinId() {
 // POST /api/bins/dispose
 const dispose = async (req, res) => {
   try {
-    const { rfid, binId } = req.body;
+    const { rfid, binId, kilos, items, bricks } = req.body;
     if (!rfid || !binId) {
       return res.status(400).json({ success: false, message: "rfid and binId are required." });
     }
@@ -40,22 +40,33 @@ const dispose = async (req, res) => {
     household.points.total     += basePoints;
     household.points.thisMonth += basePoints;
 
-    const disposal = await Disposal.create({
-      household:    household._id,
-      bin:          bin._id,
-      rfid,
-      binId,
-      wasteType:    bin.type,
-      pointsEarned: basePoints,
-    });
+    
+const disposal = await Disposal.create({
+  household: household._id,
+  bin: bin._id,
+  rfid,
+  binId,
+  wasteType: bin.type,
+  pointsEarned: basePoints,
+});
 
-    await PointLog.create({
-      household: household._id,
-      points:    basePoints,
-      reason:    `Disposed ${bin.type} waste at ${binId}`,
-    });
+// Persist base points before running the rule service.
+await household.save();
 
-    const streakAwards = await checkAndAwardPoints(household);
+await PointLog.create({
+  household: household._id,
+  rule: null,
+  points: basePoints,
+  quantity: 1,
+  reason: `Disposed ${bin.type} waste at ${binId}`,
+});
+
+const streakResult = await checkAndAwardPoints(household._id, {
+  disposalId: disposal._id,
+  kilos,
+  items,
+  bricks,
+});
 
     // ── Auto-schedule check after every disposal ──────────────────────────────
     // Re-fetch the bin to get the latest fill level before checking
@@ -73,9 +84,11 @@ const dispose = async (req, res) => {
         household:        household.fullname,
         wasteType:        bin.type,
         basePointsEarned: basePoints,
-        streakAwards,
-        currentStreak:    household.streak?.currentStreak ?? 1,
-        totalPoints:      household.points.total,
+        streakAwards: streakResult.awards,
+        currentStreak: streakResult.currentStreak,
+        totalPoints: (
+          await Household.findById(household._id).select("points")
+        ).points.total,
         disposedAt:       disposal.disposedAt,
       },
     });

@@ -19,10 +19,12 @@ const ruleRoutes = require("./routes/ruleRoutes");
 const collectorRoutes = require("./routes/collectorRoutes");
 const errorHandler = require("./middleware/errorHandler");
 const authRoutes = require("./routes/authRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 const registrationRequestRoutes = require("./routes/registrationRequestRoutes");
 const { startBinStatusChecker } = require("./jobs/binStatusChecker");
 const { checkAndAutoSchedule } = require("./services/autoScheduleService");
 const { getTransporter } = require("./config/mailer");
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,7 +35,7 @@ startBinStatusChecker();
 getTransporter()
   .then(() => console.log("[Mailer] Ready to send emails."))
   .catch((err) => console.error("[Mailer] Verification failed:", err.message));
-  
+
 
 // ═══════════════════════════════════════════════════════════════
 //  0. TRUST PROXY — required on Render (and most cloud hosts) so
@@ -101,12 +103,12 @@ const generalLimiter = rateLimit({
 
 // ── Auth limiter — strict, resets on successful login ────────────────────────
 const authLimiter = rateLimit({
-    windowMs:               15 * 60 * 1000, // 15 minutes
-    max:                    20,             // 20 attempts per 15 min
-    standardHeaders:        true,
-    legacyHeaders:          false,
-    skipSuccessfulRequests: true,           // successful logins don't count
-    message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,             // 20 attempts per 15 min
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,           // successful logins don't count
+  message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
 });
 
 const rfidLimiter = rateLimit({
@@ -140,7 +142,7 @@ app.use("/api/bins", binRoutes);
 app.use("/api/collectors", collectorRoutes);
 app.use("/api/devices", deviceRoutes);
 app.use("/api/analytics", complianceRoutes);
-
+app.use("/api/notifications", notificationRoutes);
 app.get("/api/health", (req, res) => {
   res.json({ success: true, message: "Server is running" });
 });

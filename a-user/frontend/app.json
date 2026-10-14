@@ -26,6 +26,12 @@
       "favicon": "./assets/images/logo.png"
     },
     "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "SmartBin needs the camera to scan the number stamped on trash bags."
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",

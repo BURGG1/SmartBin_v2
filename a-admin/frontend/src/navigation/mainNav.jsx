@@ -19,7 +19,7 @@ const userMenu = [
     { name: "Household Information", icon: Home, path: "/householdInfo" },
     { name: "Waste bin Segregation", icon: Trash2, path: "/wastebin" },
     { name: "Bin Monitoring", icon: Trash2, path: "/binMonitoring" },
-    { name: "Reward Management", icon: Star, path: "/gamified" },
+    { name: "Rewards and Rules", icon: Star, path: "/gamified" },
 ];
 
 const adminMenu = [
@@ -27,7 +27,7 @@ const adminMenu = [
     { name: "Household Information", icon: Home, path: "/householdInfo" },
     { name: "Waste bin Segregation", icon: Trash2, path: "/wastebin" },
     { name: "Bin Monitoring", icon: Trash2, path: "/binMonitoring" },
-    { name: "Reward Management", icon: Star, path: "/gamified" },
+    { name: "Rewards and Rules", icon: Star, path: "/gamified" },
 ]
 
 export default function NavigationShell() {

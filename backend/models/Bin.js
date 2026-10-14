@@ -37,6 +37,10 @@ const binSchema = new mongoose.Schema(
     lastEmptied: {
       type: Date,
       default: null,
+    },    
+    lowSince: {
+      type: Date,
+      default: null,
     },
     lat: {
       type: Number,

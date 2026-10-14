@@ -22,4 +22,13 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
-module.exports = { upload, cloudinary };
+const uploadMemory = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) =>
+        file.mimetype.startsWith("image/")
+            ? cb(null, true)
+            : cb(new Error("Only image uploads are allowed.")),
+});
+
+module.exports = { upload, uploadMemory, cloudinary };

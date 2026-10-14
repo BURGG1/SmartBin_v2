@@ -1,8 +1,11 @@
 const Household      = require("../models/Household");
 const RfidLog        = require("../models/RfidLog");
 const Bin            = require("../models/Bin");
+const Collector = require("../models/Collector");
 const { cloudinary } = require("../middleware/upload");
+const { createNotification } = require("./notificationController");
 const { normalizeRfid } = require("../utils/normalize");
+const { extractStampCandidates } = require("../utils/stampOCR");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -324,14 +327,172 @@ const flagLog = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 8. STAMP SCAN / FLAG  (collector mobile app)
+// ─────────────────────────────────────────────────────────────────────────────
+const STAMP_RE = /^\d{1,6}$/;
+
+const toPreview = (log) => ({
+    logId:       log._id,
+    stampNumber: String(log.disposalOrder).padStart(6, "0"),
+    binId:       log.binId,
+    household:   log.household ? { fullname: log.household.fullname } : null,
+    scannedAt:   log.scannedAt,
+    flagged:     !!log.flagged,
+    flaggedAt:   log.flaggedAt,
+});
+
+async function destroyEvidence(url) {
+    try {
+        const publicId = url.split("/").slice(-2).join("/").split(".")[0];
+        await cloudinary.uploader.destroy(publicId);
+    } catch (err) {
+        console.warn("[Cloudinary] cleanup failed:", err.message);
+    }
+}
+
+async function assertAssignedBin(userId, binId) {
+    const collector = await Collector.findById(userId).select("assignedBins isActive");
+    if (!collector || collector.isActive === false) {
+        return { status: 403, message: "Collector account is not active." };
+    }
+    if (!collector.assignedBins.includes(binId)) {
+        return { status: 403, message: "This bin is not assigned to you." };
+    }
+    return null;
+}
+
+async function findBag(binId, orders) {
+    const logs = await RfidLog.find({ binId, action: "dispose", disposalOrder: { $in: orders } })
+        .sort({ scannedAt: -1 })
+        .limit(5)
+        .populate("household", "fullname");
+
+    if (logs.length === 0) {
+        return { status: 404, message: "Trash bag record not found." };
+    }
+    if (new Set(logs.map((l) => l.disposalOrder)).size > 1) {
+        return { status: 422, message: "More than one stamp number detected. Retake the photo closer to the stamp." };
+    }
+    if (logs.length > 1) {
+        return { status: 409, message: "Duplicate stamp number on this bin. Please report it to the admin." };
+    }
+    return { log: logs[0] };
+}
+
+// Middleware: validates stamp, checks bin assignment, loads the log into req.bagLog.
+// Runs BEFORE the Cloudinary upload so invalid requests never upload anything.
+const prepareBag = async (req, res, next) => {
+    try {
+        const binId = String(req.params.binId || "").trim();
+        const { stamp } = req.params;
+
+        if (!binId || !STAMP_RE.test(stamp)) {
+            return res.status(400).json({ success: false, message: "Enter a valid stamp number (up to 6 digits)." });
+        }
+        const denied = await assertAssignedBin(req.user.id, binId);
+        if (denied) return res.status(denied.status).json({ success: false, message: denied.message });
+
+        const found = await findBag(binId, [parseInt(stamp, 10)]);
+        if (found.status) return res.status(found.status).json({ success: false, message: found.message });
+
+        req.bagLog = found.log;
+        next();
+    } catch (error) {
+        console.error("[prepareBag]", error);
+        res.status(500).json({ success: false, message: "Could not look up that bag." });
+    }
+};
+
+const rejectIfAlreadyFlagged = (req, res, next) => {
+    if (req.bagLog.flagged) {
+        return res.status(409).json({ success: false, message: "This bag has already been flagged." });
+    }
+    next();
+};
+
+// GET /api/rfid/stamp/:binId/:stamp  (typed-number fallback)
+const getBagByStamp = (req, res) =>
+    res.json({ success: true, data: toPreview(req.bagLog) });
+
+// POST /api/rfid/stamp/scan  (multipart: photo + binId)
+const scanStampImage = async (req, res) => {
+    try {
+        const binId = String(req.body?.binId || "").trim();
+        if (!binId) return res.status(400).json({ success: false, message: "binId is required." });
+        if (!req.file) return res.status(400).json({ success: false, message: "photo is required." });
+
+        const denied = await assertAssignedBin(req.user.id, binId);
+        if (denied) return res.status(denied.status).json({ success: false, message: denied.message });
+
+        const candidates = await extractStampCandidates(req.file.buffer);
+        if (candidates.length === 0) {
+            return res.status(422).json({
+                success: false,
+                message: "Couldn't read a 6-digit number. Move closer, avoid glare, or type it in.",
+            });
+        }
+
+        // The database decides which candidate is real.
+        const found = await findBag(binId, candidates.map((c) => parseInt(c, 10)));
+        if (found.status) return res.status(found.status).json({ success: false, message: found.message });
+
+        return res.json({ success: true, data: toPreview(found.log) });
+    } catch (error) {
+        console.error("[scanStampImage]", error);
+        res.status(500).json({ success: false, message: "Could not read the stamp. Please try again." });
+    }
+};
+
+// PATCH /api/rfid/stamp/:binId/:stamp/flag  (multipart: evidencePhoto optional)
+const flagBagByStamp = async (req, res) => {
+    const discardUpload = async () => { if (req.file?.path) await destroyEvidence(req.file.path); };
+    try {
+        const update = { flagged: true, flaggedAt: new Date(), flaggedBy: req.user.id };
+        if (req.file) update.evidencePhoto = req.file.path;
+
+        // Atomic: only one request can flip flagged false -> true.
+        const updated = await RfidLog.findOneAndUpdate(
+            { _id: req.bagLog._id, flagged: { $ne: true } },
+            { $set: update },
+            { new: true }
+        ).populate("household", "fullname householdId"); // add whichever ID field your Household model has
+
+        if (!updated) {
+            await discardUpload();
+            return res.status(409).json({ success: false, message: "This bag has already been flagged." });
+        }
+
+        // ── Notify admin: segregation anomaly ──
+        const preview = toPreview(updated);
+        const household = updated.household;
+        const householdId = String(household?.householdId ?? household?._id ?? "Unknown");
+
+        await createNotification({
+            title: "Household flagged: segregation anomaly",
+            message: `Household ${householdId} (${household?.fullname ?? "Unknown"}) was flagged for bag #${preview.stampNumber} at ${updated.binId}.`,
+            type: "household_flagged",
+            meta: {
+                householdId,
+                householdName: household?.fullname,
+                stampNumber: preview.stampNumber,
+                binId: updated.binId,
+                logId: String(updated._id),
+                evidenceUrl: updated.evidencePhoto || undefined,
+            },
+        });
+
+        return res.json({ success: true, data: preview });
+    } catch (error) {
+        await discardUpload();
+        console.error("[flagBagByStamp]", error);
+        res.status(500).json({ success: false, message: "Could not flag this bag. Please try again." });
+    }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-    binScan,
-    webScan,
-    getLatestScan,
-    checkRfid,
-    getRfidLogs,
-    getRfidHistory,
-    flagLog,
+    binScan, webScan, getLatestScan, checkRfid, getRfidLogs, getRfidHistory, flagLog,
+    prepareBag, rejectIfAlreadyFlagged, getBagByStamp, scanStampImage, flagBagByStamp,
 };

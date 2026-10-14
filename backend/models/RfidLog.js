@@ -9,6 +9,7 @@ const rfidLogSchema = new mongoose.Schema(
     disposalOrder: { type: Number, default: null }, // global order per bin
     flagged: { type: Boolean, default: false }, 
     flaggedAt: { type: Date, default: null },
+    flaggedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Collector", default: null }, // NEW
     evidencePhoto: { type: String, default: null },
     scannedAt: { type: Date, default: Date.now },
     note: { type: String, default: null },

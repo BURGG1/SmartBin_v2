@@ -127,7 +127,7 @@ export default function CollectorHome() {
                 activeOpacity={0.7}
                 onPress={() => {
                   router.push(
-                    `/counterInfopage?bin=${encodeURIComponent(JSON.stringify(bin))}` as any
+                    `/ScanScreen?bin=${encodeURIComponent(JSON.stringify(bin))}` as any
                   );
                 }}
                 className="flex-row justify-between items-center mb-3 border p-3 rounded-lg"

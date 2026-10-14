@@ -52,7 +52,14 @@ router.get("/compliance", async (req, res) => {
       });
 
       const violationEntry = violationsByMonth.find((v) => v._id === monthKey);
-      const nonCompliantHouseholds = violationEntry ? violationEntry.nonCompliantHouseholds : 0;
+
+      // Math.min makes sure the violators can never be more than the total
+      // (e.g. a household that was deactivated later but still has a violation)
+      const nonCompliantHouseholds = Math.min(
+        violationEntry ? violationEntry.nonCompliantHouseholds : 0,
+        totalHouseholds
+      );
+      const compliantHouseholds = totalHouseholds - nonCompliantHouseholds;
 
       const nonCompliant = totalHouseholds > 0
         ? Math.round((nonCompliantHouseholds / totalHouseholds) * 100)
@@ -63,6 +70,10 @@ router.get("/compliance", async (req, res) => {
         month: new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" }),
         compliant,
         nonCompliant,
+        // NEW: the actual numbers, used by the chart tooltip
+        compliantCount: compliantHouseholds,
+        nonCompliantCount: nonCompliantHouseholds,
+        total: totalHouseholds,
       });
     }
 

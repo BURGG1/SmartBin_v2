@@ -13,6 +13,7 @@ import {
     Tooltip,
     ResponsiveContainer,
 } from "recharts";
+import { useNavigate } from "react-router-dom";
 import BASE_URL from "../../config";
 
 import { useState, useEffect } from "react";
@@ -35,13 +36,95 @@ const getTierByRank = (rank) => {
     return null;
 };
 
+// Bar color depends on how full the bin is
+const getFillColor = (fill) => {
+    if (fill >= 80) return "bg-red-500";
+    if (fill >= 50) return "bg-yellow-400";
+    return "bg-green-500";
+};
+
+// How many bins the dashboard card shows. The rest are one click away in /binMonitoring.
+// Change this number if you want the card to show more or fewer.
+const MAX_VISIBLE_BINS = 5;
+
+// ── Custom tooltip for the compliance bar chart ──────────────────────────────
+// Shows "62% (31 out of 50)" instead of just "62%".
+// It reads compliantCount / nonCompliantCount / total from each month's data.
+const ComplianceTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || payload.length === 0) return null;
+
+    const row = payload[0].payload;
+    const hasCounts = row.total !== undefined && row.total !== null;
+
+    // One entry per row in the tooltip. Easy to add/remove later.
+    const items = [
+        {
+            label: "Properly Segregating",
+            percent: row.compliant,
+            count: row.compliantCount,
+            color: "#10b981",
+            textColor: "text-green-600",
+        },
+        {
+            label: "Need Improvement",
+            percent: row.nonCompliant,
+            count: row.nonCompliantCount,
+            color: "#ef4444",
+            textColor: "text-red-500",
+        },
+    ];
+
+    return (
+        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4 min-w-[240px]">
+            {/* Header: month + total households */}
+            <div className="flex items-center justify-between gap-6 pb-3 mb-3 border-b border-gray-100">
+                <p className="text-sm font-semibold text-gray-900">{label}</p>
+                
+            </div>
+
+            {/* Mini split bar: shows the green/red share at a glance */}
+            <div className="flex h-2 w-full rounded-full overflow-hidden bg-gray-100 mb-4">
+                <div style={{ width: `${row.compliant}%`, backgroundColor: "#10b981" }} />
+                <div style={{ width: `${row.nonCompliant}%`, backgroundColor: "#ef4444" }} />
+            </div>
+
+            {/* Rows: dot + label on the left, count and percent on the right */}
+            <div className="flex flex-col gap-3">
+                {items.map((item) => (
+                    <div key={item.label} className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                            <span
+                                className="w-2.5 h-2.5 rounded-full"
+                                style={{ backgroundColor: item.color }}
+                            />
+                            <span className="text-sm text-gray-600">{item.label}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            {hasCounts && (
+                                <span className="text-sm text-gray-900">
+                                    <span className="font-semibold">{item.count}</span>
+                                    <span className="text-gray-400"> / {row.total}</span>
+                                </span>
+                            )}
+                            <span className={`text-sm font-semibold ${item.textColor}`}>
+                                {item.percent}%
+                            </span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ComplianceDashboard() {
+    const navigate = useNavigate();
 
     const [totalHouseholds, setTotalHouseholds] = useState(null);
     const [totalBins, setTotalBins] = useState(null);
-    const [avgFill, setAvgFill] = useState(null);
+    const [bins, setBins] = useState(null); // list of { id, fill }
     const [criticalBins, setCriticalBins] = useState(0);
     const [countError, setCountError] = useState(false);
     const [leaderboard, setLeaderboard] = useState([]);
@@ -50,7 +133,7 @@ export default function ComplianceDashboard() {
 
     const [monthlyCompliance, setMonthlyCompliance] = useState([]);
     const [complianceLoading, setComplianceLoading] = useState(true);
-    const [complianceError, setComplianceError] = useState(false); 
+    const [complianceError, setComplianceError] = useState(false);
 
     useEffect(() => {
         const fetchCounts = async () => {
@@ -72,15 +155,20 @@ export default function ComplianceDashboard() {
                 setTotalHouseholds(hhData.count);
                 setTotalBins(binData.count);
 
-                const bins = binsListData.data || [];
-                if (bins.length > 0) {
-                    const totalFill = bins.reduce((sum, b) => sum + (b.fill || 0), 0);
-                    setAvgFill(Math.round(totalFill / bins.length));
-                    setCriticalBins(bins.filter((b) => (b.fill || 0) >= 80).length);
-                } else {
-                    setAvgFill(0);
-                    setCriticalBins(0);
-                }
+                // Keep each bin's own fill level (no more averaging)
+                const list = (binsListData.data || []).map((b) => ({
+                    // ⚠️ change these field names if your bin model uses different ones
+                    id: String(b.binId ?? b.binCode ?? b.name ?? b._id),
+                    // Clamp to 0–100 so a bad sensor reading (e.g. 120 or -5) can't break the UI
+                    fill: Math.min(100, Math.max(0, Math.round(b.fill || 0))),
+                }));
+
+                // Fullest bins first so the urgent ones are on top.
+                // If two bins have the same fill, sort by ID so the order doesn't jump around every 5 seconds.
+                list.sort((a, b) => b.fill - a.fill || a.id.localeCompare(b.id));
+
+                setBins(list);
+                setCriticalBins(list.filter((b) => b.fill >= 80).length);
 
                 setCountError(false);
             } catch (err) {
@@ -103,7 +191,8 @@ export default function ComplianceDashboard() {
                 setComplianceLoading(false);
             }
         };
-        // ── Leaderboard fetch ─────────────────────────────────────────────────────
+
+        // ── Leaderboard fetch ─────────────────────────────────────────────────
         const fetchLeaderboard = async () => {
             try {
                 const res = await fetch(`${BASE_URL}/api/households?limit=10&isActive=true`);
@@ -147,7 +236,9 @@ export default function ComplianceDashboard() {
 
         return () => clearInterval(intervalId);
     }, []);
+
     // ── Stats built inside component so they read live state ─────────────────
+    // `path` = where the card goes when clicked
     const stats = [
         {
             title: "Total Households",
@@ -155,7 +246,7 @@ export default function ComplianceDashboard() {
             icon: Users,
             iconBg: "bg-blue-100",
             iconColor: "text-blue-600",
-            isLive: true,
+            path: "/householdInfo",
         },
         {
             title: "Total Bins",
@@ -163,16 +254,15 @@ export default function ComplianceDashboard() {
             icon: Trash2,
             iconBg: "bg-blue-100",
             iconColor: "text-blue-600",
-            isLive: true,
+            path: "/wastebin",
         },
         {
-            title: "Average Bin Capacity",
-            subtitle: avgFill !== null ? `${criticalBins} Critical` : undefined,
-            value: avgFill !== null ? `${avgFill}%` : null,
+            title: "Bin Fill Levels",
             icon: TrendingUp,
             iconBg: "bg-blue-100",
             iconColor: "text-blue-600",
-            isLive: true, // ← flip this to true now that it's real data
+            path: "/binMonitoring",
+            isBinList: true, // this card shows the per-bin list instead of one number
         },
     ];
 
@@ -187,6 +277,52 @@ export default function ComplianceDashboard() {
         if (value === null)
             return <span className="h-8 w-16 bg-gray-200 animate-pulse rounded block" />;
         return <p className="text-2xl font-bold">{value}</p>;
+    };
+
+    // ── Bin list renderer: binID  [progress bar]  percent ─────────────────────
+    const BinList = () => {
+        if (countError)
+            return <span className="text-red-400 text-sm font-medium">Unavailable</span>;
+        if (bins === null)
+            return <span className="h-8 w-full bg-gray-200 animate-pulse rounded block" />;
+        if (bins.length === 0)
+            return <p className="text-sm text-gray-400">No bins yet.</p>;
+
+        // bins is already sorted fullest-first, so slice() gives the top N most urgent
+        const visibleBins = bins.slice(0, MAX_VISIBLE_BINS);
+        const hiddenCount = bins.length - visibleBins.length;
+
+        return (
+            <div className="flex flex-col gap-2">
+                {visibleBins.map((bin) => (
+                    <div key={bin.id} className="flex items-center gap-3">
+                        <span className="w-20 text-xs font-medium text-gray-700 truncate" title={bin.id}>
+                            {bin.id}
+                        </span>
+                        <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all ${getFillColor(bin.fill)}`}
+                                style={{ width: `${Math.min(bin.fill, 100)}%` }}
+                            />
+                        </div>
+                        <span
+                            className={`w-10 text-right text-xs font-semibold ${
+                                bin.fill >= 80 ? "text-red-500" : "text-gray-700"
+                            }`}
+                        >
+                            {bin.fill}%
+                        </span>
+                    </div>
+                ))}
+
+                {/* Only shows when there are more bins than the card can display */}
+                {hiddenCount > 0 && (
+                    <p className="text-xs text-blue-600 font-medium mt-1">
+                        +{hiddenCount} more {hiddenCount === 1 ? "bin" : "bins"} · View all
+                    </p>
+                )}
+            </div>
+        );
     };
 
     // ── Render ────────────────────────────────────────────────────────────────
@@ -217,14 +353,20 @@ export default function ComplianceDashboard() {
 
                     <section className="flex flex-col gap-5">
 
-                        {/* Stat Cards */}
+                        {/* Stat Cards (each one is clickable) */}
                         <div className="w-full flex flex-col lg:flex-row gap-4">
                             {stats.map((item) => {
                                 const Icon = item.icon;
                                 return (
                                     <div
                                         key={item.title}
-                                        className="w-full bg-white rounded-xl shadow-sm p-5 flex justify-between items-center hover:shadow-xl"
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => navigate(item.path)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") navigate(item.path);
+                                        }}
+                                        className="w-full bg-white rounded-xl shadow-sm p-5 flex justify-between items-center hover:shadow-xl cursor-pointer transition-shadow"
                                     >
                                         <div className="w-full flex flex-col gap-4">
                                             <div className="w-full flex justify-between">
@@ -233,11 +375,10 @@ export default function ComplianceDashboard() {
                                                 </div>
                                             </div>
                                             <div className="flex flex-col gap-1">
-                                                {/* Live cards get skeleton/error handling; static cards render directly */}
-                                                {item.isLive ? (
-                                                    <StatValue value={item.value} />
+                                                {item.isBinList ? (
+                                                    <BinList />
                                                 ) : (
-                                                    <p className="text-2xl font-bold">{item.value}</p>
+                                                    <StatValue value={item.value} />
                                                 )}
                                                 <p className="text-sm text-gray-500">{item.title}</p>
                                                 {item.subtitle && (
@@ -268,7 +409,7 @@ export default function ComplianceDashboard() {
                                             <CartesianGrid strokeDasharray="3 3" />
                                             <XAxis dataKey="month" />
                                             <YAxis />
-                                            <Tooltip />
+                                            <Tooltip content={<ComplianceTooltip />} />
                                             <Bar dataKey="compliant" fill="#10b981" name="Properly Segregating %" radius={[6, 6, 0, 0]} />
                                             <Bar dataKey="nonCompliant" fill="#ef4444" name="Need Improvement %" radius={[6, 6, 0, 0]} />
                                         </BarChart>
@@ -279,7 +420,6 @@ export default function ComplianceDashboard() {
 
                     </section>
 
-                    {/* Leaderboard */}
                     {/* Leaderboard */}
                     <section className="w-full bg-gradient-to-b from-green-50 to-white rounded-xl p-4 sm:p-6 shadow">
 

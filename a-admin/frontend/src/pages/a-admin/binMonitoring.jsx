@@ -13,6 +13,11 @@ import {
   Bell,
   MapPin,
   Trash,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  UserCheck,
 } from "lucide-react";
 
 const API = `${BASE_URL}/api/bins`;
@@ -23,35 +28,26 @@ const COLLECTORS_API = `${BASE_URL}/api/collectors`;
 // FILL_SEND_INTERVAL_MS (10s) so the dashboard stays roughly live.
 const POLL_INTERVAL_MS = 10000;
 
-// Max backoff between polls after repeated failures, so a dead backend
-// doesn't get hammered every 10s forever.
+// Max backoff between polls after repeated failures.
 const MAX_BACKOFF_MS = 60000;
 
-// The map needs every bin's position to plot markers, so this list isn't
-// server-paginated — but it IS capped. A single barangay's physical bin
-// count is realistically bounded (tens to low hundreds), so a generous
-// cap protects against an unbounded payload if that assumption ever
-// breaks. If you ever need more than this, switch to a dedicated
-// `/api/bins/summary` endpoint for the stats/alert numbers (so you're not
-// shipping full bin documents just to compute a count) and add marker
-// clustering (e.g. leaflet.markercluster) instead of raising this cap.
+// The map needs every bin's position, so the list isn't server-paginated,
+// but it IS capped. If you outgrow this, add a `/api/bins/summary` endpoint
+// for stats and marker clustering instead of raising the cap.
 const BINS_FETCH_LIMIT = 300;
 
-// How many bins show per page in the "Bins in Barangay" list and in the
-// bin-cards grid. Both are paginated client-side from the same capped
-// fetch above — acceptable since that fetch is already bounded.
 const MAP_LIST_PER_PAGE = 5;
 const CARDS_PER_PAGE = 6;
 
-// Minimum fill level required before a bin is auto-scheduled for
-// collection. This is independent of the warning/critical status
-// thresholds used for the dashboard badges below — it exists purely to
-// gate when scheduling kicks in.
+// Minimum fill level before a bin is auto-scheduled for collection.
 const SCHEDULE_FILL_THRESHOLD = 75;
 
-// A collector stops being eligible for new assignments once they already
-// have this many bins in their assignedBins array.
+// A collector stops being eligible once they hold this many bins.
 const MAX_BINS_PER_COLLECTOR = 2;
+
+// After an auto-schedule fails to save, wait this long before retrying that
+// bin so a failing endpoint can't cause a tight retry loop.
+const AUTO_RETRY_COOLDOWN_MS = 60000;
 
 const statusColors = {
   good: {
@@ -89,181 +85,512 @@ function getStatusFromFill(fill) {
   return "good";
 }
 
+// ── Date helpers (all local time, dates stored as "YYYY-MM-DD") ─────────────
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseISODate(str) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(str ?? "");
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function startOfToday() {
+  const d = new Date();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function addDays(d, n) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+}
+
+function formatScheduleDate(value) {
+  if (!value) return "-";
+  const d = parseISODate(value) ?? new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+// ── Collector helpers ───────────────────────────────────────────────────────
+// assignedBins can hold ObjectId strings, binId strings, or populated docs.
+function refToString(ref) {
+  if (ref && typeof ref === "object") return String(ref._id ?? ref.binId ?? ref.id);
+  return String(ref);
+}
+
+// Accurate per-collector workload: a set of binIds built from (a) the
+// server's assignedBins, (b) every bin whose schedule points at the
+// collector, and (c) assignments still being saved. Using a Set means a bin
+// is never double counted, and the numbers stay right even when the server
+// and the local state use different id formats (_id vs binId).
+function computeLoads(collectors, bins, pending) {
+  const toBinId = new Map();
+  bins.forEach((b) => {
+    toBinId.set(b.id, b.id);
+    if (b._id) toBinId.set(String(b._id), b.id);
+  });
+
+  const finished = new Set(
+    bins.filter((b) => b.scheduleCompleted && !b.schedule).map((b) => b.id)
+  );
+
+  const loads = new Map();
+  collectors.forEach((c) => {
+    const ids = c.assignedBins
+      .map((r) => toBinId.get(r) ?? r)
+      .filter((id) => !finished.has(id));
+    loads.set(c.id, new Set(ids));
+  });
+  bins.forEach((b) => {
+    const cid = b.schedule?.collectorId;
+    if (cid && loads.has(cid)) loads.get(cid).add(b.id);
+  });
+  pending.forEach((cid, binId) => loads.get(cid)?.add(binId));
+  return loads;
+}
+
+// Eligible = active, under the cap, AND tied for the lightest workload
+// among such collectors (so unassigned collectors come first, then the
+// next-lightest, never someone busier while a lighter one is free).
+function getEligibleCollectors(collectors, bins, pending) {
+  const loads = computeLoads(collectors, bins, pending);
+  const pool = collectors
+    .filter((c) => c.isActive)
+    .map((c) => ({ ...c, load: loads.get(c.id).size }))
+    .filter((c) => c.load < MAX_BINS_PER_COLLECTOR);
+  if (pool.length === 0) return [];
+  const min = Math.min(...pool.map((c) => c.load));
+  return pool
+    .filter((c) => c.load === min)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normalizeSchedule(s) {
+  if (!s) return null;
+  if (typeof s !== "object") return null;
+  const collectorObj = s.collector && typeof s.collector === "object" ? s.collector : null;
+  const collectorId = s.collectorId ?? collectorObj?._id ?? null;
+  return {
+    collector: collectorObj?.name ?? s.collectorName ?? (collectorObj ? null : s.collector) ?? "Unassigned",
+    collectorId: collectorId ? String(collectorId) : null,
+    date: s.date ?? null,
+    createdAt: s.createdAt ? new Date(s.createdAt) : null,
+    completed: Boolean(
+      s.completed || s.isCompleted || s.isCollected ||
+      s.status === "completed" || s.status === "collected"
+    ),
+  };
+}
+
+// A schedule is complete when the server says so, or when the bin has been
+// emptied since the schedule was created (falls back to the scheduled date
+// if the creation time is unknown). Completed schedules are dropped from the
+// bin so the admin can set the next one, or the auto-scheduler can resume.
+function isScheduleComplete(schedule, lastEmptied) {
+  if (!schedule) return false;
+  if (schedule.completed) return true;
+  if (!lastEmptied) return false;
+  const since = schedule.createdAt ?? parseISODate(schedule.date);
+  return Boolean(since) && lastEmptied >= since;
+}
+
+// ── Calendar ────────────────────────────────────────────────────────────────
+const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+function CalendarPicker({ value, onChange, minDate }) {
+  const selected = parseISODate(value);
+  const [view, setView] = useState(() => {
+    const base = selected ?? minDate;
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+
+  const year = view.getFullYear();
+  const month = view.getMonth();
+  const leadingBlanks = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [
+    ...Array(leadingBlanks).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => new Date(year, month, i + 1)),
+  ];
+
+  const minMonth = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+  const canGoPrev = view > minMonth;
+  const today = startOfToday();
+
+  return (
+    <div className="border rounded-xl p-3 select-none">
+      <div className="flex items-center justify-between mb-2">
+        <button
+          type="button"
+          onClick={() => setView(new Date(year, month - 1, 1))}
+          disabled={!canGoPrev}
+          aria-label="Previous month"
+          className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer disabled:cursor-not-allowed"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <p className="text-sm font-semibold" aria-live="polite">
+          {view.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+        </p>
+        <button
+          type="button"
+          onClick={() => setView(new Date(year, month + 1, 1))}
+          aria-label="Next month"
+          className="p-1.5 rounded-lg hover:bg-gray-100 cursor-pointer"
+        >
+          <ChevronRight size={18} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-7 text-center text-xs text-gray-400 mb-1">
+        {WEEKDAYS.map((d) => (
+          <div key={d} className="py-1">{d}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((date, i) => {
+          if (!date) return <div key={`blank-${i}`} />;
+          const iso = toISODate(date);
+          const disabled = date < minDate;
+          const isSelected = value === iso;
+          const isToday = date.getTime() === today.getTime();
+          return (
+            <button
+              key={iso}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(iso)}
+              aria-label={formatScheduleDate(iso)}
+              aria-pressed={isSelected}
+              className={[
+                "h-9 rounded-lg text-sm transition-colors",
+                disabled
+                  ? "text-gray-300 cursor-not-allowed"
+                  : "cursor-pointer hover:bg-gray-100",
+                isSelected ? "!bg-gray-900 !text-white font-semibold" : "",
+                isToday && !isSelected ? "ring-1 ring-gray-400" : "",
+              ].join(" ")}
+            >
+              {date.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Schedule modal ──────────────────────────────────────────────────────────
+function ScheduleModal({ bin, eligible, collectorsReady, onClose, onSubmit }) {
+  const minDate = startOfToday();
+  const [collectorId, setCollectorId] = useState("");
+  const [date, setDate] = useState(toISODate(addDays(minDate, 1)));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const selectRef = useRef(null);
+
+  // If the chosen collector drops out of the eligible list (workload
+  // changed after a poll), fall back to the first eligible one.
+  const effectiveId = eligible.some((c) => c.id === collectorId)
+    ? collectorId
+    : eligible[0]?.id ?? "";
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !submitting) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    selectRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose, submitting]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!effectiveId || !date || submitting) return;
+    setSubmitting(true);
+    setError("");
+    const result = await onSubmit(bin.id, effectiveId, date);
+    if (!result.ok) {
+      setError(result.error);
+      setSubmitting(false);
+    }
+    // On success the parent closes the modal.
+  };
+
+  const noOneAvailable = collectorsReady && eligible.length === 0;
+  const status = getStatusFromFill(bin.fill);
+
+  return (
+    <div
+      className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !submitting) onClose();
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="schedule-modal-title"
+        onSubmit={handleSubmit}
+        className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[95vh] overflow-y-auto"
+      >
+        <div className="flex items-start justify-between p-5 border-b">
+          <div>
+            <h2 id="schedule-modal-title" className="text-lg font-bold">
+              Set Collection Schedule
+            </h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {bin.id} - {bin.name} · <span className="capitalize">{status}</span> ({bin.fill}%)
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            aria-label="Close"
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer disabled:opacity-40"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {/* Collector */}
+          <div>
+            <label htmlFor="collector-select" className="flex items-center gap-1.5 text-sm font-medium mb-1.5">
+              <UserCheck size={16} className="text-gray-500" />
+              Collector
+            </label>
+            <select
+              id="collector-select"
+              ref={selectRef}
+              value={effectiveId}
+              onChange={(e) => setCollectorId(e.target.value)}
+              disabled={eligible.length === 0 || submitting}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              {eligible.length === 0 ? (
+                <option value="">
+                  {collectorsReady ? "No collector available" : "Loading collectors..."}
+                </option>
+              ) : (
+                eligible.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} - {c.load === 0 ? "no bins assigned" : `${c.load} bin${c.load > 1 ? "s" : ""} assigned`}
+                  </option>
+                ))
+              )}
+            </select>
+            {noOneAvailable ? (
+              <p className="text-xs text-red-600 mt-1.5">
+                Every active collector is at the {MAX_BINS_PER_COLLECTOR}-bin limit, or none are active.
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1.5">
+                Only collectors with the lightest workload are listed.
+              </p>
+            )}
+          </div>
+
+          {/* Date */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <CalendarDays size={16} className="text-gray-500" />
+                Collection date
+              </span>
+              <div className="flex gap-1.5">
+                {[
+                  { label: "Today", d: minDate },
+                  { label: "Tomorrow", d: addDays(minDate, 1) },
+                ].map(({ label, d }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setDate(toISODate(d))}
+                    className={`px-2.5 py-1 text-xs rounded-full border cursor-pointer ${date === toISODate(d)
+                      ? "bg-gray-900 text-white border-gray-900"
+                      : "hover:bg-gray-100"
+                      }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <CalendarPicker value={date} onChange={setDate} minDate={minDate} />
+          </div>
+
+          {error && (
+            <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 p-5 border-t bg-gray-50 sm:rounded-b-2xl">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="px-4 py-2.5 text-sm rounded-lg border bg-white hover:bg-gray-100 cursor-pointer disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!effectiveId || !date || submitting}
+            className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting ? "Saving..." : `Confirm${date ? ` · ${formatScheduleDate(date)}` : ""}`}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function BinMonitoring() {
   const [bins, setBins] = useState([]);
   const [binsLoading, setBinsLoading] = useState(true);
   const [binsError, setBinsError] = useState("");
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [collectors, setCollectors] = useState([]);
+  const [collectorsLoaded, setCollectorsLoaded] = useState(false);
   const [collectorsError, setCollectorsError] = useState("");
 
-  // ── Pagination (client-side, over the already-capped `bins` fetch) ──
+  // Schedule modal + confirmation toast
+  const [modalBinId, setModalBinId] = useState(null);
+  const [toast, setToast] = useState("");
+  const toastTimerRef = useRef(null);
   const [mapListPage, setMapListPage] = useState(1);
   const [cardPage, setCardPage] = useState(1);
 
-  // Keep a ref mirror of bins so the polling interval always sees the
-  // latest schedules without having to be re-created on every bins change.
+  // Ref mirrors so callbacks/polling always see current data synchronously.
   const binsRef = useRef(bins);
-  useEffect(() => {
-    binsRef.current = bins;
-  }, [bins]);
-
-  // Keep a ref mirror of collectors too. assignCollector reads/writes this
-  // synchronously — relying on setState's updater-function form to do that
-  // doesn't work, since the updater only runs when React processes the
-  // update, not inline when the setter is called.
   const collectorsRef = useRef(collectors);
-  useEffect(() => {
-    collectorsRef.current = collectors;
-  }, [collectors]);
+  // binId -> collectorId for schedules currently being saved. Counted in
+  // collector workload so back-to-back assignments never over-book anyone.
+  const pendingRef = useRef(new Map());
+  // binId -> timestamp of the last failed auto-schedule save.
+  const failedAutoRef = useRef(new Map());
 
-  // Tracks consecutive poll failures for exponential backoff, and the
-  // active poll timer so we can reschedule it.
   const failureCountRef = useRef(0);
   const pollTimeoutRef = useRef(null);
   const abortRef = useRef(null);
 
-  // ── Fetch bins from database ──────────────────────────────────────────────
-  // On the very first load there is nothing to preserve, so we just map
-  // the payload straight in. On every subsequent poll we merge the fresh
-  // fill/lastEmptied data into the bins we already have, so we don't
-  // clobber locally-set schedules with server data that doesn't know
-  // about them yet.
+  // Update bins in state AND the ref in the same step, so code that runs
+  // right after (before React re-renders) reads fresh data.
+  const applyBins = useCallback((updater) => {
+    const next = updater(binsRef.current);
+    binsRef.current = next;
+    setBins(next);
+  }, []);
 
-const fetchBins = useCallback(async (isInitial = false) => {
-  // Cancel any previous requests to prevent stale responses.
-  abortRef.current?.abort();
+  const showToast = useCallback((message) => {
+    setToast(message);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(""), 5000);
+  }, []);
 
-  const controller = new AbortController();
-  abortRef.current = controller;
+  useEffect(() => () => clearTimeout(toastTimerRef.current), []);
 
-  if (isInitial) setBinsLoading(true);
+  // ── Fetch bins ────────────────────────────────────────────────────────────
+  // Merge fresh data into what we already have so locally-known schedules
+  // aren't clobbered by a server payload that doesn't include them.
+  const fetchBins = useCallback(async (isInitial = false) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-  try {
-    const params = new URLSearchParams({
-      limit: String(BINS_FETCH_LIMIT),
-    });
+    if (isInitial) setBinsLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: BINS_FETCH_LIMIT });
+      const res = await fetch(`${API}?${params}`, { signal: controller.signal });
+      const data = await res.json();
+      if (!data.success) throw new Error("Server returned an unsuccessful response");
 
-    // Fetch bins and active schedules together.
-    const [binsRes, schedulesRes] = await Promise.all([
-      fetch(`${API}?${params}`, {
-        signal: controller.signal,
-      }),
-      fetch(`${API}/schedules`, {
-        signal: controller.signal,
-      }),
-    ]);
+      const prevById = new Map(binsRef.current.map((b) => [b.id, b]));
 
-    if (!binsRes.ok || !schedulesRes.ok) {
-      throw new Error("Failed to fetch bins or schedules.");
+      const nextBins = data.data.map((bin) => {
+        const prev = prevById.get(bin.binId);
+        const lastEmptied = bin.lastEmptied ? new Date(bin.lastEmptied) : null;
+        const merged = normalizeSchedule(bin.schedule) ?? prev?.schedule ?? null;
+        const completed = isScheduleComplete(merged, lastEmptied);
+        return {
+          id: bin.binId,
+          _id: bin._id,
+          name: bin.name,
+          location: bin.location,
+          type: bin.type,
+          fill: bin.fill ?? 0,
+          capacity: bin.capacity,
+          lastEmptied,
+          // Completed schedules are cleared; the flag stops the collector's
+          // stale `assignedBins` entry from still counting toward workload.
+          schedule: completed ? null : merged,
+          scheduleCompleted: completed || (!merged && Boolean(prev?.scheduleCompleted)),
+          lat: bin.lat ?? 14.86515,
+          lng: bin.lng ?? 120.75615,
+          status: bin.status ?? "offline",
+        };
+      });
+
+      binsRef.current = nextBins;
+      setBins(nextBins);
+      setBinsError("");
+      failureCountRef.current = 0;
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      console.error("Failed to fetch bins:", err);
+      failureCountRef.current += 1;
+      setBinsError("Live bin data is unavailable right now.");
+    } finally {
+      if (isInitial) setBinsLoading(false);
     }
+  }, []);
 
-    const [binsData, schedulesData] = await Promise.all([
-      binsRes.json(),
-      schedulesRes.json(),
-    ]);
-
-    if (!binsData.success || !schedulesData.success) {
-      throw new Error("Server returned an unsuccessful response.");
-    }
-
-    // The backend schedules endpoint returns pending schedules only.
-    const scheduleByBin = new Map(
-      schedulesData.data.map((schedule) => [
-        schedule.binId,
-        {
-          id: schedule._id,
-          collector:
-            schedule.collectorName ??
-            schedule.collector?.name ??
-            "Assigned",
-          date: schedule.scheduledAt
-            ? new Date(schedule.scheduledAt).toLocaleString()
-            : "—",
-        },
-      ])
-    );
-
-    const nextBins = binsData.data.map((bin) => ({
-      id: bin.binId,
-      _id: bin._id,
-      name: bin.name,
-      location: bin.location,
-      type: bin.type,
-      fill: bin.fill ?? 0,
-      capacity: bin.capacity,
-      lastEmptied: bin.lastEmptied
-        ? new Date(bin.lastEmptied)
-        : null,
-
-      // Always use the server's current pending schedule.
-      // Do not preserve a completed schedule from previous UI state.
-      schedule: scheduleByBin.get(bin.binId) ?? null,
-
-      lat: bin.lat ?? 14.86515,
-      lng: bin.lng ?? 120.75615,
-      status: bin.status ?? "offline",
-    }));
-
-    // Ignore results if this request has been superseded.
-    if (controller.signal.aborted) return;
-
-    binsRef.current = nextBins;
-    setBins(nextBins);
-    setBinsError("");
-    failureCountRef.current = 0;
-  } catch (err) {
-    if (err.name === "AbortError") return;
-
-    console.error("Failed to fetch bins:", err);
-    failureCountRef.current += 1;
-    setBinsError("Live bin data is unavailable right now.");
-  } finally {
-    if (
-      isInitial &&
-      !controller.signal.aborted
-    ) {
-      setBinsLoading(false);
-    }
-  }
-}, []);
-
-
-  // ── Fetch collectors from database ────────────────────────────────────────
-  // Matches your actual Collector schema: availability is `isActive`
-  // (boolean), and workload is derived from the length of `assignedBins`
-  // (an array of bin refs/ids) rather than a separate counter field.
-  //
-  // Auth: the backend issues a bearer token (see AuthPage.jsx's
-  // storeSession), not a cookie — so this needs an Authorization header,
-  // not credentials: "include".
+  // ── Fetch collectors ──────────────────────────────────────────────────────
+  // Bearer token auth (see AuthPage.jsx's storeSession). Workload comes from
+  // `assignedBins`; availability from `isActive`.
   const fetchCollectors = useCallback(async () => {
     try {
       const token = sessionStorage.getItem("token");
-
       const res = await fetch(COLLECTORS_API, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
-      if (res.status === 401) {
-        throw new Error("Not authenticated — please log in again.");
-      }
-      if (!res.ok) {
-        throw new Error(`Server responded ${res.status}`);
-      }
+      if (res.status === 401) throw new Error("Not authenticated - please log in again.");
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
 
       const data = await res.json();
       if (!data.success) throw new Error("Server returned an unsuccessful response");
 
       const nextCollectors = data.data.map((c) => ({
-        id: c._id ?? c.id,
+        id: String(c._id ?? c.id),
         name: c.name,
         isActive: c.isActive ?? true,
-        assignedBins: Array.isArray(c.assignedBins) ? c.assignedBins : [],
+        assignedBins: Array.isArray(c.assignedBins) ? c.assignedBins.map(refToString) : [],
       }));
 
-      setCollectors(nextCollectors);
       collectorsRef.current = nextCollectors;
+      setCollectors(nextCollectors);
+      setCollectorsLoaded(true);
       setCollectorsError("");
     } catch (err) {
       console.error("Failed to fetch collectors:", err);
@@ -275,9 +602,8 @@ const fetchBins = useCallback(async (isInitial = false) => {
     fetchCollectors();
   }, [fetchCollectors]);
 
-  // Poll on a schedule that backs off (up to MAX_BACKOFF_MS) after
-  // consecutive failures, and pauses entirely while the tab is hidden so a
-  // backgrounded dashboard doesn't keep hammering the server.
+  // Poll bins (and collectors, so workload stays accurate when other
+  // dispatchers assign bins). Backs off on failure; pauses while hidden.
   useEffect(() => {
     let cancelled = false;
 
@@ -292,7 +618,7 @@ const fetchBins = useCallback(async (isInitial = false) => {
 
     const runPoll = async () => {
       if (document.visibilityState === "visible") {
-        await fetchBins(false);
+        await Promise.all([fetchBins(false), fetchCollectors()]);
       }
       scheduleNext();
     };
@@ -300,8 +626,6 @@ const fetchBins = useCallback(async (isInitial = false) => {
     fetchBins(true).then(scheduleNext);
 
     const handleVisibility = () => {
-      // Refresh immediately when the tab becomes visible again, instead
-      // of waiting out whatever backoff delay was in progress.
       if (document.visibilityState === "visible") {
         clearTimeout(pollTimeoutRef.current);
         runPoll();
@@ -315,9 +639,8 @@ const fetchBins = useCallback(async (isInitial = false) => {
       abortRef.current?.abort();
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [fetchBins]);
+  }, [fetchBins, fetchCollectors]);
 
-  // Keep the paginated views valid whenever the bins list changes
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(bins.length / MAP_LIST_PER_PAGE));
     if (mapListPage > totalPages) setMapListPage(totalPages);
@@ -332,8 +655,6 @@ const fetchBins = useCallback(async (isInitial = false) => {
     (mapListPage - 1) * MAP_LIST_PER_PAGE,
     mapListPage * MAP_LIST_PER_PAGE
   );
-  // Only pad the list to a fixed height once there's more than one page —
-  // a single page of results just renders at its own natural height.
   const mapListTotalPages = Math.max(1, Math.ceil(bins.length / MAP_LIST_PER_PAGE));
   const mapListEmptySlots =
     mapListTotalPages > 1
@@ -344,144 +665,135 @@ const fetchBins = useCallback(async (isInitial = false) => {
     (cardPage - 1) * CARDS_PER_PAGE,
     cardPage * CARDS_PER_PAGE
   );
-  // Same rule for the bin-cards grid: only pad to a fixed number of card
-  // slots once there's more than one page of bins.
   const cardTotalPages = Math.max(1, Math.ceil(bins.length / CARDS_PER_PAGE));
   const cardEmptySlots =
     cardTotalPages > 1 ? Math.max(0, CARDS_PER_PAGE - paginatedCardBins.length) : 0;
 
-  // ── Assign the least-loaded available collector ──────────────────────────
-  // Eligible = isActive AND fewer than MAX_BINS_PER_COLLECTOR bins already
-  // in their assignedBins array. Among eligible collectors, picks the one
-  // with the fewest currently assigned bins. Takes the binId being
-  // scheduled so it can be appended to the assigned collector's list.
-  const assignCollector = useCallback((binId) => {
-    const available = collectorsRef.current
-      .filter(
-        (c) => c.isActive && c.assignedBins.length < MAX_BINS_PER_COLLECTOR
-      )
-      .sort((a, b) => a.assignedBins.length - b.assignedBins.length);
-    if (available.length === 0) return null;
+  // ── Commit a schedule (used by both manual and automatic scheduling) ─────
+  // 1. Re-validates the collector against CURRENT workload (not whatever the
+  //    modal was showing when it opened).
+  // 2. Reserves the slot synchronously (pendingRef + optimistic bin update)
+  //    before any await, so concurrent calls can't pick the same slot.
+  // 3. Saves to the server, then refreshes collectors from the server.
+  // 4. Rolls the bin back if the save fails.
+  const commitSchedule = useCallback(
+    async (binId, collectorId, dateISO, auto) => {
+      const bin = binsRef.current.find((b) => b.id === binId);
+      if (!bin) return { ok: false, error: "This bin no longer exists." };
+      if (bin.schedule || pendingRef.current.has(binId)) {
+        return { ok: false, error: "This bin already has a collection scheduled." };
+      }
 
-    const assigned = available[0];
-    const nextCollectors = collectorsRef.current.map((c) =>
-      c.id === assigned.id
-        ? { ...c, assignedBins: [...c.assignedBins, binId] }
-        : c
-    );
-
-    // Update the ref immediately so back-to-back calls within the same
-    // synchronous pass (e.g. scheduling several bins in one sweep) see
-    // each other's load changes, then sync React state for the UI.
-    collectorsRef.current = nextCollectors;
-    setCollectors(nextCollectors);
-
-    return assigned;
-  }, []);
-
-  // ── Persist a schedule to the database ────────────────────────────────────
-  // autoScheduleBins was previously only updating local React state, so
-  // every auto-assigned schedule vanished on reload. This POSTs it to the
-  // backend and, on failure, rolls back BOTH the bin's local schedule and
-  // the collector's assignedBins entry we optimistically added — otherwise
-  // the UI would show an assignment that was never actually saved.
-  const persistSchedule = useCallback(async (binId, schedule, collectorId) => {
-    try {
-      const token = sessionStorage.getItem("token");
-      const res = await fetch(`${SCHEDULE_API}/${binId}/schedule`, {  // ✅ binId string matches router's :binId
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          collector: schedule.collector,
-          collectorId,
-          date: schedule.date,
-        }),
-      });
-
-      if (!res.ok) throw new Error(`Server responded ${res.status}`);
-      console.log("Schedule saved for bin:", binId);
-    } catch (err) {
-      console.error("Failed to persist schedule, rolling back:", err);
-
-      setBins((prev) =>
-        prev.map((b) => (b.id === binId ? { ...b, schedule: null } : b))
+      const eligible = getEligibleCollectors(
+        collectorsRef.current,
+        binsRef.current,
+        pendingRef.current
       );
+      const collector = eligible.find((c) => c.id === collectorId);
+      if (!collector) {
+        return {
+          ok: false,
+          error: "That collector is no longer available. Please choose another.",
+        };
+      }
 
-      setCollectors((prev) => {
-        const next = prev.map((c) =>
-          c.id === collectorId
-            ? { ...c, assignedBins: c.assignedBins.filter((id) => id !== binId) }
-            : c
+      const schedule = {
+        collector: collector.name,
+        collectorId: collector.id,
+        date: dateISO,
+        createdAt: new Date(),
+        completed: false,
+      };
+
+      pendingRef.current.set(binId, collector.id);
+      applyBins((prev) => prev.map((b) => (b.id === binId ? { ...b, schedule } : b)));
+
+      try {
+        const token = sessionStorage.getItem("token");
+        const res = await fetch(`${SCHEDULE_API}/${binId}/schedule`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            collector: schedule.collector,
+            collectorId: schedule.collectorId,
+            date: schedule.date,
+            auto,
+          }),
+        });
+        if (!res.ok) throw new Error(`Server responded ${res.status}`);
+
+        failedAutoRef.current.delete(binId);
+        await fetchCollectors();
+        return { ok: true, schedule };
+      } catch (err) {
+        console.error("Failed to persist schedule, rolling back:", err);
+        applyBins((prev) =>
+          prev.map((b) => (b.id === binId ? { ...b, schedule: null } : b))
         );
-        collectorsRef.current = next;
-        return next;
-      });
-    }
-  }, []);
+        if (auto) failedAutoRef.current.set(binId, Date.now());
+        return { ok: false, error: "Couldn't save the schedule. Please try again." };
+      } finally {
+        pendingRef.current.delete(binId);
+      }
+    },
+    [applyBins, fetchCollectors]
+  );
 
   // ── Auto-schedule any bin at/above the fill threshold ─────────────────────
-  // Scheduling is now fully automatic — there is no manual "Schedule
-  // Collection" flow. Any bin whose fill is >= SCHEDULE_FILL_THRESHOLD and
-  // doesn't already have a schedule gets assigned a collector, with the
-  // collection date set to the day AFTER the threshold is crossed (not the
-  // same day it's detected).
-  const autoScheduleBins = useCallback(() => {
-    // Collect what got scheduled in this pass so we can persist each one
-    // after the state update, without calling setState mid-map.
-    const pendingPersists = [];
-
-    setBins((prevBins) => {
-      let updated = false;
-      const newBins = prevBins.map((bin) => {
-        if (bin.fill >= SCHEDULE_FILL_THRESHOLD && !bin.schedule) {
-          const collector = assignCollector(bin.id);
-          if (!collector) return bin;
-          updated = true;
-
-          const scheduledDate = new Date();
-          scheduledDate.setDate(scheduledDate.getDate() + 1);
-
-          const schedule = {
-            collector: collector.name,
-            date: scheduledDate.toLocaleDateString(),
-            auto: true,
-          };
-
-          pendingPersists.push({ binId: bin.id, schedule, collectorId: collector.id });
-
-          return {
-            ...bin,
-            schedule,
-          };
-        }
-        return bin;
-      });
-      return updated ? newBins : prevBins;
-    });
-
-    // Persist outside the setBins updater — updater functions can run
-    // more than once (e.g. under StrictMode double-invoke) and shouldn't
-    // have side effects like network calls inside them.
-    pendingPersists.forEach(({ binId, schedule, collectorId }) => {
-      persistSchedule(binId, schedule, collectorId);
-    });
-  }, [assignCollector, persistSchedule]);
-
+  // Each bin gets the lightest-loaded eligible collector, collection the day
+  // after it was detected. Each commitSchedule call reserves its slot
+  // synchronously, so the next bin in the loop sees the updated workload.
   useEffect(() => {
-    if (bins.length === 0) return;
-    const needsScheduling = bins.some(
-      (bin) => bin.fill >= SCHEDULE_FILL_THRESHOLD && !bin.schedule
-    );
-    if (needsScheduling) autoScheduleBins();
-  }, [bins, autoScheduleBins]);
+    if (!collectorsLoaded) return;
+    const now = Date.now();
+    const tomorrow = toISODate(addDays(startOfToday(), 1));
 
-  // ── Derived stats from real bins ──────────────────────────────────────────
-  // NOTE: computed client-side over the (capped) `bins` list. If bin
-  // counts grow past BINS_FETCH_LIMIT, move this to a server-computed
-  // `/api/bins/summary` endpoint instead of scaling the cap up further.
+    binsRef.current.forEach((bin) => {
+      if (bin.fill < SCHEDULE_FILL_THRESHOLD || bin.schedule) return;
+      if (pendingRef.current.has(bin.id)) return;
+      // Don't compete with an admin who is setting this bin's schedule.
+      if (modalBinId === bin.id) return;
+      const failedAt = failedAutoRef.current.get(bin.id);
+      if (failedAt && now - failedAt < AUTO_RETRY_COOLDOWN_MS) return;
+
+      const eligible = getEligibleCollectors(
+        collectorsRef.current,
+        binsRef.current,
+        pendingRef.current
+      );
+      if (eligible.length === 0) return;
+      commitSchedule(bin.id, eligible[0].id, tomorrow, true);
+    });
+    // modalBinId is a dependency so auto-scheduling resumes immediately if
+    // the admin cancels the modal on a bin that's already at/above threshold.
+  }, [bins, collectors, collectorsLoaded, commitSchedule, modalBinId]);
+
+  // ── Manual schedule from the modal ────────────────────────────────────────
+  const handleManualSchedule = useCallback(
+    async (binId, collectorId, dateISO) => {
+      const result = await commitSchedule(binId, collectorId, dateISO, false);
+      if (result.ok) {
+        setModalBinId(null);
+        showToast(
+          `Collection for ${binId} scheduled on ${formatScheduleDate(dateISO)} with ${result.schedule.collector}.`
+        );
+      }
+      return result;
+    },
+    [commitSchedule, showToast]
+  );
+
+  const closeModal = useCallback(() => setModalBinId(null), []);
+
+  const modalBin = modalBinId ? bins.find((b) => b.id === modalBinId) : null;
+  const eligibleCollectors = modalBin
+    ? getEligibleCollectors(collectors, bins, pendingRef.current)
+    : [];
+
+  // ── Derived stats ─────────────────────────────────────────────────────────
   const totalBins = bins.length;
   const normalBins = bins.filter((b) => getStatusFromFill(b.fill) === "good").length;
   const warningBins = bins.filter((b) => getStatusFromFill(b.fill) === "warning").length;
@@ -503,7 +815,6 @@ const fetchBins = useCallback(async (isInitial = false) => {
     return "bg-green-600";
   };
 
-  // ── Critical bins for alert ───────────────────────────────────────────────
   const criticalBinList = bins.filter((b) => getStatusFromFill(b.fill) === "critical");
 
   return (
@@ -546,7 +857,39 @@ const fetchBins = useCallback(async (isInitial = false) => {
             </div>
           )}
 
-          {/* ALERT — only show if there are critical bins */}
+          {collectorsError && (
+            <div className="border border-yellow-300 bg-yellow-50 rounded-xl p-4 flex items-center justify-between">
+              <p className="text-sm text-yellow-700">
+                {collectorsError} Scheduling is paused until collectors load.
+              </p>
+              <button
+                onClick={fetchCollectors}
+                className="text-sm text-yellow-800 underline cursor-pointer"
+              >
+                Retry now
+              </button>
+            </div>
+          )}
+
+          {toast && (
+            <div
+              role="status"
+              className="border border-green-300 bg-green-50 rounded-xl p-4 flex items-center justify-between"
+            >
+              <p className="flex items-center gap-2 text-sm text-green-800">
+                <CheckCircle size={16} />
+                {toast}
+              </p>
+              <button
+                onClick={() => setToast("")}
+                aria-label="Dismiss"
+                className="text-green-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
           {criticalBinList.length > 0 && !alertDismissed && (
             <div className="border border-red-300 bg-red-50 rounded-xl p-5 flex justify-between items-start">
               <div className="flex gap-3">
@@ -565,7 +908,7 @@ const fetchBins = useCallback(async (isInitial = false) => {
                         className="inline-flex items-center gap-1 px-3 py-1 text-xs rounded-full bg-red-600 text-white"
                       >
                         <MapPin size={14} />
-                        {bin.id} — {bin.location}
+                        {bin.id} - {bin.location}
                       </span>
                     ))}
                   </div>
@@ -573,6 +916,7 @@ const fetchBins = useCallback(async (isInitial = false) => {
               </div>
               <button
                 onClick={() => setAlertDismissed(true)}
+                aria-label="Dismiss alert"
                 className="text-red-400 text-xl cursor-pointer"
               >
                 &times;
@@ -624,7 +968,7 @@ const fetchBins = useCallback(async (isInitial = false) => {
             </div>
           </div>
 
-          {/* BIN CARDS (paginated — was previously rendering every bin unbounded) */}
+          {/* BIN CARDS */}
           {binsLoading ? (
             <p className="text-center text-gray-400 py-8">Loading bins...</p>
           ) : bins.length === 0 ? (
@@ -636,11 +980,13 @@ const fetchBins = useCallback(async (isInitial = false) => {
                   const status = getStatusFromFill(bin.fill);
                   const style = statusColors[status];
                   const StatusIcon = style.icon;
+                  const awaitingAuto =
+                    !bin.schedule && bin.fill >= SCHEDULE_FILL_THRESHOLD;
 
                   return (
                     <div
                       key={bin.id}
-                      className={`bg-white rounded-xl border ${style.border} p-6 shadow-sm`}
+                      className={`flex flex-col bg-white rounded-xl border ${style.border} p-6 shadow-sm`}
                     >
                       <div className="flex justify-between items-start">
                         <div>
@@ -663,7 +1009,7 @@ const fetchBins = useCallback(async (isInitial = false) => {
                         <StatusIcon className={style.iconColor} />
                       </div>
 
-                      <span className={`mt-3 inline-block px-3 py-1 text-xs text-white rounded-full ${typeColors[bin.type]}`}>
+                      <span className={`mt-3 self-start px-3 py-1 text-xs text-white rounded-full ${typeColors[bin.type]}`}>
                         {bin.type}
                       </span>
 
@@ -685,41 +1031,55 @@ const fetchBins = useCallback(async (isInitial = false) => {
                         <p>
                           Last Emptied:{" "}
                           <strong>
-                            {bin.lastEmptied ? bin.lastEmptied.toLocaleString() : "—"}
+                            {bin.lastEmptied ? bin.lastEmptied.toLocaleString() : "-"}
                           </strong>
                         </p>
                       </div>
 
-                      <span className={`mt-4 inline-flex items-center gap-1 px-3 py-1 text-sm rounded-full ${style.badge}`}>
+                      <span className={`mt-4 self-start inline-flex items-center gap-1 px-3 py-1 text-sm rounded-full ${style.badge}`}>
                         <StatusIcon size={14} />
                         Status: {status}
                       </span>
 
-                      {/* Scheduling panel — only relevant once the bin has
-                          crossed the auto-scheduling threshold. Scheduling
-                          is fully automatic; there's no manual trigger. */}
-                      {bin.fill >= SCHEDULE_FILL_THRESHOLD && (
-                        <div className="relative mt-4">
-                          {bin.schedule ? (
-                            <div className="bg-green-100 border border-green-200 p-3 rounded-lg text-sm space-y-1">
-                              <p><strong>Collector:</strong> {bin.schedule.collector}</p>
-                              <p><strong>Date:</strong> {bin.schedule.date}</p>
-                            </div>
-                          ) : (
-                            <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-sm text-yellow-700">
-                              Awaiting auto-assignment...
-                            </div>
-                          )}
-                        </div>
+                      {/* Set Schedule — hidden once a collection is scheduled */}
+                      {!bin.schedule && (
+                        <button
+                          type="button"
+                          onClick={() => setModalBinId(bin.id)}
+                          className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 cursor-pointer"
+                        >
+                          <CalendarDays size={16} />
+                          Set Schedule
+                        </button>
                       )}
+
+                      {/* Schedule summary — bottom of every card, manual or auto */}
+                      <div className="mt-auto pt-4">
+                        {bin.schedule ? (
+                          <div className="bg-green-50 border border-green-200 p-3 rounded-lg text-sm space-y-1.5">
+                            <p className="flex items-center gap-1.5 font-semibold text-green-800">
+                              <CalendarDays size={14} />
+                              Collection scheduled
+                            </p>
+                            <p><strong>Collector:</strong> {bin.schedule.collector}</p>
+                            <p><strong>Date:</strong> {formatScheduleDate(bin.schedule.date)}</p>
+                          </div>
+                        ) : awaitingAuto ? (
+                          <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-sm text-yellow-700">
+                            Awaiting auto-assignment...
+                          </div>
+                        ) : (
+                          <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg text-sm text-gray-500">
+                            No collection scheduled
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
 
-                {/* Invisible placeholder cards so the grid keeps a constant
-                    number of slots at CARDS_PER_PAGE, but only once there's
-                    more than one page — a single page of bins just renders
-                    at its natural height. */}
+                {/* Invisible placeholders keep the grid a constant height
+                    once there's more than one page. */}
                 {Array.from({ length: cardEmptySlots }).map((_, i) => (
                   <div
                     key={`card-empty-${i}`}
@@ -751,6 +1111,8 @@ const fetchBins = useCallback(async (isInitial = false) => {
                     <span className="mt-4 inline-flex items-center gap-1 px-3 py-1 text-sm rounded-full">
                       &nbsp;
                     </span>
+                    <div className="mt-4 h-10" />
+                    <div className="pt-4 h-24" />
                   </div>
                 ))}
               </div>
@@ -845,6 +1207,11 @@ const fetchBins = useCallback(async (isInitial = false) => {
                               <p className="text-xs mt-2">
                                 Capacity: <strong>{bin.capacity}</strong>
                               </p>
+                              {bin.schedule && (
+                                <p className="text-xs mt-2">
+                                  Pickup: <strong>{formatScheduleDate(bin.schedule.date)}</strong> · {bin.schedule.collector}
+                                </p>
+                              )}
                             </div>
                           </Popup>
                         </Marker>
@@ -913,6 +1280,16 @@ const fetchBins = useCallback(async (isInitial = false) => {
         </main>
       </div>
       <Footer />
+
+      {modalBin && !modalBin.schedule && (
+        <ScheduleModal
+          bin={modalBin}
+          eligible={eligibleCollectors}
+          collectorsReady={collectorsLoaded}
+          onClose={closeModal}
+          onSubmit={handleManualSchedule}
+        />
+      )}
     </div>
   );
 }

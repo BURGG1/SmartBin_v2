@@ -24,6 +24,9 @@ const registrationRequestRoutes = require("./routes/registrationRequestRoutes");
 const { startBinStatusChecker } = require("./jobs/binStatusChecker");
 const { checkAndAutoSchedule } = require("./services/autoScheduleService");
 const { getTransporter } = require("./config/mailer");
+const {
+  startMissedCollectionChecker,
+} = require("./jobs/missedCollectionChecker");
 
 
 const app = express();
@@ -31,6 +34,7 @@ const PORT = process.env.PORT || 5000;
 
 connectDB();
 startBinStatusChecker();
+startMissedCollectionChecker();
 
 getTransporter()
   .then(() => console.log("[Mailer] Ready to send emails."))

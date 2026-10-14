@@ -20,7 +20,7 @@ const findBestCollector = async () => {
     },
   });
 
-  if (collectors.length === 0) return null;
+  if (!collectors.length) return null;
 
   collectors.sort(
     (a, b) =>
@@ -29,6 +29,19 @@ const findBestCollector = async () => {
   );
 
   return collectors[0];
+};
+
+// Remove a bin from every collector's assignment list.
+// Safe to call more than once.
+const unassignBinFromCollector = async (binId) => {
+  if (typeof binId !== "string" || !binId.trim()) {
+    throw new Error("A valid binId is required to clear collector assignments.");
+  }
+
+  await Collector.updateMany(
+    { assignedBins: binId },
+    { $pull: { assignedBins: binId } }
+  );
 };
 
 // Create one pending schedule for an eligible bin.
@@ -57,6 +70,22 @@ const autoScheduleBin = async (bin) => {
     return null;
   }
 
+  // Include pending schedules when calculating workload.
+  const pending = await BinSchedule.find({
+    collector: collector._id,
+    status: "pending",
+  }).select("binId");
+
+  const workload = new Set(
+    (collector.assignedBins || []).map(String)
+  );
+
+  pending.forEach((item) => workload.add(String(item.binId)));
+
+  if (workload.size >= MAX_BINS_PER_COLLECTOR) {
+    return null;
+  }
+
   let schedule;
 
   try {
@@ -71,6 +100,8 @@ const autoScheduleBin = async (bin) => {
       status: "pending",
     });
   } catch (err) {
+    // A unique partial index for pending schedules is recommended
+    // to prevent duplicates during concurrent requests.
     if (err.code === 11000) return null;
     throw err;
   }
@@ -79,6 +110,12 @@ const autoScheduleBin = async (bin) => {
     await Collector.findByIdAndUpdate(
       collector._id,
       { $addToSet: { assignedBins: bin.binId } }
+    );
+
+    // Remove stale assignments from other collectors.
+    await Collector.updateMany(
+      { _id: { $ne: collector._id } },
+      { $pull: { assignedBins: bin.binId } }
     );
   } catch (err) {
     await BinSchedule.updateOne(
@@ -128,19 +165,16 @@ const checkAndAutoSchedule = async () => {
   return scheduled;
 };
 
-// Remove the bin from all collector assignment lists.
-const unassignBinFromCollector = async (binId) => {
-  await Collector.updateMany(
-    { assignedBins: binId },
-    { $pull: { assignedBins: binId } }
-  );
-};
-
-// Complete one pending schedule and update the bin.
+// Complete one pending schedule and clear its collector assignments.
+// Only a successful pending -> completed transition increments the counter.
 const completeScheduleForBin = async (
   binId,
   method = "manual"
 ) => {
+  if (typeof binId !== "string" || !binId.trim()) {
+    throw new Error("A valid binId is required.");
+  }
+
   if (!["auto", "manual"].includes(method)) {
     throw new Error("Invalid completion method.");
   }
@@ -180,53 +214,88 @@ const completeScheduleForBin = async (
     return null;
   }
 
-  const updatedBin = await Bin.findOneAndUpdate(
-    { binId },
-    {
-      $set: {
-        lastEmptied: completedAt,
-        lowSince: null,
-        fill: 0,
-      },
-    },
-    { new: true }
-  );
+  let binUpdateError = null;
 
-  if (!updatedBin) {
-    console.error(
-      `[Collection] Schedule completed, but bin ${binId} was not found`
+  try {
+    const updatedBin = await Bin.findOneAndUpdate(
+      { binId },
+      {
+        $set: {
+          lastEmptied: completedAt,
+          lowSince: null,
+          fill: 0,
+        },
+      },
+      { new: true }
     );
-    throw new Error(`Bin ${binId} not found during completion`);
+
+    if (!updatedBin) {
+      binUpdateError = new Error(
+        `Bin ${binId} not found during completion`
+      );
+    }
+  } catch (err) {
+    binUpdateError = err;
   }
 
-  await unassignBinFromCollector(binId);
+  // Always attempt cleanup after the schedule is marked completed.
+  try {
+    await unassignBinFromCollector(binId);
+  } catch (cleanupError) {
+    console.error(
+      `[Collection] Failed to clear assignments for ${binId}:`,
+      cleanupError
+    );
+    throw cleanupError;
+  }
 
   if (schedule.collector) {
-    await Collector.findByIdAndUpdate(
-      schedule.collector,
-      { $inc: { totalCollections: 1 } }
+    try {
+      await Collector.findByIdAndUpdate(
+        schedule.collector,
+        { $inc: { totalCollections: 1 } }
+      );
+    } catch (counterError) {
+      console.error(
+        `[Collection] Could not increment totalCollections for ${binId}:`,
+        counterError
+      );
+    }
+  }
+
+  if (binUpdateError) {
+    console.error(
+      `[Collection] Schedule completed and assignments cleared, but bin update failed:`,
+      binUpdateError
     );
+    throw binUpdateError;
   }
 
   console.log("[Collection] Completed successfully:", {
     binId,
     method,
-    completedAt: updatedBin.lastEmptied,
-    fill: updatedBin.fill,
+    completedAt,
     collector: schedule.collectorName,
   });
 
   return schedule;
 };
 
-// Called on every fill reading after updating the bin's fill.
+// Called after a fill reading has been saved to the bin.
 const checkAutoConfirm = async (bin, newLevel) => {
   if (!bin) return null;
 
   const level = Number(newLevel);
 
-  if (!Number.isFinite(level) || level < 0 || level > 100) {
-    console.warn("[AUTO-CONFIRM] Invalid fill level:", newLevel);
+  if (
+    !Number.isFinite(level) ||
+    level < 0 ||
+    level > 100
+  ) {
+    console.warn(
+      "[AUTO-CONFIRM] Invalid fill level:",
+      newLevel
+    );
     return null;
   }
 

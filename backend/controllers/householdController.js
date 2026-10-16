@@ -559,65 +559,87 @@ const getLeaderboard = async (req, res) => {
 };
 
 // POST /api/households/:id/penalize
+
 const penalizeHousehold = async (req, res) => {
-  try {
-    const { note, issuedBy } = req.body;
+    try {
+        const { note, issuedBy } = req.body;
 
-    const household = await Household.findById(req.params.id);
-    if (!household) {
-      return res.status(404).json({ success: false, message: "Household not found." });
+        const household = await Household.findById(req.params.id);
+
+        if (!household) {
+            return res.status(404).json({
+                success: false,
+                message: "Household not found."
+            });
+        }
+
+        if (!household.isActive) {
+            return res.status(400).json({
+                success: false,
+                message: "Cannot penalize an inactive household."
+            });
+        }
+
+        // Keep the offense count capped at 3 permanently.
+        const prevViolation = household.violation ?? 0;
+        const newViolation = Math.min(prevViolation + 1, 3);
+        const penalty = PENALTY_CONFIG[newViolation];
+
+        // Apply point deduction for the 1st offense only.
+        if (penalty.pointsDeducted > 0) {
+            household.points.total = Math.max(
+                0,
+                (household.points.total ?? 0) - penalty.pointsDeducted
+            );
+
+            household.points.thisMonth = Math.max(
+                0,
+                (household.points.thisMonth ?? 0) - penalty.pointsDeducted
+            );
+        }
+
+        household.violation = newViolation;
+        await household.save();
+
+        const log = await ViolationLog.create({
+            household: household._id,
+            offenseNumber: newViolation,
+            penaltyType: penalty.type,
+            pointsDeducted: penalty.pointsDeducted,
+            fineAmount: penalty.fineAmount,
+            communityService: penalty.communityService,
+            note: note || null,
+            issuedBy: issuedBy || "Admin"
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: `Penalty applied: ${penalty.type} (Offense #${newViolation})`,
+            data: {
+                household: {
+                    _id: household._id,
+                    fullname: household.fullname,
+                    violation: household.violation,
+                    points: household.points
+                },
+                penalty: {
+                    offenseNumber: newViolation,
+                    penaltyType: penalty.type,
+                    pointsDeducted: penalty.pointsDeducted,
+                    fineAmount: penalty.fineAmount,
+                    communityService: penalty.communityService
+                },
+                log
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
-    if (!household.isActive) {
-      return res.status(400).json({ success: false, message: "Cannot penalize an inactive household." });
-    }
-
-    const prevViolation = household.violation ?? 0;
-    const newViolation = prevViolation >= 3 ? 1 : prevViolation + 1;
-    const penalty = PENALTY_CONFIG[newViolation];
-
-    if (penalty.pointsDeducted > 0) {
-      household.points.total = Math.max(0, (household.points.total ?? 0) - penalty.pointsDeducted);
-      household.points.thisMonth = Math.max(0, (household.points.thisMonth ?? 0) - penalty.pointsDeducted);
-    }
-
-    household.violation = newViolation;
-    await household.save();
-
-    const log = await ViolationLog.create({
-      household: household._id,
-      offenseNumber: newViolation,
-      penaltyType: penalty.type,
-      pointsDeducted: penalty.pointsDeducted,
-      fineAmount: penalty.fineAmount,
-      communityService: penalty.communityService,
-      note: note || null,
-      issuedBy: issuedBy || "Admin",
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: `Penalty applied: ${penalty.type} (Offense #${newViolation})`,
-      data: {
-        household: {
-          _id: household._id,
-          fullname: household.fullname,
-          violation: household.violation,
-          points: household.points,
-        },
-        penalty: {
-          offenseNumber: newViolation,
-          penaltyType: penalty.type,
-          pointsDeducted: penalty.pointsDeducted,
-          fineAmount: penalty.fineAmount,
-          communityService: penalty.communityService,
-        },
-        log,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
 };
+
 
 // GET /api/households/:id/violations  — violation history
 const getViolationLogs = async (req, res) => {

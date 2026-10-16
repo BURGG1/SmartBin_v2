@@ -17,5 +17,6 @@ const rewardLogSchema = new mongoose.Schema(
 );
 
 rewardLogSchema.index({ household: 1, createdAt: -1 });
+rewardLogSchema.index({ household: 1, reward: 1, createdAt: -1 });
 
 module.exports = mongoose.model("RewardLog", rewardLogSchema);

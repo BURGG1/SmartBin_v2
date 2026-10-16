@@ -4,6 +4,7 @@ const Collector = require("../models/Collector");
 const Bin = require("../models/Bin");
 const BinSchedule = require("../models/BinSchedule");
 const { protect } = require("../middleware/authMiddleware");
+const { markCollectorDone } = require("../services/autoScheduleService");
 
 
 router.get("/", protect, async (req, res) => {
@@ -41,6 +42,22 @@ router.get("/me", protect, async (req, res) => {
   }
 });
 
+// PATCH /api/collectors/me/bins/:binId/done
+// The collector reports that they finished collecting this bin.
+// The schedule stays pending until the admin confirms it.
+router.patch("/me/bins/:binId/done", protect, async (req, res) => {
+  try {
+    const result = await markCollectorDone(req.params.binId, req.user.id);
+    if (!result.ok) {
+      return res.status(result.code).json({ success: false, message: result.message });
+    }
+    res.json({ success: true, message: "Collection reported to the admin." });
+  } catch (error) {
+    console.error("[Collection] markCollectorDone failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // GET /api/collectors/me/dashboard
 // Everything the collector home screen needs in one call:
@@ -69,6 +86,7 @@ router.get("/me/dashboard", protect, async (req, res) => {
         id: bin.binId,
         location: bin.location,
         fill: bin.fill ?? 0,
+        collectorDone: Boolean(schedule?.collectorDone),
         scheduleDate: schedule
           ? new Date(schedule.scheduledAt).toLocaleDateString("en-US", {
               month: "short", day: "numeric", year: "numeric",

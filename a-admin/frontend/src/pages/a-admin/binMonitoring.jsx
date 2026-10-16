@@ -2,7 +2,7 @@ import Navbar from "../../components/Navbar";
 import NavigationShell from "../../navigation/mainNav";
 import Footer from "../../components/Footer";
 import Pagination from "../../components/Pagination";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Tooltip } from "react-leaflet";
 import BASE_URL from "../../config";
 import {
@@ -124,11 +124,19 @@ function computeLoads(collectors, bins, pending) {
   const finished = new Set(
     bins.filter((b) => b.scheduleCompleted && !b.schedule).map((b) => b.id)
   );
+  // binId -> collectorId for bins whose schedule owner is known. Right after a
+  // reassignment, bins and collectors are fetched separately, so a stale
+  // `assignedBins` entry must not count toward the previous collector.
+  const scheduleOwner = new Map();
+  bins.forEach((b) => {
+    if (b.schedule?.collectorId) scheduleOwner.set(b.id, b.schedule.collectorId);
+  });
   const loads = new Map();
   collectors.forEach((c) => {
     const ids = c.assignedBins
       .map((r) => toBinId.get(r) ?? r)
-      .filter((id) => !finished.has(id));
+      .filter((id) => !finished.has(id))
+      .filter((id) => !scheduleOwner.has(id) || scheduleOwner.get(id) === c.id);
     loads.set(c.id, new Set(ids));
   });
   bins.forEach((b) => {
@@ -187,6 +195,8 @@ function normalizeSchedule(s) {
       s.completed || s.isCompleted || s.isCollected ||
       s.status === "completed" || s.status === "collected"
     ),
+    // NEW: true once the collector tapped "Done Collection" in the mobile app
+    collectorDone: Boolean(s.collectorDone),
   };
 }
 // A schedule is complete when the server says so, or when the bin has been
@@ -445,6 +455,12 @@ function ScheduleModal({ bin, eligible, collectorsReady, onClose, onSubmit }) {
     </div>
   );
 }
+// Two-letter initials for the collector avatars.
+function getInitials(name) {
+  const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
 function ReassignCollectorModal({
   bin,
   eligible,
@@ -457,17 +473,31 @@ function ReassignCollectorModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  // Calendar: starts on the bin's current collection date (or today if that
+  // date is missing or already past). The date is only sent when changed.
+  const minDate = startOfToday();
+  const originalISO = useMemo(() => {
+    const raw = bin.schedule?.date;
+    if (!raw) return null;
+    if (parseISODate(raw)) return String(raw).slice(0, 10);
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : toISODate(d);
+  }, [bin.schedule?.date]);
+  const [date, setDate] = useState(() =>
+    originalISO && parseISODate(originalISO) >= minDate ? originalISO : toISODate(minDate)
+  );
+
   const selectedId = eligible.some((collector) => collector.id === collectorId)
     ? collectorId
     : eligible[0]?.id ?? "";
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!selectedId || submitting || busy) return;
+    if (!selectedId || !date || submitting || busy) return;
 
     setSubmitting(true);
     setError("");
-    const result = await onSubmit(bin.id, selectedId);
+    const result = await onSubmit(bin.id, selectedId, date !== originalISO ? date : undefined);
 
     if (!result.ok) {
       setError(result.error);
@@ -488,11 +518,21 @@ function ReassignCollectorModal({
     };
   }, [onClose, submitting, busy]);
 
+  const selectedCollector = eligible.find((collector) => collector.id === selectedId) ?? null;
+  const fillStatus = getStatusFromFill(bin.fill ?? 0);
+  const fillChip = {
+    critical: "bg-red-50 text-red-700 border-red-200",
+    warning: "bg-amber-50 text-amber-700 border-amber-200",
+    good: "bg-green-50 text-green-700 border-green-200",
+  }[fillStatus];
+  const locked = submitting || busy;
+  const dateChanged = date !== originalISO;
+
   return (
     <div
-      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !submitting && !busy) onClose();
+        if (event.target === event.currentTarget && !locked) onClose();
       }}
     >
       <form
@@ -500,44 +540,61 @@ function ReassignCollectorModal({
         aria-modal="true"
         aria-labelledby="reassign-modal-title"
         onSubmit={handleSubmit}
-        className="bg-white w-full max-w-md rounded-2xl shadow-xl max-h-[95vh] overflow-y-auto"
+        className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[95vh] flex flex-col overflow-hidden"
       >
-        <div className="flex items-start justify-between p-5 border-b">
-          <div>
-            <h2 id="reassign-modal-title" className="text-lg font-bold">
+        {/* Header */}
+        <div className="flex items-start gap-3 p-5 border-b">
+          <div className="shrink-0 w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center">
+            <UserCheck size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 id="reassign-modal-title" className="text-lg font-bold leading-tight">
               Reassign Collector
             </h2>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-gray-500 mt-0.5 truncate">
               {bin.id} - {bin.name}
             </p>
+            <span
+              className={`inline-flex items-center gap-1 mt-2 px-2 py-0.5 text-xs font-medium rounded-full border ${fillChip}`}
+            >
+              <span className="capitalize">{fillStatus}</span> · {bin.fill ?? 0}% full
+            </span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            disabled={submitting || busy}
+            disabled={locked}
             aria-label="Close"
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 disabled:opacity-40"
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 cursor-pointer disabled:opacity-40"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          <div className="bg-gray-50 border rounded-lg p-3 text-sm">
-            <p>
-              <strong>Current collector:</strong> {bin.schedule?.collector ?? "Unassigned"}
-            </p>
-            <p className="mt-1">
-              <strong>Collection date:</strong> {formatScheduleDate(bin.schedule?.date)}
-            </p>
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Current assignment */}
+          <div className="flex items-center gap-3 bg-gray-50 border rounded-xl p-3">
+            <span className="shrink-0 w-9 h-9 rounded-full bg-gray-200 text-gray-700 text-xs font-bold flex items-center justify-center">
+              {getInitials(bin.schedule?.collector)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Currently assigned to</p>
+              <p className="text-sm font-semibold truncate">{bin.schedule?.collector ?? "Unassigned"}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Date</p>
+              <p className="text-sm font-semibold">{formatScheduleDate(bin.schedule?.date)}</p>
+            </div>
           </div>
 
+          {/* New collector (dropdown) */}
           <div>
             <label
               htmlFor="reassign-collector-select"
               className="flex items-center gap-2 text-sm font-medium mb-2"
             >
-              <UserCheck size={16} />
+              <UserCheck size={16} className="text-gray-500" />
               New collector
             </label>
             <select
@@ -566,31 +623,108 @@ function ReassignCollectorModal({
             )}
           </div>
 
+          {/* Date */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <CalendarDays size={16} className="text-gray-500" />
+                Collection date
+              </span>
+              <div className="flex gap-1.5">
+                {[
+                  { label: "Today", d: minDate },
+                  { label: "Tomorrow", d: addDays(minDate, 1) },
+                ].map(({ label, d }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setDate(toISODate(d))}
+                    disabled={locked}
+                    className={`px-2.5 py-1 text-xs rounded-full border cursor-pointer disabled:opacity-50 ${date === toISODate(d)
+                      ? "bg-gray-900 text-white border-gray-900"
+                      : "hover:bg-gray-100"
+                      }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <CalendarPicker value={date} onChange={setDate} minDate={minDate} />
+            <div className="flex items-center justify-between mt-2 min-h-[24px]">
+              <p className="text-xs text-gray-500">
+                {dateChanged ? (
+                  <>New date: <strong className="text-gray-900">{formatScheduleDate(date)}</strong></>
+                ) : (
+                  "Keeping the current collection date."
+                )}
+              </p>
+              {dateChanged && originalISO && parseISODate(originalISO) >= minDate && (
+                <button
+                  type="button"
+                  onClick={() => setDate(originalISO)}
+                  disabled={locked}
+                  className="text-xs font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900 cursor-pointer disabled:opacity-50"
+                >
+                  Keep current date
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Summary */}
+          {selectedCollector && (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-900">
+              <p className="font-semibold mb-0.5">Summary</p>
+              <p>
+                <strong>{bin.id}</strong> moves from{" "}
+                <strong>{bin.schedule?.collector ?? "Unassigned"}</strong> to{" "}
+                <strong>{selectedCollector.name}</strong>
+                {dateChanged ? (
+                  <>
+                    , collection on <strong>{formatScheduleDate(date)}</strong>.
+                  </>
+                ) : (
+                  <>, collection date unchanged.</>
+                )}
+              </p>
+            </div>
+          )}
+
           {error && (
             <div
               role="alert"
-              className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3"
+              className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl p-3"
             >
-              {error}
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
         </div>
 
-        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 p-5 border-t bg-gray-50 rounded-b-2xl">
+        {/* Footer */}
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 p-4 border-t bg-gray-50">
           <button
             type="button"
             onClick={onClose}
-            disabled={submitting || busy}
-            className="px-4 py-2.5 text-sm rounded-lg border bg-white hover:bg-gray-100 disabled:opacity-50"
+            disabled={locked}
+            className="px-4 py-2.5 text-sm rounded-lg border bg-white hover:bg-gray-100 cursor-pointer disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={!selectedId || submitting || busy}
-            className="px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-40"
+            disabled={!selectedId || !date || locked}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-800 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {submitting || busy ? "Reassigning..." : "Confirm Reassignment"}
+            {locked ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                Reassigning...
+              </>
+            ) : (
+              "Confirm Reassignment"
+            )}
           </button>
         </div>
       </form>
@@ -611,6 +745,9 @@ export default function BinMonitoring() {
   const [reassignBinId, setReassignBinId] = useState(null);
   const [reassignBusy, setReassignBusy] = useState(false);
   const reassignBusyRef = useRef(false);
+  // NEW: binId currently being confirmed as collected (disables its button)
+  const [confirmBusyId, setConfirmBusyId] = useState(null);
+  const confirmBusyRef = useRef(false);
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef(null);
   const [mapListPage, setMapListPage] = useState(1);
@@ -656,7 +793,11 @@ export default function BinMonitoring() {
       const nextBins = data.data.map((bin) => {
         const prev = prevById.get(bin.binId);
         const lastEmptied = bin.lastEmptied ? new Date(bin.lastEmptied) : null;
-        const merged = normalizeSchedule(bin.schedule) ?? prev?.schedule ?? null;
+        // The server is the source of truth. Only keep a locally-known schedule
+        // while its save request is still in flight.
+        const merged =
+          normalizeSchedule(bin.schedule) ??
+          (pendingRef.current.has(bin.binId) ? prev?.schedule ?? null : null);
         const completed = isScheduleComplete(merged, lastEmptied);
         return {
           id: bin.binId,
@@ -809,6 +950,7 @@ export default function BinMonitoring() {
         date: dateISO,
         createdAt: new Date(),
         completed: false,
+        collectorDone: false,
       };
       pendingRef.current.set(binId, collector.id);
       applyBins((prev) => prev.map((b) => (b.id === binId ? { ...b, schedule } : b)));
@@ -844,32 +986,10 @@ export default function BinMonitoring() {
     },
     [applyBins, fetchCollectors]
   );
-  // ── Auto-schedule any bin at/above the fill threshold ─────────────────────
-  // Each bin gets the lightest-loaded eligible collector, collection the day
-  // after it was detected. Each commitSchedule call reserves its slot
-  // synchronously, so the next bin in the loop sees the updated workload.
-  useEffect(() => {
-    if (!collectorsLoaded) return;
-    const now = Date.now();
-    const tomorrow = toISODate(addDays(startOfToday(), 1));
-    binsRef.current.forEach((bin) => {
-      if (bin.fill < SCHEDULE_FILL_THRESHOLD || bin.schedule) return;
-      if (pendingRef.current.has(bin.id)) return;
-      // Don't compete with an admin who is setting this bin's schedule.
-      if (modalBinId === bin.id) return;
-      const failedAt = failedAutoRef.current.get(bin.id);
-      if (failedAt && now - failedAt < AUTO_RETRY_COOLDOWN_MS) return;
-      const eligible = getEligibleCollectors(
-        collectorsRef.current,
-        binsRef.current,
-        pendingRef.current
-      );
-      if (eligible.length === 0) return;
-      commitSchedule(bin.id, eligible[0].id, tomorrow, true);
-    });
-    // modalBinId is a dependency so auto-scheduling resumes immediately if
-    // the admin cancels the modal on a bin that's already at/above threshold.
-  }, [bins, collectors, collectorsLoaded, commitSchedule, modalBinId]);
+  // ── Auto-scheduling ───────────────────────────────────────────────────────
+  // Intentionally NOT done in the browser. The backend auto-schedules bins at or
+  // above the fill threshold. A second scheduler here used to overwrite the
+  // server's schedule (and its collectorDone flag) and fight reassignments.
   // ── Manual schedule from the modal ────────────────────────────────────────
   const handleManualSchedule = useCallback(
     async (binId, collectorId, dateISO) => {
@@ -885,9 +1005,15 @@ export default function BinMonitoring() {
     [commitSchedule, showToast]
   );
   const handleReassignCollector = useCallback(
-    async (binId, collectorId) => {
+    async (binId, collectorId, date) => {
       if (reassignBusyRef.current) {
         return { ok: false, error: "A reassignment is already in progress." };
+      }
+      if (binsRef.current.find((b) => b.id === binId)?.schedule?.collectorDone) {
+        return {
+          ok: false,
+          error: "The collector already marked this collection as done. Confirm it instead of reassigning.",
+        };
       }
 
       reassignBusyRef.current = true;
@@ -903,7 +1029,7 @@ export default function BinMonitoring() {
               "Content-Type": "application/json",
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
-            body: JSON.stringify({ collectorId }),
+            body: JSON.stringify({ collectorId, ...(date ? { date } : {}) }),
           }
         );
 
@@ -918,6 +1044,9 @@ export default function BinMonitoring() {
         return { ok: true };
       } catch (error) {
         console.error("Failed to reassign collector:", error);
+        // State may be stale (e.g. the collector just marked it done): resync.
+        fetchBins(false);
+        fetchCollectors();
         return {
           ok: false,
           error: error.message || "Could not reassign collector. Please try again.",
@@ -930,8 +1059,67 @@ export default function BinMonitoring() {
     [fetchBins, fetchCollectors, showToast]
   );
 
+  // ── Confirm that a bin was collected ──────────────────────────────────────
+  // Only reachable when the collector tapped "Done Collection" AND the bin
+  // reads 0%. The server re-checks both. Completing the schedule releases the
+  // collector so they can be assigned another bin.
+  const handleConfirmCollection = useCallback(
+    async (binId) => {
+      if (confirmBusyRef.current) return;
+      if (
+        !window.confirm(
+          `Confirm that ${binId} has been collected? This releases the collector for a new assignment.`
+        )
+      ) {
+        return;
+      }
+
+      confirmBusyRef.current = true;
+      setConfirmBusyId(binId);
+
+      try {
+        const token = sessionStorage.getItem("token");
+        const res = await fetch(
+          `${SCHEDULE_API}/${encodeURIComponent(binId)}/schedule/complete`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          }
+        );
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) {
+          throw new Error(data.message || `Server responded ${res.status}`);
+        }
+
+        await Promise.all([fetchBins(false), fetchCollectors()]);
+        showToast(`Collection for ${binId} confirmed. The collector is now free for a new bin.`);
+      } catch (err) {
+        console.error("Failed to confirm collection:", err);
+        showToast(err.message || "Could not confirm the collection. Please try again.");
+      } finally {
+        confirmBusyRef.current = false;
+        setConfirmBusyId(null);
+      }
+    },
+    [fetchBins, fetchCollectors, showToast]
+  );
+
   const closeModal = useCallback(() => setModalBinId(null), []);
   const closeReassignModal = useCallback(() => setReassignBinId(null), []);
+  // If the collector taps "Done Collection" while the reassign modal is open,
+  // close it: reassigning is no longer allowed for that bin.
+  useEffect(() => {
+    if (!reassignBinId) return;
+    const target = bins.find((item) => item.id === reassignBinId);
+    if (target?.schedule?.collectorDone) {
+      setReassignBinId(null);
+      showToast(`${reassignBinId} was just marked done by the collector. It can no longer be reassigned.`);
+    }
+  }, [bins, reassignBinId, showToast]);
   const modalBin = modalBinId ? bins.find((b) => b.id === modalBinId) : null;
   const eligibleCollectors = modalBin
     ? getEligibleCollectors(collectors, bins, pendingRef.current)
@@ -1175,6 +1363,22 @@ export default function BinMonitoring() {
                           Set Schedule
                         </button>
                       )}
+                      {/* Confirm Collection — ONLY when the collector tapped "Done Collection"
+                          in the app AND the bin's fill level is 0.
+                          fill 0 + done      -> shown
+                          fill > 0 + done    -> hidden
+                          fill 0 + not done  -> hidden */}
+                      {bin.schedule?.collectorDone && bin.fill === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmCollection(bin.id)}
+                          disabled={confirmBusyId === bin.id}
+                          className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-600 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          <CheckCircle size={16} />
+                          {confirmBusyId === bin.id ? "Confirming..." : "Confirm Collection"}
+                        </button>
+                      )}
                       {/* Schedule summary — bottom of every card, manual or auto */}
                       <div className="mt-auto pt-4">
                         {bin.schedule ? (
@@ -1185,10 +1389,21 @@ export default function BinMonitoring() {
                             </p>
                             <p><strong>Collector:</strong> {bin.schedule.collector}</p>
                             <p><strong>Date:</strong> {formatScheduleDate(bin.schedule.date)}</p>
+                            {bin.schedule.collectorDone && (
+                              <p className="text-green-700 font-medium">
+                                Collector marked this as done
+                              </p>
+                            )}
                             <button
                               type="button"
                               onClick={() => setReassignBinId(bin.id)}
-                              className="mt-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-400 cursor-pointer"
+                              disabled={bin.schedule.collectorDone}
+                              title={
+                                bin.schedule.collectorDone
+                                  ? "The collector already marked this as done. Confirm the collection instead."
+                                  : undefined
+                              }
+                              className="mt-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-400 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white"
                             >
                               <UserCheck size={16} />
                               Reassign Collector

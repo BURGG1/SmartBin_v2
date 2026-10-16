@@ -606,9 +606,15 @@ export default function WasteBin() {
                                         className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
                                     >
                                         <option value="">Bin Location</option>
-                                        <option value="Rizal St.">Rizal St.</option>
-                                        <option value="Mabini St.">Mabini St.</option>
-                                        <option value="Bonifacio St.">Bonifacio St.</option>
+                                        <option value="Purok 1">Purok 1</option>
+                                        <option value="Purok 2">Purok 2</option>
+                                        <option value="Purok 3">Purok 3</option>
+                                        <option value="Purok 4">Purok 4</option>
+                                        <option value="Purok 5">Purok 5</option>
+                                        <option value="Purok 6">Purok 6</option>
+                                        <option value="Purok 7">Purok 7</option>
+                                        <option value="Purok 8">Purok 8</option>
+                                        <option value="Purok 9">Purok 9</option>
                                     </select>
                                 </div>
 

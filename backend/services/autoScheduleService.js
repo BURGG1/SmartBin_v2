@@ -1,12 +1,11 @@
-
+const mongoose = require("mongoose");
 const Bin = require("../models/Bin");
 const Collector = require("../models/Collector");
 const BinSchedule = require("../models/BinSchedule");
+const Notification = require("../models/Notification");
 
 const FILL_THRESHOLD = 75;
-const EMPTIED_THRESHOLD = 10;
 const MAX_BINS_PER_COLLECTOR = 2;
-const LOW_CONFIRM_MS = 10 * 1000;
 
 // Find the least-loaded active collector who has capacity.
 const findBestCollector = async () => {
@@ -167,15 +166,14 @@ const checkAndAutoSchedule = async () => {
 
 // Complete one pending schedule and clear its collector assignments.
 // Only a successful pending -> completed transition increments the counter.
-const completeScheduleForBin = async (
-  binId,
-  method = "manual"
-) => {
+// The bin's fill level is NOT touched: the sensor owns that value, and the
+// admin can only confirm once it already reads 0%.
+const completeScheduleForBin = async (binId, method = "manual") => {
   if (typeof binId !== "string" || !binId.trim()) {
     throw new Error("A valid binId is required.");
   }
 
-  if (!["auto", "manual"].includes(method)) {
+  if (method !== "manual") {
     throw new Error("Invalid completion method.");
   }
 
@@ -208,9 +206,7 @@ const completeScheduleForBin = async (
   );
 
   if (!schedule) {
-    console.log(
-      `[Collection] No pending schedule for ${binId}`
-    );
+    console.log(`[Collection] No pending schedule for ${binId}`);
     return null;
   }
 
@@ -219,13 +215,7 @@ const completeScheduleForBin = async (
   try {
     const updatedBin = await Bin.findOneAndUpdate(
       { binId },
-      {
-        $set: {
-          lastEmptied: completedAt,
-          lowSince: null,
-          fill: 0,
-        },
-      },
+      { $set: { lastEmptied: completedAt } },
       { new: true }
     );
 
@@ -239,6 +229,7 @@ const completeScheduleForBin = async (
   }
 
   // Always attempt cleanup after the schedule is marked completed.
+  // This is what releases the collector for a new assignment.
   try {
     await unassignBinFromCollector(binId);
   } catch (cleanupError) {
@@ -281,88 +272,228 @@ const completeScheduleForBin = async (
   return schedule;
 };
 
-// Called after a fill reading has been saved to the bin.
-const checkAutoConfirm = async (bin, newLevel) => {
-  if (!bin) return null;
-
-  const level = Number(newLevel);
-
-  if (
-    !Number.isFinite(level) ||
-    level < 0 ||
-    level > 100
-  ) {
-    console.warn(
-      "[AUTO-CONFIRM] Invalid fill level:",
-      newLevel
-    );
-    return null;
+// Collector taps "Done Collection" in the mobile app.
+// The schedule stays pending; the admin is notified and confirms later.
+const markCollectorDone = async (binId, collectorId) => {
+  if (typeof binId !== "string" || !binId.trim()) {
+    return { ok: false, code: 400, message: "A valid binId is required." };
   }
 
   const schedule = await BinSchedule.findOne({
-    binId: bin.binId,
+    binId,
     status: "pending",
+    collector: collectorId,
   });
 
   if (!schedule) {
-    if (bin.lowSince) {
-      await Bin.updateOne(
-        { _id: bin._id },
-        { $set: { lowSince: null } }
-      );
-    }
-
-    return null;
+    return {
+      ok: false,
+      code: 404,
+      message: "No pending collection assigned to you for this bin.",
+    };
   }
 
-  // If fill rises above 10%, reset the confirmation timer.
-  if (level > EMPTIED_THRESHOLD) {
-    if (bin.lowSince) {
-      await Bin.updateOne(
-        { _id: bin._id },
-        { $set: { lowSince: null } }
-      );
-    }
-
-    return null;
+  if (schedule.collectorDone) {
+    return { ok: false, code: 409, message: "Already marked as done." };
   }
 
-  // Start the timer on the first reading at or below 10%.
-  if (!bin.lowSince) {
-    const timerStartedAt = new Date();
-
-    await Bin.updateOne(
-      { _id: bin._id, lowSince: null },
-      { $set: { lowSince: timerStartedAt } }
-    );
-
-    console.log(
-      `[AUTO-CONFIRM] Low-fill timer started: ${bin.binId}`
-    );
-
-    return null;
-  }
-
-  const lowElapsed =
-    Date.now() - new Date(bin.lowSince).getTime();
-
-  if (lowElapsed < LOW_CONFIRM_MS) {
-    console.log("[AUTO-CONFIRM] Waiting:", {
-      binId: bin.binId,
-      fill: level,
-      remainingSeconds: Math.ceil(
-        (LOW_CONFIRM_MS - lowElapsed) / 1000
-      ),
-    });
-
-    return null;
-  }
-
-  console.log(
-    `[AUTO-CONFIRM] Emptying detected: ${bin.binId}`
+  // Atomic guard so a double tap can't create two notifications.
+  const updated = await BinSchedule.findOneAndUpdate(
+    // `collector` is pinned so that if the admin reassigns the bin between the
+  // read above and this write, the OLD collector cannot flag the NEW
+  // collector's schedule as done.
+  { _id: schedule._id, status: "pending", collector: collectorId, collectorDone: { $ne: true } },
+    { $set: { collectorDone: true, collectorDoneAt: new Date() } },
+    { new: true }
   );
 
-  return completeScheduleForBin(bin.binId, "auto");
+  if (!updated) {
+    return { ok: false, code: 409, message: "Already marked as done." };
+  }
+
+  try {
+    await Notification.create({
+      type: "collection_done",
+      title: "Collection marked as done",
+      message: `${updated.collectorName} finished collecting ${binId}.`,
+      meta: {
+        binId,
+        collectorId: String(updated.collector),
+        collectorName: updated.collectorName,
+      },
+    });
+  } catch (err) {
+    // The schedule is already flagged, so don't fail the collector's request.
+    console.error("[Collection] Could not create admin notification:", err);
+  }
+
+  console.log(`[Collection] ${updated.collectorName} marked ${binId} as done`);
+
+  return { ok: true, schedule: updated };
+};
+
+// Admin confirms. Only allowed when the collector is done AND the bin reads 0%.
+const confirmCollectionByAdmin = async (binId) => {
+  if (typeof binId !== "string" || !binId.trim()) {
+    return { ok: false, code: 400, message: "A valid binId is required." };
+  }
+
+  const bin = await Bin.findOne({ binId });
+  if (!bin) {
+    return { ok: false, code: 404, message: "Bin not found." };
+  }
+
+  const schedule = await BinSchedule.findOne({ binId, status: "pending" });
+  if (!schedule) {
+    return { ok: false, code: 404, message: "No pending collection for this bin." };
+  }
+
+  if (!schedule.collectorDone) {
+    return {
+      ok: false,
+      code: 409,
+      message: "The collector has not marked this collection as done.",
+    };
+  }
+
+  if (Number(bin.fill) !== 0) {
+    return {
+      ok: false,
+      code: 409,
+      message: "The bin's fill level is not 0% yet.",
+    };
+  }
+
+  const completed = await completeScheduleForBin(binId, "manual");
+  if (!completed) {
+    return { ok: false, code: 409, message: "This collection was already completed." };
+  }
+
+  return { ok: true, schedule: completed };
+};
+
+// Admin moves a PENDING schedule to a different collector.
+//  - Updates the schedule in place (createdAt, scheduledAt, triggeredBy kept).
+//  - Refused once the collector tapped "Done Collection": at that point the
+//    admin should confirm instead (confirmCollectionByAdmin).
+//  - The write is atomic and pinned to the current collector + collectorDone,
+//    so it can't race with markCollectorDone or confirmCollectionByAdmin.
+const reassignScheduleCollector = async (binId, newCollectorId, newDate = null) => {
+  if (typeof binId !== "string" || !binId.trim()) {
+    return { ok: false, code: 400, message: "A valid binId is required." };
+  }
+  if (!newCollectorId || !mongoose.isValidObjectId(newCollectorId)) {
+    return { ok: false, code: 400, message: "A valid collectorId is required." };
+  }
+
+  const schedule = await BinSchedule.findOne({ binId, status: "pending" });
+  if (!schedule) {
+    return { ok: false, code: 404, message: "No pending collection for this bin." };
+  }
+
+  if (schedule.collectorDone) {
+    return {
+      ok: false,
+      code: 409,
+      message:
+        "The collector already marked this collection as done. Confirm it instead of reassigning.",
+    };
+  }
+
+  if (String(schedule.collector) === String(newCollectorId)) {
+    return { ok: false, code: 400, message: "This bin is already assigned to that collector." };
+  }
+
+  const newCollector = await Collector.findById(newCollectorId);
+  if (!newCollector) {
+    return { ok: false, code: 404, message: "Collector not found." };
+  }
+  if (!newCollector.isActive) {
+    return { ok: false, code: 409, message: "That collector is not active." };
+  }
+
+  // Workload = assignedBins plus pending schedules, minus this bin.
+  const theirPending = await BinSchedule.find({
+    collector: newCollector._id,
+    status: "pending",
+  }).select("binId");
+  const workload = new Set((newCollector.assignedBins || []).map(String));
+  theirPending.forEach((item) => workload.add(String(item.binId)));
+  workload.delete(binId);
+
+  if (workload.size >= MAX_BINS_PER_COLLECTOR) {
+    return {
+      ok: false,
+      code: 409,
+      message: `${newCollector.name} already has ${MAX_BINS_PER_COLLECTOR} bins assigned.`,
+    };
+  }
+
+  // Optional new collection date (the calendar in the reassign modal).
+  let newScheduledAt = null;
+  if (newDate) {
+    newScheduledAt = new Date(newDate);
+    if (Number.isNaN(newScheduledAt.getTime())) {
+      return { ok: false, code: 400, message: "Invalid date." };
+    }
+  }
+
+  const oldCollectorId = schedule.collector;
+  const oldCollectorName = schedule.collectorName;
+  const oldScheduledAt = schedule.scheduledAt;
+
+  const updated = await BinSchedule.findOneAndUpdate(
+    {
+      _id: schedule._id,
+      status: "pending",
+      collector: oldCollectorId,
+      collectorDone: { $ne: true },
+    },
+    {
+      $set: {
+        collector: newCollector._id,
+        collectorName: newCollector.name,
+        reassignedAt: new Date(),
+        ...(newScheduledAt ? { scheduledAt: newScheduledAt } : {}),
+      },
+    },
+    { new: true }
+  );
+
+  if (!updated) {
+    return {
+      ok: false,
+      code: 409,
+      message:
+        "This collection just changed (the collector may have marked it done). Refresh and try again.",
+    };
+  }
+
+  try {
+    await Collector.updateMany(
+      { _id: { $ne: newCollector._id }, assignedBins: binId },
+      { $pull: { assignedBins: binId } }
+    );
+    await Collector.findByIdAndUpdate(newCollector._id, {
+      $addToSet: { assignedBins: binId },
+    });
+  } catch (err) {
+    // Put everything back so schedule and assignments never disagree.
+    await BinSchedule.updateOne(
+      { _id: updated._id, status: "pending" },
+      { $set: { collector: oldCollectorId, collectorName: oldCollectorName, scheduledAt: oldScheduledAt, reassignedAt: null } }
+    ).catch((e) => console.error("[Reassign] rollback (schedule) failed:", e));
+    await Collector.findByIdAndUpdate(oldCollectorId, {
+      $addToSet: { assignedBins: binId },
+    }).catch((e) => console.error("[Reassign] rollback (old collector) failed:", e));
+    await Collector.findByIdAndUpdate(newCollector._id, {
+      $pull: { assignedBins: binId },
+    }).catch((e) => console.error("[Reassign] rollback (new collector) failed:", e));
+    throw err;
+  }
+
+  console.log(`[Reassign] ${binId}: ${oldCollectorName} -> ${newCollector.name}`);
+  return { ok: true, schedule: updated };
 };
 
 module.exports = {
@@ -371,5 +502,7 @@ module.exports = {
   findBestCollector,
   unassignBinFromCollector,
   completeScheduleForBin,
-  checkAutoConfirm,
+  markCollectorDone,
+  confirmCollectionByAdmin,
+  reassignScheduleCollector,
 };

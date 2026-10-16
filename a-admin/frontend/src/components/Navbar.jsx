@@ -1,4 +1,3 @@
-
 import {
   Recycle,
   LogOut,
@@ -8,6 +7,7 @@ import {
   UserPlus,
   User,
   CheckCheck,
+  CheckCircle,
 } from "lucide-react";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -31,6 +31,10 @@ const TYPE_ICON = {
   ),
   missed_collection: (
     <AlertTriangle size={16} className="text-red-500" />
+  ),
+  // NEW: collector tapped "Done Collection" in the mobile app
+  collection_done: (
+    <CheckCircle size={16} className="text-green-600" />
   ),
 };
 
@@ -502,6 +506,25 @@ export default function Navbar() {
                                     Household ID: {n.meta.householdId}
                                   </p>
                                 )}
+
+                              {/* NEW: collector finished collecting */}
+                              {n.type === "collection_done" && (
+                                <div className="mt-1 text-xs text-gray-500">
+                                  <p>
+                                    Bin: {n.meta?.binId || "Unknown"}
+                                  </p>
+
+                                  <p>
+                                    Collector:{" "}
+                                    {n.meta?.collectorName || "Unknown"}
+                                  </p>
+
+                                  <p className="mt-1 font-medium text-green-700">
+                                    Confirm it in Bin Monitoring once the
+                                    bin reads 0%
+                                  </p>
+                                </div>
+                              )}
 
                               {n.type === "missed_collection" && (
                                 <div className="mt-1 text-xs text-gray-500">

@@ -39,15 +39,14 @@ const normalizeContactNumber = (input) => {
     return digits;
 };
 
-// Strips the leading "0" so the number can be shown next to a fixed
-// "+63" prefix, matching the AddHousehold UI (e.g. "09171234567" -> "9171234567")
+// Strips the leading "0" so the number can be shown next to a fixed "+63" prefix
 const toLocalDisplay = (contactNumber) => {
     if (!contactNumber) return "";
     return contactNumber.startsWith("0") ? contactNumber.slice(1) : contactNumber;
 };
 
 const getInitials = (name = "") => {
-    const trimmed = name.trim();
+    const trimmed = (name || "").trim();
     if (!trimmed) return "?";
     return trimmed
         .split(/\s+/)
@@ -57,11 +56,17 @@ const getInitials = (name = "") => {
         .toUpperCase();
 };
 
+// 09171234567 -> 0917 123 4567
+const formatContact = (n) => {
+    if (!n) return "—";
+    const d = String(n).replace(/\D/g, "");
+    return d.length === 11 ? `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}` : String(n);
+};
+
 export default function Profile() {
     const router = useRouter();
     const [household, setHousehold] = useState(null);
-    // null = not loaded yet. The household document has no violation count,
-    // so this comes from the /violations endpoint (same one the Home tab uses).
+    // null = not loaded yet. Comes from the /violations endpoint (same one the Home tab uses).
     const [violationCount, setViolationCount] = useState(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -89,7 +94,6 @@ export default function Profile() {
     });
 
     // Total violations on record. limit=1 keeps the request tiny; we only need pagination.total.
-    // Failures are isolated so the rest of the profile still loads.
     const fetchViolationCount = async (userId, token) => {
         try {
             const res = await fetch(
@@ -139,15 +143,13 @@ export default function Profile() {
         }
     };
 
-    // Runs on first open AND every time the tab regains focus, so a new
-    // violation issued by an admin shows up without a manual refresh.
+    // Runs on first open AND every time the tab regains focus.
     useFocusEffect(
         useCallback(() => {
             fetchHousehold();
         }, [])
     );
 
-    // used by pull-to-refresh
     const onRefresh = async () => {
         setRefreshing(true);
         await fetchHousehold();
@@ -195,14 +197,10 @@ export default function Profile() {
     const handleUpdate = async () => {
         const nextErrors = {};
 
-        // ── Fullname: required ──
         if (!form.fullname.trim()) {
             nextErrors.fullname = "Fullname is required.";
         }
 
-        // ── Contact number: required, format-validated ──
-        // form.contactNumber only holds the local part (no leading 0),
-        // normalizeContactNumber re-attaches it to the canonical "09XXXXXXXXX" form.
         const normalizedContact = normalizeContactNumber(form.contactNumber.trim());
         if (!form.contactNumber.trim()) {
             nextErrors.contactNumber = "Contact number is required.";
@@ -210,7 +208,6 @@ export default function Profile() {
             nextErrors.contactNumber = "Enter a valid contact number, e.g. 912-345-6789.";
         }
 
-        // ── Email: only validate format if provided ──
         const normalizedEmail = form.email.trim() ? form.email.trim().toLowerCase() : "";
         if (normalizedEmail && !EMAIL_REGEX.test(normalizedEmail)) {
             nextErrors.email = "Enter a valid email address.";
@@ -219,9 +216,7 @@ export default function Profile() {
         setFormErrors(nextErrors);
         if (Object.keys(nextErrors).length > 0) return;
 
-        // ── Only re-check availability if the value actually changed ──
-        // Prevents false "already registered" hits against the user's own
-        // current contact number / email.
+        // Only re-check availability if the value actually changed
         const contactChanged = normalizedContact !== household?.contactNumber;
         const emailChanged = normalizedEmail !== (household?.email || "");
 
@@ -284,7 +279,6 @@ export default function Profile() {
                 email: normalizedEmail || null,
             };
 
-            // Only include password fields if user wants to change it
             if (passwordForm.currentPassword && passwordForm.newPassword) {
                 body.currentPassword = passwordForm.currentPassword;
                 body.newPassword = passwordForm.newPassword;
@@ -302,8 +296,6 @@ export default function Profile() {
             const data = await res.json();
 
             if (!res.ok || !data.success) {
-                // Surface server-side uniqueness/validation errors (e.g. race condition
-                // where someone else took the number between check and submit)
                 const message = Array.isArray(data.message) ? data.message.join("\n") : data.message;
                 Alert.alert("Error", message || "Failed to update.");
                 return;
@@ -348,14 +340,7 @@ export default function Profile() {
 
     const hasViolations = (violationCount ?? 0) > 0;
 
-    // 09171234567 -> 0917 123 4567 (easier to read, no country prefix)
-    const formatContact = (n) => {
-        if (!n) return "—";
-        const d = String(n).replace(/\D/g, "");
-        return d.length === 11 ? `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}` : String(n);
-    };
-
-    const contactItems = [
+    const detailItems = [
         { label: "Address", value: fullAddress, icon: "map-pin" },
         { label: "Contact number", value: formatContact(household?.contactNumber), icon: "phone" },
         { label: "Email", value: household?.email || "—", icon: "mail" },
@@ -369,7 +354,7 @@ export default function Profile() {
     ];
 
     const stats = [
-        { label: "Points", value: String(household?.points?.total ?? 0), icon: "award" },
+        { label: "Points", value: String(household?.points?.total ?? 0), icon: "award", danger: false },
         {
             label: "Violations",
             value: violationCount === null ? "—" : String(violationCount),
@@ -378,15 +363,65 @@ export default function Profile() {
         },
     ];
 
-    // Generic fields — contact number is handled separately below with
-    // the +63 prefixed input to match AddHousehold's UI.
-    const genericFields = [
-        { label: "Fullname", key: "fullname", placeholder: "ex. Joel Dela Cruz", required: true },
-        { label: "House No.", key: "houseNo", placeholder: "ex. 0123" },
-        { label: "Street / Block", key: "street", placeholder: "ex. Rizal St." },
-        { label: "Family Members", key: "familyMember", placeholder: "ex. 5", keyboard: "numeric" },
-        { label: "Email", key: "email", placeholder: "ex. joel@email.com", keyboard: "email-address" },
-    ];
+    // ── Form helpers (plain render functions, not components, so inputs keep focus) ──
+    const clearError = (key) => {
+        if (formErrors[key]) setFormErrors((prev) => ({ ...prev, [key]: undefined }));
+    };
+
+    const renderInput = ({ label, key, placeholder, required, keyboard, icon }) => (
+        <View key={key}>
+            <Text className="text-sm font-semibold mb-1.5 text-gray-700">
+                {label}
+                {required && <Text className="text-red-500"> *</Text>}
+            </Text>
+            <View
+                className={`flex-row items-center border rounded-xl px-3.5 bg-gray-50 ${formErrors[key] ? "border-red-500" : "border-gray-300"
+                    }`}
+            >
+                {icon && <Feather name={icon} size={18} color="#9CA3AF" />}
+                <TextInput
+                    editable={!updating}
+                    value={form[key]}
+                    onChangeText={(v) => {
+                        setForm((prev) => ({ ...prev, [key]: v }));
+                        clearError(key);
+                    }}
+                    placeholder={placeholder}
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType={keyboard || "default"}
+                    autoCapitalize={key === "email" ? "none" : "sentences"}
+                    className="flex-1 py-3 ml-2.5 text-base text-gray-900"
+                />
+            </View>
+            {formErrors[key] && <Text className="text-red-600 text-sm mt-1">{formErrors[key]}</Text>}
+        </View>
+    );
+
+    const renderPasswordInput = ({ label, value, onChange, placeholder, show, setShow }) => (
+        <View>
+            <Text className="text-sm font-semibold mb-1.5 text-gray-700">{label}</Text>
+            <View className="flex-row items-center border rounded-xl px-3.5 border-gray-300 bg-gray-50">
+                <Feather name="lock" size={18} color="#9CA3AF" />
+                <TextInput
+                    editable={!updating}
+                    value={value}
+                    onChangeText={onChange}
+                    placeholder={placeholder}
+                    placeholderTextColor="#9CA3AF"
+                    secureTextEntry={!show}
+                    autoCapitalize="none"
+                    className="flex-1 py-3 ml-2.5 text-base text-gray-900"
+                />
+                <TouchableOpacity onPress={() => setShow(!show)} hitSlop={8}>
+                    <Feather name={show ? "eye-off" : "eye"} size={20} color="#6B7280" />
+                </TouchableOpacity>
+            </View>
+        </View>
+    );
+
+    const renderSectionTitle = (title) => (
+        <Text className="text-xs font-bold text-green-700 tracking-widest mb-3">{title}</Text>
+    );
 
     return (
         <SafeAreaView className="flex-1 bg-gray-50">
@@ -397,39 +432,54 @@ export default function Profile() {
                     <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#16A34A" colors={["#16A34A"]} />
                 }
             >
-
-                <View className="px-5 pt-2 pb-5 flex-row items-center justify-between">
-                    <View className="flex-1 pr-3">
-                        <Text className="text-3xl font-bold text-gray-900">Household Profile</Text>
-                        <Text className="text-base text-gray-600 mt-1">View and manage your household information</Text>
-                    </View>
+                <View className="px-5 pt-2 pb-4">
+                    <Text className="text-3xl font-bold text-gray-900">Household Profile</Text>
+                    <Text className="text-base text-gray-600 mt-1">View and manage your household information</Text>
                 </View>
 
-                {/* Hero identity card with key stats */}
-                <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 items-center">
-                    <View className="w-20 h-20 rounded-full bg-green-100 items-center justify-center mb-3">
-                        <Text className="text-green-700 text-2xl font-bold">{getInitials(household?.fullname)}</Text>
-                    </View>
-                    <Text className="text-2xl font-bold text-gray-900 text-center">{household?.fullname || "—"}</Text>
-                    <View className="bg-green-100 rounded-full px-3 py-1 mt-2">
-                        <Text className="text-green-800 text-sm font-semibold">Household account</Text>
+                {/* Hero card: green banner, overlapping avatar, stat tiles */}
+                <View className="mx-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                    <View className="h-24 bg-green-600">
+                        <View className="absolute -right-6 -top-8 w-32 h-32 rounded-full bg-green-500/60" />
+                        <View className="absolute right-16 top-10 w-16 h-16 rounded-full bg-green-700/40" />
+                        <View className="absolute -left-4 top-12 w-20 h-20 rounded-full bg-green-500/40" />
                     </View>
 
-                    <View className="flex-row w-full mt-5 pt-5 border-t border-gray-100">
-                        {stats.map((st, i) => (
-                            <View
-                                key={st.label}
-                                accessible
-                                accessibilityLabel={`${st.label}: ${st.value}`}
-                                className={`flex-1 items-center ${i > 0 ? "border-l border-gray-100" : ""}`}
-                            >
-                                <Feather name={st.icon} size={18} color={st.danger ? "#DC2626" : "#16A34A"} />
-                                <Text className={`text-xl font-extrabold mt-1 ${st.danger ? "text-red-600" : "text-gray-900"}`}>
-                                    {st.value}
-                                </Text>
-                                <Text className="text-sm text-gray-600">{st.label}</Text>
-                            </View>
-                        ))}
+                    <View className="px-5 pb-5 items-center">
+                        <View className="-mt-10 w-20 h-20 rounded-full bg-green-100 border-4 border-white items-center justify-center shadow-sm">
+                            <Text className="text-green-700 text-2xl font-bold">{getInitials(household?.fullname)}</Text>
+                        </View>
+                        <Text className="text-2xl font-bold text-gray-900 text-center mt-3">
+                            {household?.fullname || "—"}
+                        </Text>
+                        <View className="flex-row items-center bg-green-100 rounded-full px-3 py-1 mt-2">
+                            <Feather name="home" size={13} color="#166534" />
+                            <Text className="text-green-800 text-sm font-semibold ml-1.5">Household account</Text>
+                        </View>
+
+                        <View className="flex-row w-full mt-5 gap-3">
+                            {stats.map((st) => (
+                                <View
+                                    key={st.label}
+                                    accessible
+                                    accessibilityLabel={`${st.label}: ${st.value}`}
+                                    className={`flex-1 items-center rounded-2xl py-4 ${st.danger ? "bg-red-50" : "bg-gray-50"}`}
+                                >
+                                    <View
+                                        className={`w-9 h-9 rounded-full items-center justify-center ${st.danger ? "bg-red-100" : "bg-green-100"
+                                            }`}
+                                    >
+                                        <Feather name={st.icon} size={18} color={st.danger ? "#DC2626" : "#16A34A"} />
+                                    </View>
+                                    <Text
+                                        className={`text-2xl font-extrabold mt-2 ${st.danger ? "text-red-600" : "text-gray-900"}`}
+                                    >
+                                        {st.value}
+                                    </Text>
+                                    <Text className="text-sm text-gray-600">{st.label}</Text>
+                                </View>
+                            ))}
+                        </View>
                     </View>
                 </View>
 
@@ -439,7 +489,10 @@ export default function Profile() {
                         className={`mx-4 mt-4 rounded-2xl border p-4 flex-row items-center gap-3 ${hasViolations ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
                             }`}
                     >
-                        <View className={`w-11 h-11 rounded-full items-center justify-center ${hasViolations ? "bg-red-100" : "bg-green-100"}`}>
+                        <View
+                            className={`w-11 h-11 rounded-full items-center justify-center ${hasViolations ? "bg-red-100" : "bg-green-100"
+                                }`}
+                        >
                             <Feather
                                 name={hasViolations ? "alert-triangle" : "check-circle"}
                                 size={22}
@@ -462,12 +515,24 @@ export default function Profile() {
                 )}
 
                 {/* Household details */}
-                <Text className="mx-5 mt-6 mb-2 text-sm font-bold text-gray-600 tracking-wide">HOUSEHOLD DETAILS</Text>
+                <View className="mx-5 mt-6 mb-2 flex-row items-center justify-between">
+                    <Text className="text-sm font-bold text-gray-600 tracking-wide">HOUSEHOLD DETAILS</Text>
+                    <TouchableOpacity
+                        onPress={() => setIsModalOpen(true)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit household information"
+                        hitSlop={8}
+                        className="flex-row items-center"
+                    >
+                        <Feather name="edit-2" size={14} color="#15803d" />
+                        <Text className="text-green-700 text-sm font-semibold ml-1">Edit</Text>
+                    </TouchableOpacity>
+                </View>
                 <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    {contactItems.map((item, idx) => (
+                    {detailItems.map((item, idx) => (
                         <View
                             key={item.label}
-                            className={`flex-row items-center gap-3 px-4 py-4 ${idx !== contactItems.length - 1 ? "border-b border-gray-100" : ""
+                            className={`flex-row items-center gap-3 px-4 py-4 ${idx !== detailItems.length - 1 ? "border-b border-gray-100" : ""
                                 }`}
                         >
                             <View className="w-11 h-11 rounded-full items-center justify-center bg-green-50">
@@ -483,237 +548,196 @@ export default function Profile() {
 
                 {/* Actions */}
                 <View className="mx-4 mt-5 gap-3">
-                    <TouchableOpacity
+                    {/* <TouchableOpacity
                         onPress={() => setIsModalOpen(true)}
                         accessibilityRole="button"
-                        activeOpacity={0.8}
-                        className="w-full py-4 rounded-xl border-2 border-green-600 items-center bg-white flex-row justify-center"
+                        activeOpacity={0.85}
+                        className="w-full py-4 rounded-xl bg-green-600 flex-row items-center justify-center"
                     >
-                        <Feather name="edit-2" size={18} color="#15803d" />
-                        <Text className="text-green-700 text-base font-semibold ml-2">Update information</Text>
-                    </TouchableOpacity>
+                        <Feather name="edit-2" size={18} color="white" />
+                        <Text className="text-white text-base font-semibold ml-2">Update information</Text>
+                    </TouchableOpacity> */}
 
                     <TouchableOpacity
                         onPress={handleLogout}
                         accessibilityRole="button"
                         activeOpacity={0.8}
-                        className="w-full py-4 rounded-xl bg-gray-700 flex-row items-center justify-center"
+                        className="w-full py-4 rounded-xl bg-white border border-gray-300 flex-row items-center justify-center"
                     >
-                        <Feather name="log-out" size={18} color="white" />
-                        <Text className="text-white text-base font-semibold ml-2">Logout</Text>
+                        <Feather name="log-out" size={18} color="#374151" />
+                        <Text className="text-gray-700 text-base font-semibold ml-2">Logout</Text>
                     </TouchableOpacity>
                 </View>
-
             </ScrollView>
 
-            {/* Edit Modal */}
-            <Modal visible={isModalOpen} animationType="slide" transparent onRequestClose={() => !updating && resetModalState()}>
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === "ios" ? "padding" : undefined}
-                    className="flex-1"
-                >
-                    <View className="flex-1 bg-black/40 justify-center items-center p-4">
-                        <ScrollView className="w-full" contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}>
-                            <View className="bg-white w-full rounded-2xl p-6 gap-4">
-
-                                <View className="flex-row justify-between items-center mb-1">
+            {/* Edit modal: bottom sheet with sticky header and footer */}
+            <Modal
+                visible={isModalOpen}
+                animationType="slide"
+                transparent
+                onRequestClose={() => !updating && resetModalState()}
+            >
+                <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} className="flex-1">
+                    <View className="flex-1 bg-black/40 justify-end">
+                        <View className="bg-white rounded-t-3xl" style={{ maxHeight: "92%" }}>
+                            {/* Header */}
+                            <View className="px-5 pt-5 pb-4 border-b border-gray-100 flex-row items-center justify-between">
+                                <View className="flex-1 pr-3">
                                     <Text className="text-xl font-bold text-gray-900">Update Information</Text>
-                                    <TouchableOpacity
-                                        onPress={() => !updating && resetModalState()}
-                                        className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center"
-                                    >
-                                        <Feather name="x" size={20} color="#4B5563" />
-                                    </TouchableOpacity>
+                                    <Text className="text-sm text-gray-500 mt-0.5">Fields marked * are required</Text>
+                                </View>
+                                <TouchableOpacity
+                                    onPress={() => !updating && resetModalState()}
+                                    accessibilityLabel="Close"
+                                    className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center"
+                                >
+                                    <Feather name="x" size={20} color="#4B5563" />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* Body */}
+                            <ScrollView
+                                keyboardShouldPersistTaps="handled"
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={{ padding: 20, paddingBottom: 12 }}
+                            >
+                                {/* Personal */}
+                                <View className="mb-6 gap-4">
+                                    {renderSectionTitle("PERSONAL")}
+                                    {renderInput({
+                                        label: "Fullname",
+                                        key: "fullname",
+                                        placeholder: "ex. Joel Dela Cruz",
+                                        required: true,
+                                        icon: "user",
+                                    })}
+                                    {renderInput({
+                                        label: "Family Members",
+                                        key: "familyMember",
+                                        placeholder: "ex. 5",
+                                        keyboard: "numeric",
+                                        icon: "users",
+                                    })}
                                 </View>
 
-                                {/* Fullname */}
-                                {genericFields.slice(0, 1).map((field) => (
-                                    <View key={field.key}>
-                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">
-                                            {field.label}
-                                            {field.required && <Text className="text-red-500"> *</Text>}
+                                {/* Address */}
+                                <View className="mb-6 gap-4">
+                                    {renderSectionTitle("ADDRESS")}
+                                    {renderInput({ label: "House No.", key: "houseNo", placeholder: "ex. 0123", icon: "home" })}
+                                    {renderInput({ label: "Street / Block", key: "street", placeholder: "ex. Rizal St.", icon: "map-pin" })}
+                                </View>
+
+                                {/* Contact */}
+                                <View className="mb-6 gap-4">
+                                    {renderSectionTitle("CONTACT")}
+                                    <View>
+                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">
+                                            Contact Number
+                                            <Text className="text-red-500"> *</Text>
                                         </Text>
-                                        <TextInput
-                                            editable={!updating}
-                                            value={form[field.key]}
-                                            onChangeText={(v) => {
-                                                setForm((prev) => ({ ...prev, [field.key]: v }));
-                                                if (formErrors[field.key]) {
-                                                    setFormErrors((prev) => ({ ...prev, [field.key]: undefined }));
-                                                }
-                                            }}
-                                            placeholder={field.placeholder}
-                                            placeholderTextColor="#9CA3AF"
-                                            className={`border rounded-xl px-4 py-3 text-base text-gray-900 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-300"
+                                        <View
+                                            className={`flex-row items-center border rounded-xl overflow-hidden bg-gray-50 ${formErrors.contactNumber ? "border-red-500" : "border-gray-300"
                                                 }`}
-                                        />
-                                        {formErrors[field.key] && (
-                                            <Text className="text-red-600 text-sm mt-1">{formErrors[field.key]}</Text>
+                                        >
+                                            <View className="bg-gray-100 px-3.5 py-3 border-r border-gray-200">
+                                                <Text className="text-gray-800 text-base font-medium">🇵🇭 +63</Text>
+                                            </View>
+                                            <TextInput
+                                                editable={!updating}
+                                                value={form.contactNumber}
+                                                onChangeText={(v) => {
+                                                    // digits and dashes only
+                                                    const cleaned = v.replace(/[^\d-]/g, "");
+                                                    setForm((prev) => ({ ...prev, contactNumber: cleaned }));
+                                                    clearError("contactNumber");
+                                                }}
+                                                placeholder="912-345-6789"
+                                                placeholderTextColor="#9CA3AF"
+                                                keyboardType="phone-pad"
+                                                maxLength={10}
+                                                className="flex-1 px-4 py-3 text-base text-gray-900"
+                                            />
+                                        </View>
+                                        {formErrors.contactNumber && (
+                                            <Text className="text-red-600 text-sm mt-1">{formErrors.contactNumber}</Text>
                                         )}
                                     </View>
-                                ))}
-
-                                {/* Contact Number — matches AddHousehold's +63 prefixed input */}
-                                <View>
-                                    <Text className="text-base font-semibold mb-1.5 text-gray-800">
-                                        Contact Number
-                                        <Text className="text-red-500"> *</Text>
-                                    </Text>
-                                    <View
-                                        className={`flex-row items-center border rounded-xl overflow-hidden bg-gray-50 ${formErrors.contactNumber ? "border-red-500" : "border-gray-300"
-                                            }`}
-                                    >
-                                        <View className="bg-gray-100 px-3.5 py-3">
-                                            <Text className="text-gray-800 text-base font-medium">🇵🇭 +63</Text>
-                                        </View>
-                                        <TextInput
-                                            editable={!updating}
-                                            value={form.contactNumber}
-                                            onChangeText={(v) => {
-                                                // allow digits and dashes only, matches AddHousehold's free-typed format
-                                                const cleaned = v.replace(/[^\d-]/g, "");
-                                                setForm((prev) => ({ ...prev, contactNumber: cleaned }));
-                                                if (formErrors.contactNumber) {
-                                                    setFormErrors((prev) => ({ ...prev, contactNumber: undefined }));
-                                                }
-                                            }}
-                                            placeholder="912-345-6789"
-                                            placeholderTextColor="#9CA3AF"
-                                            keyboardType="phone-pad"
-                                            maxLength={10}
-                                            className="flex-1 px-4 py-3 text-base text-gray-900"
-                                        />
-                                    </View>
-                                    {formErrors.contactNumber && (
-                                        <Text className="text-red-600 text-sm mt-1">{formErrors.contactNumber}</Text>
-                                    )}
+                                    {renderInput({
+                                        label: "Email",
+                                        key: "email",
+                                        placeholder: "ex. joel@email.com",
+                                        keyboard: "email-address",
+                                        icon: "mail",
+                                    })}
                                 </View>
 
-                                {/* Remaining generic fields */}
-                                {genericFields.slice(1).map((field) => (
-                                    <View key={field.key}>
-                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">{field.label}</Text>
-                                        <TextInput
-                                            editable={!updating}
-                                            value={form[field.key]}
-                                            onChangeText={(v) => {
-                                                setForm((prev) => ({ ...prev, [field.key]: v }));
-                                                if (formErrors[field.key]) {
-                                                    setFormErrors((prev) => ({ ...prev, [field.key]: undefined }));
-                                                }
-                                            }}
-                                            placeholder={field.placeholder}
-                                            placeholderTextColor="#9CA3AF"
-                                            keyboardType={field.keyboard || "default"}
-                                            autoCapitalize={field.key === "email" ? "none" : "sentences"}
-                                            className={`border rounded-xl px-4 py-3 text-base text-gray-900 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-300"
-                                                }`}
-                                        />
-                                        {formErrors[field.key] && (
-                                            <Text className="text-red-600 text-sm mt-1">{formErrors[field.key]}</Text>
-                                        )}
+                                {/* Password */}
+                                <View className="gap-4 rounded-2xl bg-gray-50 border border-gray-100 p-4">
+                                    <View>
+                                        {renderSectionTitle("CHANGE PASSWORD")}
+                                        <Text className="text-sm text-gray-500 -mt-1.5">
+                                            Leave blank if you don't want to change your password.
+                                        </Text>
                                     </View>
-                                ))}
-
-                                {/* Divider */}
-                                <View className="border-t border-gray-200 mt-2 pt-4">
-                                    <Text className="text-sm font-bold text-gray-700 mb-1 tracking-wide">
-                                        CHANGE PASSWORD
-                                    </Text>
-                                    <Text className="text-sm text-gray-500 mb-3">
-                                        Leave blank if you don't want to change your password.
-                                    </Text>
-
-                                    {/* Current Password */}
-                                    <View className="mb-3">
-                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">Current Password</Text>
-                                        <View className="flex-row items-center border rounded-xl px-4 py-3 border-gray-300 bg-gray-50">
-                                            <TextInput
-                                                editable={!updating}
-                                                value={passwordForm.currentPassword}
-                                                onChangeText={(v) => setPasswordForm((prev) => ({ ...prev, currentPassword: v }))}
-                                                placeholder="Enter current password"
-                                                placeholderTextColor="#9CA3AF"
-                                                secureTextEntry={!showCurrentPassword}
-                                                className="flex-1 text-base text-gray-900"
-                                            />
-                                            <TouchableOpacity onPress={() => setShowCurrentPassword(!showCurrentPassword)}>
-                                                <Feather name={showCurrentPassword ? "eye-off" : "eye"} size={20} color="#6B7280" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
-
-                                    {/* New Password */}
-                                    <View className="mb-3">
-                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">New Password</Text>
-                                        <View className="flex-row items-center border rounded-xl px-4 py-3 border-gray-300 bg-gray-50">
-                                            <TextInput
-                                                editable={!updating}
-                                                value={passwordForm.newPassword}
-                                                onChangeText={(v) => setPasswordForm((prev) => ({ ...prev, newPassword: v }))}
-                                                placeholder="Enter new password"
-                                                placeholderTextColor="#9CA3AF"
-                                                secureTextEntry={!showNewPassword}
-                                                className="flex-1 text-base text-gray-900"
-                                            />
-                                            <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)}>
-                                                <Feather name={showNewPassword ? "eye-off" : "eye"} size={20} color="#6B7280" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
-
-                                    {/* Confirm New Password */}
-                                    <View className="mb-1">
-                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">Confirm New Password</Text>
-                                        <View className="flex-row items-center border rounded-xl px-4 py-3 border-gray-300 bg-gray-50">
-                                            <TextInput
-                                                editable={!updating}
-                                                value={passwordForm.confirmPassword}
-                                                onChangeText={(v) => setPasswordForm((prev) => ({ ...prev, confirmPassword: v }))}
-                                                placeholder="Re-enter new password"
-                                                placeholderTextColor="#9CA3AF"
-                                                secureTextEntry={!showConfirmPassword}
-                                                className="flex-1 text-base text-gray-900"
-                                            />
-                                            <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
-                                                <Feather name={showConfirmPassword ? "eye-off" : "eye"} size={20} color="#6B7280" />
-                                            </TouchableOpacity>
-                                        </View>
-                                    </View>
+                                    {renderPasswordInput({
+                                        label: "Current Password",
+                                        value: passwordForm.currentPassword,
+                                        onChange: (v) => setPasswordForm((prev) => ({ ...prev, currentPassword: v })),
+                                        placeholder: "Enter current password",
+                                        show: showCurrentPassword,
+                                        setShow: setShowCurrentPassword,
+                                    })}
+                                    {renderPasswordInput({
+                                        label: "New Password",
+                                        value: passwordForm.newPassword,
+                                        onChange: (v) => setPasswordForm((prev) => ({ ...prev, newPassword: v })),
+                                        placeholder: "At least 6 characters",
+                                        show: showNewPassword,
+                                        setShow: setShowNewPassword,
+                                    })}
+                                    {renderPasswordInput({
+                                        label: "Confirm New Password",
+                                        value: passwordForm.confirmPassword,
+                                        onChange: (v) => setPasswordForm((prev) => ({ ...prev, confirmPassword: v })),
+                                        placeholder: "Re-enter new password",
+                                        show: showConfirmPassword,
+                                        setShow: setShowConfirmPassword,
+                                    })}
                                 </View>
+                            </ScrollView>
 
+                            {/* Footer */}
+                            <View className="px-5 pt-3 pb-6 border-t border-gray-100 flex-row gap-3">
+                                <TouchableOpacity
+                                    onPress={() => !updating && resetModalState()}
+                                    disabled={updating}
+                                    activeOpacity={0.7}
+                                    className="flex-1 py-4 rounded-xl border border-gray-300 items-center justify-center"
+                                    style={{ opacity: updating ? 0.5 : 1 }}
+                                >
+                                    <Text className="text-gray-700 text-base font-semibold">Cancel</Text>
+                                </TouchableOpacity>
                                 <TouchableOpacity
                                     onPress={handleUpdate}
                                     disabled={updating}
                                     activeOpacity={0.85}
-                                    className="bg-green-600 py-4 rounded-xl items-center mt-2"
+                                    className="flex-1 bg-green-600 py-4 rounded-xl items-center justify-center"
                                     style={{ opacity: updating ? 0.6 : 1 }}
                                 >
                                     {updating ? (
-                                        <View className="flex-row items-center gap-2">
+                                        <View className="flex-row items-center">
                                             <ActivityIndicator size="small" color="#fff" />
-                                            <Text className="text-white text-base font-semibold ml-2">Updating...</Text>
+                                            <Text className="text-white text-base font-semibold ml-2">Saving...</Text>
                                         </View>
                                     ) : (
                                         <Text className="text-white text-base font-semibold">Save Changes</Text>
                                     )}
                                 </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    onPress={() => !updating && resetModalState()}
-                                    disabled={updating}
-                                    activeOpacity={0.7}
-                                    className="items-center py-1"
-                                >
-                                    <Text className="text-gray-600 text-base font-medium">Cancel</Text>
-                                </TouchableOpacity>
-
                             </View>
-                        </ScrollView>
+                        </View>
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
-
         </SafeAreaView>
     );
 }

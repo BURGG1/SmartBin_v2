@@ -9,6 +9,7 @@ import {
   Modal,
   Pressable,
   RefreshControl, // NEW: pull-to-refresh
+  Alert, // still used for the "Already marked as done" message
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,6 +25,7 @@ type Bin = {
   scheduleTime?: string;
   scheduleEndTime?: string; // end of the collection window (optional)
   fill: number;
+  collectorDone?: boolean; // NEW: collector already tapped "Done Collection"
 };
 
 type CollectionActivity = {
@@ -52,6 +54,10 @@ const NOTIFS_KEY = "collector_notifications";
 const SEEN_KEY = "collector_seen_bins";
 const POLL_MS = 30000;
 const BANNER_MS = 5000;
+
+// ⚠️ NEW: set this to the actual route of your TypeNumberScreen file
+// (e.g. app/TypeNumberScreen.tsx -> "/TypeNumberScreen")
+const TYPE_NUMBER_ROUTE = "/counterInfo";
 
 // reads the login token from wherever the login screen saved it
 const getToken = async () => {
@@ -97,6 +103,11 @@ export default function CollectorHome() {
   const seenBinsRef = useRef<string[] | null>(null);
   const storageIdRef = useRef("default"); // id of the logged-in collector, keeps notifications per account
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  // "Start collection?" modal: startBin = which bin, startOpen = is it showing
+  // (kept separate so the bin info doesn't vanish while the modal fades out)
+  const [startBin, setStartBin] = useState<Bin | null>(null);
+  const [startOpen, setStartOpen] = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
@@ -177,7 +188,7 @@ export default function CollectorHome() {
     return () => clearInterval(interval);
   }, [refreshQuietly]);
 
-  // refresh when returning to this tab (e.g. back from ScanScreen) so collected bins disappear
+  // refresh when returning to this tab (e.g. back from TypeNumberScreen) so the status updates
   const hasFocusedRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
@@ -269,6 +280,26 @@ export default function CollectorHome() {
     }
   }, [assignedBins, loading, hydrated, collector, showBanner]);
 
+  // Opens the "Start collection?" modal (or tells the collector the bin is already done)
+  const promptStartCollection = useCallback((bin: Bin) => {
+    if (bin.collectorDone) {
+      Alert.alert("Already marked as done", `${bin.id} is waiting for the admin to confirm.`);
+      return;
+    }
+    setStartBin(bin);
+    setStartOpen(true);
+  }, []);
+
+  const closeStartModal = () => setStartOpen(false);
+
+  // "Yes, start": close the modal and open the collection screen
+  const confirmStartCollection = () => {
+    if (!startBin) return;
+    const bin = startBin;
+    setStartOpen(false);
+    router.push(`${TYPE_NUMBER_ROUTE}?bin=${encodeURIComponent(JSON.stringify(bin))}` as any);
+  };
+
   const markAllRead = () => setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
 
   const onNotificationPress = (notification: AppNotification) => {
@@ -276,7 +307,8 @@ export default function CollectorHome() {
     const bin = assignedBins.find((b) => b.id === notification.binId);
     if (bin) {
       setPanelOpen(false);
-      router.push(`/ScanScreen?bin=${encodeURIComponent(JSON.stringify(bin))}` as any);
+      // small delay so the notification panel finishes closing before the next modal opens
+      setTimeout(() => promptStartCollection(bin), 350); // same prompt as tapping the bin card
     }
   };
 
@@ -376,9 +408,7 @@ export default function CollectorHome() {
               <TouchableOpacity
                 key={bin.id}
                 activeOpacity={0.7}
-                onPress={() => {
-                  router.push(`/counterInfo?bin=${encodeURIComponent(JSON.stringify(bin))}` as any);
-                }}
+                onPress={() => promptStartCollection(bin)} // opens the "Start collection?" modal
                 className="flex-row justify-between items-center mb-3 border border-gray-200 bg-gray-50 p-4 rounded-xl"
               >
                 <View className="flex-1 pr-3">
@@ -398,6 +428,13 @@ export default function CollectorHome() {
                           ? `Collect between ${bin.scheduleTime} – ${bin.scheduleEndTime}`
                           : `Collect at ${bin.scheduleTime}`}
                       </Text>
+                    </View>
+                  )}
+                  {/* NEW: shown after the collector tapped "Done Collection" */}
+                  {bin.collectorDone && (
+                    <View className="flex-row items-center gap-1.5 mt-2 self-start bg-blue-100 rounded-full px-3 py-1">
+                      <Feather name="check" size={14} color="#1d4ed8" />
+                      <Text className="text-sm text-blue-800 font-semibold">Awaiting admin confirmation</Text>
                     </View>
                   )}
                 </View>
@@ -492,6 +529,80 @@ export default function CollectorHome() {
           </Pressable>
         </Animated.View>
       )}
+
+      {/* START COLLECTION MODAL */}
+      <Modal
+        visible={startOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeStartModal}
+      >
+        <Pressable
+          className="flex-1 bg-black/40 items-center justify-center px-6"
+          onPress={closeStartModal}
+        >
+          {/* inner Pressable stops taps on the card from closing the modal */}
+          <Pressable
+            onPress={() => {}}
+            className="w-full bg-white rounded-2xl p-5 shadow-lg"
+            style={{ maxWidth: 380 }}
+          >
+            <View className="flex-row items-center gap-3">
+              <View className="w-11 h-11 rounded-full bg-green-100 items-center justify-center">
+                <Feather name="play-circle" size={22} color="#16a34a" />
+              </View>
+              <Text className="flex-1 text-xl font-bold text-gray-900">Start collection?</Text>
+            </View>
+
+            <Text className="text-base text-gray-600 mt-3">
+              You're about to start collecting this bin.
+            </Text>
+
+            {/* bin summary, styled like the bin cards on the dashboard */}
+            <View className="mt-4 border border-gray-200 bg-gray-50 p-4 rounded-xl">
+              <View className="flex-row items-center justify-between">
+                <Text className="text-lg font-bold text-gray-900">{startBin?.id}</Text>
+                <View className="bg-red-100 rounded-full px-2.5 py-1">
+                  <Text className="text-red-600 text-sm font-bold">{startBin?.fill}% full</Text>
+                </View>
+              </View>
+
+              <View className="flex-row items-center gap-1.5 mt-1">
+                <Feather name="map-pin" size={14} color="#6b7280" />
+                <Text className="flex-1 text-base text-gray-600">{startBin?.location}</Text>
+              </View>
+
+              {startBin?.scheduleDate && startBin?.scheduleTime && (
+                <View className="flex-row items-center gap-1.5 mt-3 self-start bg-green-100 rounded-full px-3 py-1">
+                  <Feather name="clock" size={14} color="#15803d" />
+                  <Text className="text-sm text-green-800 font-semibold">
+                    {startBin.scheduleEndTime
+                      ? `${startBin.scheduleTime} – ${startBin.scheduleEndTime}`
+                      : startBin.scheduleTime}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View className="flex-row gap-3 mt-5">
+              <TouchableOpacity
+                onPress={closeStartModal}
+                activeOpacity={0.7}
+                className="flex-1 py-3.5 rounded-xl border border-gray-300 items-center"
+              >
+                <Text className="text-base font-semibold text-gray-700">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={confirmStartCollection}
+                activeOpacity={0.8}
+                className="flex-1 py-3.5 rounded-xl bg-green-600 items-center"
+              >
+                <Text className="text-base font-semibold text-white">Yes, start</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* NOTIFICATION PANEL */}
       <Modal

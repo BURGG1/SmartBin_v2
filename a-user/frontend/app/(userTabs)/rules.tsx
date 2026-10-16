@@ -161,7 +161,7 @@ export default function Rules() {
                             <Feather name="search" size={18} color="#6B7280" />
                             <TextInput
                                 className="flex-1 py-3 pl-2 text-base text-gray-900"
-                                placeholder="Search name, rule no., or points"
+                                placeholder="Search "
                                 placeholderTextColor="#9CA3AF"
                                 value={search}
                                 onChangeText={setSearch}

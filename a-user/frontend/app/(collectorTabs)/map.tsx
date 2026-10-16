@@ -1,5 +1,5 @@
 import { SafeAreaView } from "react-native-safe-area-context";
-import { View, Text, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity } from "react-native"; // NEW: RefreshControl, TouchableOpacity
 import { WebView } from "react-native-webview";
 import { Feather } from "@expo/vector-icons";
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -28,9 +28,9 @@ const getStatusFromFill = (fill: number): Status => {
 };
 
 const statusColors: Record<Status, { bar: string; badge: string; pin: string }> = {
-  good: { bar: "bg-green-600", badge: "bg-green-100 text-green-700", pin: "#16a34a" },
-  warning: { bar: "bg-yellow-500", badge: "bg-yellow-100 text-yellow-700", pin: "#f59e0b" },
-  critical: { bar: "bg-red-600", badge: "bg-red-100 text-red-700", pin: "#dc2626" },
+  good: { bar: "bg-green-600", badge: "bg-green-100 text-green-800", pin: "#16a34a" },
+  warning: { bar: "bg-yellow-500", badge: "bg-yellow-100 text-yellow-800", pin: "#f59e0b" },
+  critical: { bar: "bg-red-600", badge: "bg-red-100 text-red-800", pin: "#dc2626" },
 };
 
 // Static HTML shell for the Leaflet map. Bins are injected after load via
@@ -82,15 +82,15 @@ const LEAFLET_HTML = `
         bins.forEach((bin) => {
           const marker = L.marker([bin.lat, bin.lng], { icon: pinIcon(bin.pinColor) }).addTo(map);
           marker.bindPopup(
-            '<div style="width:150px">' +
-              '<b>' + bin.id + '</b><br/>' +
-              '<span style="color:#6b7280;font-size:12px">' + bin.location + '</span>' +
-              '<div style="margin-top:6px;font-size:12px">Fill Level</div>' +
-              '<div style="background:#e5e7eb;height:6px;border-radius:4px;margin-top:4px;">' +
-                '<div style="width:' + bin.fill + '%;height:6px;border-radius:4px;background:' + bin.pinColor + ';"></div>' +
+            '<div style="width:170px;font-family:sans-serif">' +
+              '<b style="font-size:15px">' + bin.id + '</b><br/>' +
+              '<span style="color:#4b5563;font-size:13px">' + bin.location + '</span>' +
+              '<div style="margin-top:8px;font-size:13px;font-weight:600">Fill Level</div>' +
+              '<div style="background:#e5e7eb;height:8px;border-radius:4px;margin-top:4px;">' +
+                '<div style="width:' + bin.fill + '%;height:8px;border-radius:4px;background:' + bin.pinColor + ';"></div>' +
               '</div>' +
-              '<div style="font-size:11px;margin-top:3px">' + bin.fill + '%</div>' +
-              '<div style="font-size:11px;margin-top:6px">Capacity: ' + bin.capacity + '</div>' +
+              '<div style="font-size:13px;margin-top:4px;font-weight:600">' + bin.fill + '%</div>' +
+              '<div style="font-size:13px;margin-top:6px;color:#4b5563">Capacity: ' + bin.capacity + '</div>' +
             '</div>'
           );
           markers.push(marker);
@@ -111,6 +111,7 @@ export default function BinLocationMap() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // NEW
   const webviewRef = useRef<WebView>(null);
 
   // Mirror bins in a ref so the polling interval always has the latest
@@ -141,11 +142,18 @@ export default function BinLocationMap() {
       setError(null);
     } catch (err) {
       console.error("Failed to fetch bins:", err);
-      setError("Couldn't load bin locations. Pull to retry.");
+      setError("Couldn't load bin locations. Pull down to retry.");
     } finally {
       if (isInitial) setLoading(false);
     }
   }, []);
+
+  // NEW: used by pull-to-refresh AND the refresh button. Reuses fetchBins.
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchBins(false);
+    setRefreshing(false);
+  }, [fetchBins]);
 
   useEffect(() => {
     fetchBins(true);
@@ -170,32 +178,35 @@ export default function BinLocationMap() {
   }, [bins, mapReady]);
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 bg-white p-2">
+    <SafeAreaView className="flex-1 bg-gray-50">
+      <View className="flex-1 p-3">
 
         {/* HEADER */}
-        <View className="flex-row items-center gap-2 mb-4">
-          <Feather name="map-pin" color="green" size={20} />
-          <View>
-            <Text className="font-semibold text-3xl">Bin Location Map</Text>
-            <Text className="text-gray-500 text-sm">
-              Live view of all smart bin locations
-            </Text>
+        <View className="flex-row items-center justify-between mb-4">
+          <View className="flex-row items-center gap-3 flex-1">
+            <View className="w-11 h-11 rounded-full bg-green-100 items-center justify-center">
+              <Feather name="map-pin" color="#16a34a" size={22} />
+            </View>
+            <View className="flex-1">
+              <Text className="font-bold text-2xl text-gray-900">Bin Location Map</Text>
+              <Text className="text-gray-600 text-base">Live view of all smart bin locations</Text>
+            </View>
           </View>
+
         </View>
 
         <View style={{ flex: 1, gap: 12 }}>
 
           {/* MAP */}
-          <View style={{ flex: 2 }} className="rounded-xl overflow-hidden border">
+          <View style={{ flex: 2 }} className="rounded-2xl overflow-hidden border border-gray-200 bg-white">
             {loading ? (
               <View className="flex-1 items-center justify-center">
                 <ActivityIndicator size="large" color="green" />
-                <Text className="text-gray-400 mt-2">Loading bins...</Text>
+                <Text className="text-gray-600 text-base mt-2">Loading bins...</Text>
               </View>
             ) : bins.length === 0 ? (
               <View className="flex-1 items-center justify-center">
-                <Text className="text-gray-400">No bins found.</Text>
+                <Text className="text-gray-600 text-base">No bins found.</Text>
               </View>
             ) : (
               <WebView
@@ -208,16 +219,24 @@ export default function BinLocationMap() {
             )}
           </View>
 
-          {/* BIN LIST */}
-          <ScrollView style={{ flex: 1 }} className="w-full border rounded-xl p-3">
-            <Text className="font-semibold mb-3">Bins in Barangay</Text>
+          {/* BIN LIST (pull down here to refresh) */}
+          <ScrollView
+            style={{ flex: 1 }}
+            className="w-full border border-gray-200 bg-white rounded-2xl p-4"
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#16a34a" colors={["#16a34a"]} />
+            }
+          >
+            <Text className="font-bold text-xl text-gray-900 mb-3">Bins in Barangay</Text>
 
             {error && (
-              <Text className="text-red-500 text-xs mb-2">{error}</Text>
+              <View className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+                <Text className="text-red-700 text-sm font-medium">{error}</Text>
+              </View>
             )}
 
             {!loading && bins.length === 0 && !error && (
-              <Text className="text-gray-400 text-sm">No bins found.</Text>
+              <Text className="text-gray-600 text-base">No bins found.</Text>
             )}
 
             {bins.map((bin) => {
@@ -225,22 +244,24 @@ export default function BinLocationMap() {
               const colors = statusColors[status];
 
               return (
-                <View key={bin.id} className="mb-3 p-3 border rounded-lg">
-                  <View className="flex-row justify-between">
-                    <Text className="font-medium">{bin.id}</Text>
-                    <Text>{bin.fill}%</Text>
+                <View key={bin.id} className="mb-3 p-4 border border-gray-200 bg-gray-50 rounded-xl">
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-lg font-bold text-gray-900">{bin.id}</Text>
+                    <Text className="text-lg font-bold text-gray-900">{bin.fill}%</Text>
                   </View>
 
-                  <Text className="text-xs text-gray-500">{bin.location}</Text>
+                  <Text className="text-base text-gray-600 mt-0.5">{bin.location}</Text>
 
-                  <View className="bg-gray-200 h-2 rounded mt-2">
+                  <View className="bg-gray-200 h-2.5 rounded-full mt-3 overflow-hidden">
                     <View
-                      className={`h-2 rounded ${colors.bar}`}
+                      className={`h-2.5 rounded-full ${colors.bar}`}
                       style={{ width: `${bin.fill}%` }}
                     />
                   </View>
 
-                  <Text className={`mt-2 self-start px-2 py-0.5 rounded-full text-xs ${colors.badge}`}>
+                  <Text
+                    className={`mt-3 self-start px-3 py-1 rounded-full text-sm font-semibold capitalize overflow-hidden ${colors.badge}`}
+                  >
                     {status}
                   </Text>
                 </View>

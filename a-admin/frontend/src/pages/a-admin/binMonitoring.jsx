@@ -34,6 +34,8 @@ const MAP_LIST_PER_PAGE = 5;
 const CARDS_PER_PAGE = 6;
 // Minimum fill level before a bin is auto-scheduled for collection.
 const SCHEDULE_FILL_THRESHOLD = 75;
+// Minimum fill level before the manual "Set Schedule" button is shown.
+const MIN_FILL_TO_SCHEDULE = 5;
 // A collector stops being eligible once they hold this many bins.
 const MAX_BINS_PER_COLLECTOR = 2;
 // After an auto-schedule fails to save, wait this long before retrying that
@@ -1162,8 +1164,8 @@ export default function BinMonitoring() {
                         <StatusIcon size={14} />
                         Status: {status}
                       </span>
-                      {/* Set Schedule — hidden once a collection is scheduled */}
-                      {!bin.schedule && (
+                      {/* Set Schedule — hidden once scheduled, or when fill is under the minimum */}
+                      {!bin.schedule && bin.fill >= MIN_FILL_TO_SCHEDULE && (
                         <button
                           type="button"
                           onClick={() => setModalBinId(bin.id)}
@@ -1400,7 +1402,7 @@ export default function BinMonitoring() {
         </main>
       </div>
       <Footer />
-      {modalBin && !modalBin.schedule && (
+      {modalBin && !modalBin.schedule && modalBin.fill >= MIN_FILL_TO_SCHEDULE && (
         <ScheduleModal
           bin={modalBin}
           eligible={eligibleCollectors}

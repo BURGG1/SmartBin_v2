@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { View, ActivityIndicator } from "react-native";
 import { Stack, router, useRootNavigationState, useSegments } from "expo-router";
-import { TermsProvider, useTerms } from "./termContext";
+import { TermsProvider, useTerms } from "@/context/termContext";
 import "./globals.css";
 
 function Gate() {

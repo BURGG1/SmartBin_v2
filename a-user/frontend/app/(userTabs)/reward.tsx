@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Modal, Alert, Animated, PanResponder, Dimensions } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, Image, ActivityIndicator, Modal, Alert, Animated, PanResponder, Dimensions, RefreshControl } from "react-native";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
@@ -36,6 +36,7 @@ const DRAG_THRESHOLD         = 6; // px of movement before a press is treated as
 export default function Rewards() {
     const household = useHousehold();
     const [householdLoading, setHouseholdLoading] = useState(!household);
+    const [refreshing, setRefreshing]             = useState(false);
 
     const [rewards, setRewards]           = useState<Reward[]>([]);
     const [rewardsLoading, setRewardsLoading] = useState(true);
@@ -198,6 +199,22 @@ export default function Rewards() {
         if (historyPage > totalPages) setHistoryPage(totalPages);
     }, [redeemedHistory.length]);
 
+    // ── Pull-to-refresh ──
+    // Calls fetchHousehold directly (not loadHousehold) so the full-screen loader
+    // doesn't replace the list while the user is pulling.
+    const handleRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await Promise.all([
+                fetchHousehold(),
+                loadRewards(),
+                loadActivity(household?._id),
+            ]);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [household?._id, loadRewards, loadActivity]);
+
     const openConfirm = (reward: Reward) => {
         if (!household) {
             Alert.alert("Error", "Household info not loaded yet. Please try again.");
@@ -287,7 +304,7 @@ export default function Rewards() {
 
     if (householdLoading) {
         return (
-            <SafeAreaView className="flex-1 items-center justify-center">
+            <SafeAreaView className="flex-1 items-center justify-center bg-gray-50">
                 <ActivityIndicator size="large" color="#16A34A" />
             </SafeAreaView>
         );
@@ -295,13 +312,24 @@ export default function Rewards() {
 
     return (
         <SafeAreaView className="flex-1 bg-gray-50">
-            <ScrollView className="flex-1 px-4 py-2" showsVerticalScrollIndicator={false}>
+            <ScrollView
+                className="flex-1 px-4 py-2"
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        colors={["#16A34A"]}
+                        tintColor="#16A34A"
+                    />
+                }
+            >
                 <View className="flex flex-col gap-5 pb-6">
 
                     {/* Header */}
                     <View>
-                        <Text className="text-3xl font-bold text-gray-900">Rewards & Achievements</Text>
-                        <Text className="text-gray-500 mt-1">Redeem your points for eco-friendly items</Text>
+                        <Text className="text-3xl font-extrabold text-gray-900 tracking-tight">Rewards & Achievements</Text>
+                        <Text className="text-base text-gray-600 mt-1 leading-6">Redeem your points for eco-friendly items</Text>
                     </View>
 
                     {/* Top Section */}
@@ -321,32 +349,32 @@ export default function Rewards() {
                                 <View className="bg-white/20 rounded-full p-1.5">
                                     <MaterialCommunityIcons name="star-four-points" size={16} color="#fff" />
                                 </View>
-                                <Text className="text-white font-semibold">Reward Points</Text>
+                                <Text className="text-white text-base font-semibold">Reward Points</Text>
                             </View>
                             <View className="flex-row justify-between items-center">
                                 <View>
-                                    <Text className="text-4xl font-bold text-white">
+                                    <Text className="text-green-50 text-base mt-0.5">Current Points Earned</Text>
+                                    <Text className="text-5xl font-extrabold text-white">
                                         {household?.points?.total ?? 0}
                                     </Text>
-                                    <Text className="text-green-100 mt-0.5">Total Points Earned</Text>
                                 </View>
-                                <View className="bg-white/15 px-3 py-2 rounded-xl border border-white/30 items-center justify-center min-w-[64px]">
-                                    <Text className="text-2xl font-bold text-white">
+                                <View className="bg-white/15 px-3 py-2 rounded-xl border border-white/30 items-center justify-center min-w-[72px]">
+                                    <Text className="text-2xl font-extrabold text-white">
                                         {household?.streak?.currentStreak ?? 0}
                                     </Text>
-                                    <Text className="text-white text-center text-xs">
+                                    <Text className="text-white text-center text-xs font-medium">
                                         {(household?.streak?.currentStreak ?? 0) === 1 ? "day streak" : "days streak"}
                                     </Text>
                                 </View>
                             </View>
-                            <View className="flex-row justify-between items-center mt-4 pt-3 border-t border-white/20">
-                                <Text className="text-green-100 text-sm">This Month</Text>
-                                <Text className="font-semibold text-white">+{household?.points?.thisMonth ?? 0} points</Text>
-                            </View>
+                            {/* <View className="flex-row justify-between items-center mt-4 pt-3 border-t border-white/30">
+                                <Text className="text-green-50 text-base">Total Earned Points</Text>
+                                <Text className="font-bold text-white text-base">{household?.points?.thisMonth ?? 0} points</Text>
+                            </View> */}
                         </View>
 
                         <View
-                            className="bg-white rounded-2xl p-6 flex-1"
+                            className="bg-white rounded-2xl p-6 flex-1 border border-gray-100"
                             style={{
                                 shadowColor: "#000",
                                 shadowOpacity: 0.05,
@@ -359,18 +387,18 @@ export default function Rewards() {
                                 <View className="bg-green-50 rounded-full p-1.5">
                                     <Feather name="trending-up" size={16} color="#16A34A" />
                                 </View>
-                                <Text className="font-semibold text-gray-900">This Month</Text>
+                                <Text className="text-lg font-bold text-gray-900"> Points Summary</Text>
                             </View>
                             <View className="gap-3">
                                 <View className="flex-row justify-between items-center">
-                                    <Text className="text-gray-600">Points Earned</Text>
-                                    <Text className="text-green-600 font-semibold">
+                                    <Text className="text-base text-gray-700">Points Earned</Text>
+                                    <Text className="text-base text-green-700 font-bold">
                                         +{household?.points?.thisMonth ?? 0}
                                     </Text>
                                 </View>
                                 <View className="flex-row justify-between items-center">
-                                    <Text className="text-gray-600">Points Redeemed</Text>
-                                    <Text className="text-red-500 font-semibold">
+                                    <Text className="text-base text-gray-700">Points Redeemed</Text>
+                                    <Text className="text-base text-red-600 font-bold">
                                         -{totalRedeemedPoints}
                                     </Text>
                                 </View>
@@ -381,12 +409,12 @@ export default function Rewards() {
                     {/* Streak Card */}
                     {(household?.streak?.currentStreak ?? 0) > 0 && (
                         <View className="bg-orange-50 border border-orange-200 rounded-2xl p-4 flex-row items-center gap-3">
-                            <Text className="text-2xl">🔥</Text>
+                            <Text className="text-3xl">🔥</Text>
                             <View className="flex-1">
-                                <Text className="font-bold text-orange-700">
+                                <Text className="text-lg font-bold text-orange-800">
                                     {household?.streak?.currentStreak} Day Streak!
                                 </Text>
-                                <Text className="text-xs text-orange-500 mt-0.5">
+                                <Text className="text-sm text-orange-700 mt-0.5 leading-5">
                                     Keep disposing daily to maintain your streak and earn bonus points.
                                 </Text>
                             </View>
@@ -395,7 +423,7 @@ export default function Rewards() {
 
                     {/* Redeemable Items */}
                     <View
-                        className="bg-white rounded-2xl p-6"
+                        className="bg-white rounded-2xl p-5 border border-gray-100"
                         style={{
                             shadowColor: "#000",
                             shadowOpacity: 0.05,
@@ -408,20 +436,20 @@ export default function Rewards() {
                             <View className="bg-green-50 rounded-full p-1.5">
                                 <MaterialCommunityIcons name="gift" size={18} color="#16A34A" />
                             </View>
-                            <Text className="text-lg font-semibold text-gray-900">Redeemable Items</Text>
+                            <Text className="text-xl font-bold text-gray-900">Redeemable Items</Text>
                         </View>
 
                         {rewardsLoading && (
                             <View className="items-center py-8">
                                 <ActivityIndicator color="#16A34A" />
-                                <Text className="text-gray-500 mt-2">Loading rewards...</Text>
+                                <Text className="text-gray-600 text-base mt-2">Loading rewards...</Text>
                             </View>
                         )}
 
                         {!!rewardsError && (
-                            <View className="bg-red-50 border border-red-100 rounded-xl p-3 mb-3 flex-row items-center gap-2">
-                                <Feather name="alert-circle" size={16} color="#EF4444" />
-                                <Text className="text-red-500 flex-1">{rewardsError}</Text>
+                            <View className="bg-red-50 border border-red-200 rounded-xl p-3 mb-3 flex-row items-center gap-2">
+                                <Feather name="alert-circle" size={18} color="#DC2626" />
+                                <Text className="text-red-700 text-sm flex-1 leading-5">{rewardsError}</Text>
                             </View>
                         )}
 
@@ -432,38 +460,38 @@ export default function Rewards() {
                                 return (
                                     <View
                                         key={item._id}
-                                        className="bg-gray-50 rounded-2xl p-4 w-full flex-row gap-4"
+                                        className="bg-gray-50 border border-gray-100 rounded-2xl p-4 w-full flex-row gap-4"
                                     >
                                         {item.image ? (
                                             <Image
                                                 source={{ uri: item.image }}
-                                                className="h-20 w-20 rounded-xl"
+                                                className="h-24 w-24 rounded-xl"
                                                 resizeMode="cover"
                                             />
                                         ) : (
-                                            <View className="h-20 w-20 bg-gray-200 rounded-xl items-center justify-center">
-                                                <MaterialCommunityIcons name="gift-outline" size={26} color="#9CA3AF" />
+                                            <View className="h-24 w-24 bg-gray-200 rounded-xl items-center justify-center">
+                                                <MaterialCommunityIcons name="gift-outline" size={28} color="#6B7280" />
                                             </View>
                                         )}
                                         <View className="flex-1 justify-between">
                                             <View>
                                                 <View className="flex-row items-center justify-between">
-                                                    <Text className="font-semibold text-gray-900 flex-1" numberOfLines={1}>
+                                                    <Text className="text-base font-bold text-gray-900 flex-1" numberOfLines={1}>
                                                         {item.name}
                                                     </Text>
                                                     {lowStock && (
                                                         <View className="bg-amber-100 px-2 py-0.5 rounded-full ml-2">
-                                                            <Text className="text-amber-700 text-[10px] font-semibold">
+                                                            <Text className="text-amber-800 text-xs font-semibold">
                                                                 Low stock
                                                             </Text>
                                                         </View>
                                                     )}
                                                 </View>
                                                 <View className="flex-row items-center gap-3 mt-1">
-                                                    <Text className="text-green-600 font-semibold text-sm">
+                                                    <Text className="text-green-700 font-bold text-base">
                                                         {item.points} pts
                                                     </Text>
-                                                    <Text className="text-gray-400 text-xs">
+                                                    <Text className="text-gray-600 text-sm">
                                                         {item.stocks} left
                                                     </Text>
                                                 </View>
@@ -472,10 +500,10 @@ export default function Rewards() {
                                                 disabled={!canRedeem}
                                                 onPress={() => openConfirm(item)}
                                                 activeOpacity={0.8}
-                                                className="mt-2 py-2 rounded-lg items-center"
-                                                style={{ backgroundColor: canRedeem ? "#16A34A" : "#D1D5DB" }}
+                                                className="mt-2 py-2.5 rounded-lg items-center"
+                                                style={{ backgroundColor: canRedeem ? "#16A34A" : "#9CA3AF" }}
                                             >
-                                                <Text className="text-white font-semibold text-sm">
+                                                <Text className="text-white font-bold text-sm">
                                                     {item.stocks < 1
                                                         ? "Out of stock"
                                                         : canRedeem
@@ -490,8 +518,8 @@ export default function Rewards() {
 
                             {!rewardsLoading && rewards.length === 0 && !rewardsError && (
                                 <View className="items-center py-10">
-                                    <MaterialCommunityIcons name="gift-off-outline" size={32} color="#D1D5DB" />
-                                    <Text className="text-gray-500 text-center mt-2">No rewards available yet.</Text>
+                                    <MaterialCommunityIcons name="gift-off-outline" size={32} color="#9CA3AF" />
+                                    <Text className="text-gray-600 text-base text-center mt-2">No rewards available yet.</Text>
                                 </View>
                             )}
 
@@ -508,7 +536,7 @@ export default function Rewards() {
 
                     {/* Recent Activity */}
                     <View
-                        className="bg-white rounded-2xl p-6 mb-2"
+                        className="bg-white rounded-2xl p-5 mb-2 border border-gray-100"
                         style={{
                             shadowColor: "#000",
                             shadowOpacity: 0.05,
@@ -522,7 +550,7 @@ export default function Rewards() {
                                 <View className="bg-green-50 rounded-full p-1.5">
                                     <Feather name="clock" size={16} color="#16A34A" />
                                 </View>
-                                <Text className="text-lg font-semibold text-gray-900">Recent Activity</Text>
+                                <Text className="text-xl font-bold text-gray-900">Recent Activity</Text>
                             </View>
                         </View>
 
@@ -539,30 +567,30 @@ export default function Rewards() {
                                     <View
                                         key={index}
                                         className="flex-row justify-between items-center py-3"
-                                        style={index !== paginatedActivity.length - 1 ? { borderBottomWidth: 1, borderBottomColor: "#F3F4F6" } : undefined}
+                                        style={index !== paginatedActivity.length - 1 ? { borderBottomWidth: 1, borderBottomColor: "#E5E7EB" } : undefined}
                                     >
                                         <View className="flex-row items-center gap-3 flex-1">
                                             <View
-                                                className="h-9 w-9 rounded-full items-center justify-center"
+                                                className="h-10 w-10 rounded-full items-center justify-center"
                                                 style={{ backgroundColor: isRedeem ? "#FEF2F2" : "#F0FDF4" }}
                                             >
                                                 <MaterialCommunityIcons
                                                     name={isRedeem ? "gift-outline" : "recycle"}
-                                                    size={18}
-                                                    color={isRedeem ? "#EF4444" : "#16A34A"}
+                                                    size={20}
+                                                    color={isRedeem ? "#DC2626" : "#16A34A"}
                                                 />
                                             </View>
                                             <View className="flex-1">
-                                                <Text className="font-medium text-gray-900">{a.type}</Text>
-                                                <Text className="text-xs text-gray-500" numberOfLines={1}>
+                                                <Text className="text-base font-semibold text-gray-900">{a.type}</Text>
+                                                <Text className="text-sm text-gray-600" numberOfLines={1}>
                                                     {a.via}{a.amount ? ` - ${a.amount}` : ""}
                                                 </Text>
-                                                <Text className="text-xs text-gray-400 mt-0.5">
+                                                <Text className="text-xs text-gray-500 mt-0.5">
                                                     {new Date(a.date).toLocaleDateString()}
                                                 </Text>
                                             </View>
                                         </View>
-                                        <Text className={`font-semibold ${a.points > 0 ? "text-green-600" : "text-red-500"}`}>
+                                        <Text className={`text-base font-bold ${a.points > 0 ? "text-green-600" : "text-red-600"}`}>
                                             {a.points > 0 ? `+${a.points}` : a.points}
                                         </Text>
                                     </View>
@@ -571,8 +599,8 @@ export default function Rewards() {
 
                             {!activityLoading && activity.length === 0 && (
                                 <View className="items-center py-10">
-                                    <Feather name="inbox" size={28} color="#D1D5DB" />
-                                    <Text className="text-gray-500 text-center mt-2">No activity yet.</Text>
+                                    <Feather name="inbox" size={28} color="#9CA3AF" />
+                                    <Text className="text-gray-600 text-base text-center mt-2">No activity yet.</Text>
                                 </View>
                             )}
 
@@ -619,16 +647,16 @@ export default function Rewards() {
                         style={{
                             top: -4,
                             right: -4,
-                            minWidth: 20,
-                            height: 20,
+                            minWidth: 22,
+                            height: 22,
                             paddingHorizontal: 4,
-                            borderRadius: 10,
+                            borderRadius: 11,
                             backgroundColor: "#F59E0B",
                             borderWidth: 2,
                             borderColor: "#fff",
                         }}
                     >
-                        <Text className="text-white text-[10px] font-bold">
+                        <Text className="text-white text-[11px] font-bold">
                             {redeemedHistory.length > 99 ? "99+" : redeemedHistory.length}
                         </Text>
                     </View>
@@ -648,15 +676,15 @@ export default function Rewards() {
                             <View className="bg-green-50 rounded-full p-3">
                                 <MaterialCommunityIcons name="gift-outline" size={32} color="#16A34A" />
                             </View>
-                            <Text className="text-lg font-bold text-center text-gray-900">Confirm Redemption</Text>
+                            <Text className="text-xl font-bold text-center text-gray-900">Confirm Redemption</Text>
                         </View>
 
                         {selectedReward && (
-                            <Text className="text-gray-600 text-center">
+                            <Text className="text-base text-gray-700 text-center leading-6">
                                 Redeem{" "}
-                                <Text className="font-semibold text-gray-900">{selectedReward.name}</Text>
+                                <Text className="font-bold text-gray-900">{selectedReward.name}</Text>
                                 {" "}for{" "}
-                                <Text className="font-semibold text-green-600">{selectedReward.points} points</Text>?
+                                <Text className="font-bold text-green-700">{selectedReward.points} points</Text>?
                                 {"\n"}This action cannot be undone.
                             </Text>
                         )}
@@ -668,7 +696,7 @@ export default function Rewards() {
                                 className="flex-1 border border-gray-300 py-3 rounded-lg items-center"
                                 style={{ opacity: redeeming ? 0.5 : 1 }}
                             >
-                                <Text className="font-semibold text-gray-700">Cancel</Text>
+                                <Text className="text-base font-semibold text-gray-700">Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 disabled={redeeming}
@@ -679,7 +707,7 @@ export default function Rewards() {
                                 {redeeming ? (
                                     <ActivityIndicator size="small" color="#fff" />
                                 ) : (
-                                    <Text className="font-semibold text-white">Confirm</Text>
+                                    <Text className="text-base font-semibold text-white">Confirm</Text>
                                 )}
                             </TouchableOpacity>
                         </View>
@@ -702,19 +730,19 @@ export default function Rewards() {
                         <View className="flex-row items-center justify-between mb-1">
                             <View className="flex-row items-center gap-2">
                                 <View className="bg-amber-50 rounded-full p-2">
-                                    <MaterialCommunityIcons name="treasure-chest" size={20} color="#F59E0B" />
+                                    <MaterialCommunityIcons name="treasure-chest" size={20} color="#D97706" />
                                 </View>
-                                <Text className="text-lg font-bold text-gray-900">Redeemed Rewards</Text>
+                                <Text className="text-xl font-bold text-gray-900">Redeemed Rewards</Text>
                             </View>
                             <TouchableOpacity
                                 onPress={() => setHistoryVisible(false)}
                                 className="p-2 -mr-2"
                                 accessibilityLabel="Close"
                             >
-                                <Feather name="x" size={22} color="#6B7280" />
+                                <Feather name="x" size={24} color="#4B5563" />
                             </TouchableOpacity>
                         </View>
-                        <Text className="text-gray-500 text-sm mb-4">
+                        <Text className="text-gray-600 text-sm mb-4">
                             {redeemedHistory.length} redemption{redeemedHistory.length === 1 ? "" : "s"} · {totalRedeemedPoints} points used
                         </Text>
 
@@ -724,17 +752,17 @@ export default function Rewards() {
                                     <View
                                         key={index}
                                         className="flex-row justify-between items-center py-3"
-                                        style={index !== paginatedHistory.length - 1 ? { borderBottomWidth: 1, borderBottomColor: "#F3F4F6" } : undefined}
+                                        style={index !== paginatedHistory.length - 1 ? { borderBottomWidth: 1, borderBottomColor: "#E5E7EB" } : undefined}
                                     >
                                         <View className="flex-row items-center gap-3 flex-1">
                                             <View className="h-10 w-10 rounded-full bg-amber-50 items-center justify-center">
-                                                <MaterialCommunityIcons name="gift" size={18} color="#F59E0B" />
+                                                <MaterialCommunityIcons name="gift" size={18} color="#D97706" />
                                             </View>
                                             <View className="flex-1">
-                                                <Text className="font-medium text-gray-900" numberOfLines={1}>
+                                                <Text className="text-base font-semibold text-gray-900" numberOfLines={1}>
                                                     {a.via}
                                                 </Text>
-                                                <Text className="text-xs text-gray-400 mt-0.5">
+                                                <Text className="text-sm text-gray-600 mt-0.5">
                                                     {new Date(a.date).toLocaleDateString(undefined, {
                                                         year: "numeric",
                                                         month: "short",
@@ -743,7 +771,7 @@ export default function Rewards() {
                                                 </Text>
                                             </View>
                                         </View>
-                                        <Text className="font-semibold text-red-500">
+                                        <Text className="text-base font-bold text-red-600">
                                             {a.points}
                                         </Text>
                                     </View>
@@ -751,11 +779,11 @@ export default function Rewards() {
 
                                 {redeemedHistory.length === 0 && (
                                     <View className="items-center py-10">
-                                        <MaterialCommunityIcons name="treasure-chest" size={36} color="#E5E7EB" />
-                                        <Text className="text-gray-500 text-center mt-3">
+                                        <MaterialCommunityIcons name="treasure-chest" size={36} color="#D1D5DB" />
+                                        <Text className="text-gray-700 text-base text-center mt-3">
                                             No rewards redeemed yet.
                                         </Text>
-                                        <Text className="text-gray-400 text-center text-xs mt-1">
+                                        <Text className="text-gray-500 text-center text-sm mt-1">
                                             Redeem an item above to see it here.
                                         </Text>
                                     </View>

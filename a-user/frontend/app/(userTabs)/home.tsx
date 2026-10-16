@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
-    View, FlatList, Text, ScrollView, Image,
-    TextInput, TouchableOpacity, Linking, ActivityIndicator,
+    View, Text, ScrollView,
+    TextInput, TouchableOpacity, Linking, ActivityIndicator, RefreshControl,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -12,18 +12,9 @@ import { getRules } from "../../api/rulesAPI";
 import { useHousehold, fetchHousehold } from "../store/householdStore";
 import { API_BASE } from "@/config";
 import Pagination from "../../components/UserPagination";
+import RuleDetails, { Rule, RuleCard, matchesRuleSearch } from "../../components/RuleDetails";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Rule = {
-    _id: string;
-    name: string;
-    description?: string;
-    frequency?: string;
-    points?: number;
-    image?: string;
-    [key: string]: any;
-};
-
 type DisposalLog = {
     _id: string;
     binId?: string | number;
@@ -55,7 +46,6 @@ type ViolationLog = {
 };
 
 type LogTab = "disposal" | "activity" | "violations";
-type RuleItem = Rule & { __filler?: boolean };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const RULES_PER_PAGE = 4;
@@ -74,6 +64,7 @@ export default function Home() {
     const household = useHousehold();
 
     const [householdLoading, setHouseholdLoading] = useState(!household);
+    const [refreshing, setRefreshing] = useState(false);
     const [myRank, setMyRank] = useState<number | null>(null);
     const [search, setSearch] = useState("");
     const [activeLogTab, setActiveLogTab] = useState<LogTab>("disposal");
@@ -83,6 +74,7 @@ export default function Home() {
     const [rulesLoading, setRulesLoading] = useState(true);
     const [rulesError, setRulesError] = useState("");
     const [rulesPage, setRulesPage] = useState(1);
+    const [selected, setSelected] = useState<{ rule: Rule; number: number } | null>(null);
 
     // ── Disposal logs ────────────────────────────────────────────────────────
     const [disposalLogs, setDisposalLogs] = useState<DisposalLog[]>([]);
@@ -323,8 +315,15 @@ export default function Home() {
     }, []);
 
     // ── Rules helpers ────────────────────────────────────────────────────────
-    const filteredRules = rules.filter((r) =>
-        r.name.toLowerCase().includes(search.toLowerCase())
+    // Rule numbers come from the full list so they stay stable while searching
+    const numberedRules = useMemo(
+        () => rules.map((rule, i) => ({ rule, number: i + 1 })),
+        [rules]
+    );
+
+    const filteredRules = useMemo(
+        () => numberedRules.filter(({ rule, number }) => matchesRuleSearch(rule, number, search)),
+        [numberedRules, search]
     );
 
     useEffect(() => { setRulesPage(1); }, [search]);
@@ -339,27 +338,34 @@ export default function Home() {
         rulesPage * RULES_PER_PAGE
     );
 
-    const rulesFillerCount = Math.max(0, RULES_PER_PAGE - paginatedRules.length);
-    const rulesForDisplay: RuleItem[] = [
-        ...paginatedRules,
-        ...Array.from({ length: rulesFillerCount }, (_, i) => ({
-            _id: `__filler-${i}`, name: "", __filler: true,
-        })),
-    ];
-
     // ── Log tab handler ──────────────────────────────────────────────────────
     const handleTabChange = useCallback((tab: LogTab) => {
         setActiveLogTab(tab);
-        // Only fetch if switching to a tab that hasn't loaded yet
         if (tab === "disposal") fetchDisposalLogs(1);
         if (tab === "activity") fetchActivityLogs(1);
         if (tab === "violations") fetchViolationLogs(1);
     }, [fetchDisposalLogs, fetchActivityLogs, fetchViolationLogs]);
 
+    // ── Pull-to-refresh ──────────────────────────────────────────────────────
+    const handleRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await Promise.all([
+                fetchHousehold(),
+                fetchRules(),
+                fetchDisposalLogs(disposalPageRef.current),
+                fetchActivityLogs(activityPageRef.current),
+                fetchViolationLogs(violationPageRef.current),
+            ]);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [fetchRules, fetchDisposalLogs, fetchActivityLogs, fetchViolationLogs]);
+
     // ── Loading screen ───────────────────────────────────────────────────────
     if (householdLoading) {
         return (
-            <SafeAreaView className="flex-1 items-center justify-center">
+            <SafeAreaView className="flex-1 items-center justify-center bg-gray-50">
                 <ActivityIndicator size="large" color="#16A34A" />
             </SafeAreaView>
         );
@@ -367,116 +373,124 @@ export default function Home() {
 
     // ── Render ───────────────────────────────────────────────────────────────
     return (
-        <SafeAreaView className="flex-1">
-            <ScrollView className="flex-1 px-4 py-2">
+        <SafeAreaView className="flex-1 bg-gray-50">
+            <ScrollView
+                className="flex-1 px-4 py-2"
+                contentContainerStyle={{ paddingBottom: 24 }}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        colors={["#16A34A"]}
+                        tintColor="#16A34A"
+                    />
+                }
+            >
 
                 {/* PAGE TITLE */}
-                <View>
-                    <Text className="text-3xl font-bold">Home</Text>
-                    <Text className="text-gray-500 mb-6">
+                <View className="mb-6">
+                    <Text className="text-3xl font-extrabold text-gray-900 tracking-tight">Home</Text>
+                    <Text className="text-base text-gray-600 mt-1 leading-6">
                         Keep up the great work with waste segregation
                     </Text>
                 </View>
 
                 {/* HERO CARD */}
-                <View className="bg-green-600 rounded-xl shadow p-6 gap-4">
-                    <Text className="text-white">Welcome back,</Text>
-                    <Text className="text-4xl text-white font-bold">{household?.fullname ?? "—"}!</Text>
-                    <View className="flex-row items-center gap-2">
-                        <Feather name="award" size={20} color="white" />
-                        <Text className="font-semibold text-white">Total Points Earned</Text>
-                    </View>
-                    <View className="flex-row justify-between items-center">
-                        <View>
-                            <Text className="text-4xl font-bold text-white">
-                                {household?.points?.total ?? 0}
+                <View className="bg-green-600 rounded-2xl shadow-lg p-6 gap-5">
+                    <View className="flex-row items-center justify-between">
+                        <View className="flex-1 gap-1 pr-3">
+                            <Text className="text-green-50 text-base font-medium">Welcome,</Text>
+                            <Text className="text-3xl text-white font-extrabold leading-9" numberOfLines={2}>
+                                {household?.fullname ?? "—"}!
                             </Text>
-                            <Text className="text-green-100">points</Text>
                         </View>
-                        <View className="bg-green-700 p-2 rounded-xl border border-green-800 items-center justify-center">
-                            <Text className="text-2xl font-bold text-white">#{myRank ?? "—"}</Text>
-                            <Text className="text-white text-center">Current rank</Text>
+                        <View className="bg-green-700 px-4 py-3 rounded-2xl border border-green-500 items-center justify-center">
+                            <Text className="text-2xl font-extrabold text-white">#{myRank ?? "—"}</Text>
+                            <Text className="text-green-50 text-xs font-medium text-center mt-0.5">Current rank</Text>
                         </View>
                     </View>
-                    <View className="flex-row justify-between">
-                        <Text className="text-white">This Month</Text>
-                        <Text className="font-semibold text-white">
-                            +{household?.points?.thisMonth ?? 0} points
+
+                    <View>
+                        <View className="flex-row items-center gap-2 mb-1">
+                            <Feather name="award" size={18} color="white" />
+                            <Text className="font-semibold text-green-50 text-base">Current Points Earned</Text>
+                        </View>
+                        <Text className="text-5xl font-extrabold text-white">
+                            {household?.points?.total ?? 0}
+                            <Text className="text-green-100 text-xl font-medium"> points</Text>
                         </Text>
                     </View>
+
+                    {/* <View className="flex-row justify-between items-center border-t border-white/30 pt-3">
+                        <Text className="text-green-50 text-base">Total Points Earned</Text>
+                        <Text className="font-bold text-white text-base">
+                            {household?.points?.thisMonth ?? 0} points
+                        </Text>
+                    </View> */}
                 </View>
 
                 {/* HOW TO EARN POINTS */}
-                <View className="bg-white rounded-xl p-6 shadow mt-10">
-                    <View className="flex-col items-center mb-4 gap-2">
+                <View className="bg-white rounded-2xl p-5 shadow mt-8 border border-gray-100">
+                    <View className="flex-col items-center mb-4 gap-3">
                         <View className="flex-row items-center gap-2">
-                            <Feather name="clipboard" size={18} color="#16A34A" />
-                            <Text className="text-lg font-semibold">How to Earn Points</Text>
+                            <Feather name="clipboard" size={20} color="#16A34A" />
+                            <Text className="text-xl font-bold text-gray-900">How to Earn Points</Text>
                         </View>
-                        <View className="flex-row items-center border rounded-lg px-3 w-64">
-                            <Feather name="search" size={16} color="gray" />
+                        <View className="flex-row items-center border border-gray-300 bg-gray-50 rounded-xl px-3 w-full">
+                            <Feather name="search" size={18} color="#6B7280" />
                             <TextInput
-                                className="flex-1 py-2 pl-2"
-                                placeholder="Search rule"
+                                className="flex-1 py-3 pl-2 text-base text-gray-900"
+                                placeholder="Search name, rule no., or points"
+                                placeholderTextColor="#9CA3AF"
                                 value={search}
                                 onChangeText={setSearch}
+                                returnKeyType="search"
+                                autoCorrect={false}
                             />
+                            {!!search && (
+                                <TouchableOpacity
+                                    onPress={() => setSearch("")}
+                                    accessibilityLabel="Clear search"
+                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                    <Feather name="x-circle" size={18} color="#9CA3AF" />
+                                </TouchableOpacity>
+                            )}
                         </View>
+                        {!!search.trim() && !rulesLoading && (
+                            <Text className="text-sm text-gray-500 self-start">
+                                {filteredRules.length} {filteredRules.length === 1 ? "rule" : "rules"} found
+                            </Text>
+                        )}
                     </View>
 
                     {rulesLoading && (
                         <View className="items-center py-6">
                             <ActivityIndicator color="#16A34A" />
-                            <Text className="text-gray-500 mt-2">Loading rules...</Text>
+                            <Text className="text-gray-600 mt-2 text-base">Loading rules...</Text>
                         </View>
                     )}
-                    {!!rulesError && <Text className="text-red-500 mb-2">{rulesError}</Text>}
+                    {!!rulesError && <Text className="text-red-600 text-base mb-2">{rulesError}</Text>}
 
-                    <FlatList
-                        data={rulesForDisplay}
-                        keyExtractor={(item) => item._id}
-                        numColumns={2}
-                        scrollEnabled={false}
-                        columnWrapperStyle={{ gap: 10 }}
-                        contentContainerStyle={{ gap: 10 }}
-                        ListEmptyComponent={
-                            !rulesLoading && !rulesError ? (
-                                <Text className="text-gray-500 text-center py-6 w-full">
-                                    No rules found.
-                                </Text>
-                            ) : null
-                        }
-                        renderItem={({ item: r, index }) =>
-                            r.__filler ? (
-                                <View className="flex-1 h-56" style={{ opacity: 0 }} />
-                            ) : (
-                                <View className="flex-1 bg-gray-50 rounded-xl shadow-lg overflow-hidden">
-                                    {r.image ? (
-                                        <Image
-                                            source={{ uri: r.image }}
-                                            className="w-full h-40"
-                                            resizeMode="cover"
-                                        />
-                                    ) : (
-                                        <View className="w-full h-40 bg-gray-200 items-center justify-center">
-                                            <Text className="text-gray-400">No image</Text>
-                                        </View>
-                                    )}
-                                    <View className="p-3 gap-1">
-                                        <Text className="text-sm font-bold">
-                                            Rule {(rulesPage - 1) * RULES_PER_PAGE + index + 1}
-                                        </Text>
-                                        <Text className="text-xs text-gray-500">{r.name}</Text>
-                                        <Text className="text-xs text-gray-400">{r.description}</Text>
-                                        <Text className="text-xs text-gray-400">{r.frequency}</Text>
-                                    </View>
-                                    <View className="absolute top-2 right-2 bg-white rounded-lg p-1 shadow-md">
-                                        <Text className="text-green-500 font-bold text-sm">+{r.points}</Text>
-                                    </View>
-                                </View>
-                            )
-                        }
-                    />
+                    {!rulesLoading && !rulesError && filteredRules.length === 0 && (
+                        <View className="items-center py-6">
+                            <Feather name="search" size={28} color="#9CA3AF" />
+                            <Text className="text-gray-600 text-base text-center mt-2">No rules found.</Text>
+                        </View>
+                    )}
+
+                    <View className="gap-3">
+                        {paginatedRules.map(({ rule, number }) => (
+                            <RuleCard
+                                key={rule._id}
+                                rule={rule}
+                                ruleNumber={number}
+                                onPress={() => setSelected({ rule, number })}
+                            />
+                        ))}
+                    </View>
 
                     {!rulesLoading && !rulesError && (
                         <Pagination
@@ -489,27 +503,27 @@ export default function Home() {
                 </View>
 
                 {/* RA 9003 */}
-                <View className="bg-white rounded-xl p-6 shadow mt-10">
-                    <View className="flex-col gap-4 mt-5">
+                <View className="bg-white rounded-2xl p-5 shadow mt-8 border border-gray-100">
+                    <View className="flex-col gap-3">
                         <View>
-                            <Text className="text-xl font-bold text-gray-800">
+                            <Text className="text-xl font-bold text-gray-900">
                                 Republic Act No. 9003
                             </Text>
-                            <Text className="text-green-700 text-sm">
+                            <Text className="text-green-700 text-base font-medium mt-0.5">
                                 Ecological Solid Waste Management Act of 2000
                             </Text>
                         </View>
                         <View className="bg-green-100 px-3 py-1 rounded-full self-start">
-                            <Text className="text-green-700 text-xs font-medium">Philippine Law</Text>
+                            <Text className="text-green-800 text-sm font-semibold">Philippine Law</Text>
                         </View>
                     </View>
-                    <View className="bg-green-100/60 border border-green-200 rounded-xl p-4 mt-5">
-                        <Text className="text-sm text-gray-700 text-justify">
+                    <View className="bg-green-50 border border-green-200 rounded-xl p-4 mt-4">
+                        <Text className="text-base text-gray-800 leading-6">
                             The Ecological Solid Waste Management Act of 2000, officially known as
                             Republic Act No. 9003, is a Philippine environmental law enacted to
                             establish a comprehensive and sustainable system for managing solid waste
                             nationwide.{" "}
-                            <Text className="font-semibold">
+                            <Text className="font-semibold text-gray-900">
                                 It promotes waste reduction, mandatory segregation at source,
                                 recycling, composting, and the closure of open dumpsites, while
                                 requiring local government units to take primary responsibility for
@@ -527,15 +541,18 @@ export default function Home() {
                                 "https://www.officialgazette.gov.ph/2001/01/26/republic-act-no-9003/"
                             )
                         }
-                        className="flex-row items-center gap-2 mt-3"
+                        className="flex-row items-center gap-2 mt-4"
                     >
-                        <Text className="text-green-600 font-medium">See full text of RA 9003</Text>
+                        <Feather name="external-link" size={16} color="#15803D" />
+                        <Text className="text-green-700 text-base font-semibold underline">
+                            See full text of RA 9003
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
                 {/* RECENT ACTIVITY */}
-                <View className="bg-white rounded-xl p-6 shadow mt-5 mb-5">
-                    <Text className="text-lg font-semibold mb-4">Recent Activity</Text>
+                <View className="bg-white rounded-2xl p-5 shadow mt-5 mb-5 border border-gray-100">
+                    <Text className="text-xl font-bold text-gray-900 mb-4">Recent Activity</Text>
 
                     {/* Tab switcher */}
                     <View style={{ flexDirection: "row", backgroundColor: "#F3F4F6", borderRadius: 12, padding: 4, marginBottom: 16 }}>
@@ -549,7 +566,7 @@ export default function Home() {
                                     alignItems: "center",
                                     justifyContent: "center",
                                     gap: 4,
-                                    paddingVertical: 8,
+                                    paddingVertical: 10,
                                     borderRadius: 8,
                                     backgroundColor: activeLogTab === tab.id ? "#FFFFFF" : "transparent",
                                     shadowColor: activeLogTab === tab.id ? "#000" : "transparent",
@@ -560,13 +577,13 @@ export default function Home() {
                             >
                                 <Feather
                                     name={tab.icon}
-                                    size={14}
-                                    color={activeLogTab === tab.id ? "#15803D" : "#6B7280"}
+                                    size={15}
+                                    color={activeLogTab === tab.id ? "#15803D" : "#4B5563"}
                                 />
                                 <Text style={{
-                                    fontSize: 12,
-                                    fontWeight: "500",
-                                    color: activeLogTab === tab.id ? "#15803D" : "#6B7280",
+                                    fontSize: 13,
+                                    fontWeight: "600",
+                                    color: activeLogTab === tab.id ? "#15803D" : "#4B5563",
                                 }}>
                                     {tab.label}
                                 </Text>
@@ -577,11 +594,11 @@ export default function Home() {
                     {/* DISPOSAL TAB */}
                     {activeLogTab === "disposal" && (
                         <>
-                            <View className="flex-row justify-between text-bold items-center py-2 border-t border-gray-100">
-                                <Text>
+                            <View className="flex-row justify-between items-center py-2 border-t border-gray-100">
+                                <Text className="text-sm font-semibold text-gray-600">
                                     Disposal Information
                                 </Text>
-                                <Text>
+                                <Text className="text-sm font-semibold text-gray-600">
                                     Disposal Order
                                 </Text>
                             </View>
@@ -591,10 +608,10 @@ export default function Home() {
                                 </View>
                             )}
                             {!!disposalError && (
-                                <Text className="text-red-500 text-center py-4">{disposalError}</Text>
+                                <Text className="text-red-600 text-base text-center py-4">{disposalError}</Text>
                             )}
                             {!disposalLoading && !disposalError && disposalLogs.length === 0 && (
-                                <Text className="text-gray-500 text-center py-6">
+                                <Text className="text-gray-600 text-base text-center py-6">
                                     No disposal records yet.
                                 </Text>
                             )}
@@ -603,26 +620,22 @@ export default function Home() {
                                 const binTypeMatch = log.note?.match(/\((.+)\)/);
                                 const binType = binTypeMatch ? binTypeMatch[1] : "—";
                                 return (
-                                    
-                                        <View key={log._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
-                                            <View className="flex-1">
-                                                <Text className="font-medium">
-                                                    {log.binId ?? "—"} · {binType}
-                                                </Text>
-                                                <Text className="text-xs text-gray-500">
-                                                    {scannedAt.toLocaleDateString("en-CA")} ·{" "}
-                                                    {scannedAt.toLocaleTimeString([], {
-                                                        hour: "2-digit", minute: "2-digit",
-                                                    })}
-                                                </Text>
-                                            </View>
-                                            <Text className="text-bold pl-2">
-                                                #{log.disposalOrder ?? "—"}
+                                    <View key={log._id} className="flex-row justify-between items-center py-3 border-t border-gray-100">
+                                        <View className="flex-1">
+                                            <Text className="text-base font-semibold text-gray-900">
+                                                {log.binId ?? "—"} · {binType}
+                                            </Text>
+                                            <Text className="text-sm text-gray-600 mt-0.5">
+                                                {scannedAt.toLocaleDateString("en-CA")} ·{" "}
+                                                {scannedAt.toLocaleTimeString([], {
+                                                    hour: "2-digit", minute: "2-digit",
+                                                })}
                                             </Text>
                                         </View>
-
-                                    
-
+                                        <Text className="text-base font-bold text-green-700 pl-2">
+                                            #{log.disposalOrder ?? "—"}
+                                        </Text>
+                                    </View>
                                 );
                             })}
                             {!disposalLoading && !disposalError && disposalLogs.length > 0 && (
@@ -645,23 +658,23 @@ export default function Home() {
                                 </View>
                             )}
                             {!!activityError && (
-                                <Text className="text-red-500 text-center py-4">{activityError}</Text>
+                                <Text className="text-red-600 text-base text-center py-4">{activityError}</Text>
                             )}
                             {!activityLoading && !activityError && activityLogs.length === 0 && (
-                                <Text className="text-gray-500 text-center py-6">No activity yet.</Text>
+                                <Text className="text-gray-600 text-base text-center py-6">No activity yet.</Text>
                             )}
                             {!activityLoading && !activityError && activityLogs.map((a) => (
-                                <View key={a._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
-                                    <View className="flex-1">
-                                        <Text className="font-medium">{a.type}</Text>
-                                        <Text className="text-xs text-gray-500">
+                                <View key={a._id} className="flex-row justify-between items-center py-3 border-t border-gray-100">
+                                    <View className="flex-1 pr-2">
+                                        <Text className="text-base font-semibold text-gray-900">{a.type}</Text>
+                                        <Text className="text-sm text-gray-600 mt-0.5">
                                             {a.description}{a.amount ? ` · ${a.amount}` : ""}
                                         </Text>
-                                        <Text className="text-xs text-gray-400">
+                                        <Text className="text-sm text-gray-500 mt-0.5">
                                             {new Date(a.date).toLocaleDateString("en-CA")}
                                         </Text>
                                     </View>
-                                    <Text className={`font-semibold ml-2 ${a.points > 0 ? "text-green-600" : "text-red-500"
+                                    <Text className={`text-base font-bold ml-2 ${a.points > 0 ? "text-green-600" : "text-red-600"
                                         }`}>
                                         {a.points > 0 ? `+${a.points}` : a.points}
                                     </Text>
@@ -687,31 +700,31 @@ export default function Home() {
                                 </View>
                             )}
                             {!!violationError && (
-                                <Text className="text-red-500 text-center py-4">{violationError}</Text>
+                                <Text className="text-red-600 text-base text-center py-4">{violationError}</Text>
                             )}
                             {!violationLoading && !violationError && violationLogs.length === 0 && (
-                                <Text className="text-gray-500 text-center py-6">
+                                <Text className="text-gray-600 text-base text-center py-6">
                                     No violations on record.
                                 </Text>
                             )}
                             {!violationLoading && !violationError && violationLogs.map((v) => (
-                                <View key={v._id} className="flex-row justify-between items-center py-2 border-t border-gray-100">
-                                    <View className="flex-1">
-                                        <Text className="font-medium text-red-600">
+                                <View key={v._id} className="flex-row justify-between items-center py-3 border-t border-gray-100">
+                                    <View className="flex-1 pr-2">
+                                        <Text className="text-base font-semibold text-red-700">
                                             Offense #{v.offenseNumber} · {v.penaltyType}
                                         </Text>
-                                        <Text className="text-xs text-gray-500">
+                                        <Text className="text-sm text-gray-600 mt-0.5">
                                             {new Date(v.createdAt).toLocaleDateString("en-CA")}
                                             {v.fineAmount ? ` · ₱${v.fineAmount}` : ""}
                                             {v.communityService ? ` · ${v.communityService}` : ""}
                                         </Text>
                                         {v.issuedBy && (
-                                            <Text className="text-xs text-gray-400">
+                                            <Text className="text-sm text-gray-500 mt-0.5">
                                                 Issued by: {v.issuedBy}
                                             </Text>
                                         )}
                                     </View>
-                                    <Text className="font-semibold text-red-500 ml-2">
+                                    <Text className="text-base font-bold text-red-600 ml-2">
                                         {v.pointsDeducted ? `-${v.pointsDeducted}` : "—"}
                                     </Text>
                                 </View>
@@ -729,6 +742,14 @@ export default function Home() {
                 </View>
 
             </ScrollView>
+
+            {/* Rule details page */}
+            <RuleDetails
+                visible={!!selected}
+                rule={selected?.rule ?? null}
+                ruleNumber={selected?.number ?? 0}
+                onClose={() => setSelected(null)}
+            />
         </SafeAreaView>
     );
 }

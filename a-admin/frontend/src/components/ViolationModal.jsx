@@ -2,7 +2,6 @@
 import { X, Check, ImageOff } from "lucide-react";
 import { useState, useEffect } from "react";
 import ConfirmationModal from "./confirmationModal";
-import SuccessToast from "../assets/Toast";
 import BASE_URL from "../config";
 
 const PROVISION = {
@@ -18,10 +17,8 @@ const PENALTY_CONFIG = {
 export default function ViolationModal({ isOpen, onClose, household, onPenalized }) {
     const [active, setActive] = useState(false);
     const [decision, setDecision] = useState(null); // "approve" | "decline"
-    const [showToast, setShowToast] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-    const [resultPenalty, setResultPenalty] = useState(null);
 
     // Reset state whenever modal opens
     useEffect(() => {
@@ -29,7 +26,6 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
             setActive(false);
             setDecision(null);
             setError("");
-            setResultPenalty(null);
         }
     }, [isOpen]);
 
@@ -43,7 +39,7 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
     const nextOffense = currentViolation >= 3 ? 1 : currentViolation + 1;
     const penalty = PENALTY_CONFIG[nextOffense];
     const evidenceImage = household?.evidencePhoto ?? null;
-    const logId = household?._id;
+    const logId = household?._id; // the id of the disposal log (NOT the household)
 
     const openConfirm = (type) => {
         setDecision(type);
@@ -74,14 +70,12 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                     throw new Error(data.message || "Failed to decline report.");
                 }
 
+                // Close everything right away. The parent shows the toast
+                // (so we don't need to stay open), and knows it was a DECLINE
+                // so it does NOT mark the log as "Penalized".
                 setActive(false);
-                setShowToast(true);
-
-                // Let the parent refresh its log list so the row stops
-                // showing red/flagged and the image is gone from the UI.
-                if (onPenalized) onPenalized(data.data);
-
-                setTimeout(() => onClose(), 1800);
+                if (onPenalized) onPenalized(data.data, "decline", "Violation report declined.");
+                onClose();
             } catch (err) {
                 setError(err.message);
                 setActive(false);
@@ -102,7 +96,8 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                     "Content-Type": "application/json",
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
-                body: JSON.stringify({ issuedBy: "Admin" }),
+                // logId lets the backend mark THIS disposal log as penalized
+                body: JSON.stringify({ issuedBy: "Admin", logId }),
             });
 
             const data = await res.json();
@@ -110,13 +105,16 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                 throw new Error(data.message || "Failed to apply penalty.");
             }
 
-            setResultPenalty(data.data.penalty);
+            const p = data.data.penalty;
+            const message = p
+                ? `Penalty applied: ${p.penaltyType} (Offense #${p.offenseNumber})`
+                : "Penalty successfully assigned!";
+
+            // Close right away. The parent shows the toast and disables the
+            // Penalize button (APPROVE).
             setActive(false);
-            setShowToast(true);
-
-            if (onPenalized) onPenalized(data.data.household);
-
-            setTimeout(() => onClose(), 1800);
+            if (onPenalized) onPenalized(data.data.household, "approve", message);
+            onClose();
         } catch (err) {
             setError(err.message);
             setActive(false);
@@ -239,17 +237,6 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                 onConfirm={handleConfirm}
             />
 
-            <SuccessToast
-                show={showToast}
-                onClose={() => setShowToast(false)}
-                message={
-                    decision === "decline"
-                        ? "Violation report declined."
-                        : resultPenalty
-                            ? `Penalty applied: ${resultPenalty.penaltyType} (Offense #${resultPenalty.offenseNumber})`
-                            : "Penalty successfully assigned!"
-                }
-            />
         </div >
     );
 }

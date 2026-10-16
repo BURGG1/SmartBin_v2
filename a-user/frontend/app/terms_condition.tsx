@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useTerms } from "./termContext";
+import { useTerms } from "../context/termContext";
 
 // ---------------------------------------------------------------------------
 // Terms and Conditions data

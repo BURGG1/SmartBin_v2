@@ -52,14 +52,14 @@ const INITIAL_FORM: FormState = {
 
 // ── Replace with your barangay's actual streets/puroks/sitios ──
 const STREET_OPTIONS = [
-    "Rizal St.",
-    "Mabini St.",
-    "Bonifacio St.",
     "Purok 1",
     "Purok 2",
     "Purok 3",
-    "Sitio Maligaya",
-    "National Highway",
+    "Purok 4",
+    "Purok 5",
+    "Purok 6",
+    "Purok 7",
+    "Purok 8",
 ];
 
 const PH_MOBILE_REGEX = /^09\d{9}$/;
@@ -520,7 +520,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     {/* ── Street/Purok picker instead of freeform text ── */}
                                     <View>
                                         <View className="flex-row items-center">
-                                            <Text className="font-semibold">Street/Purok</Text>
+                                            <Text className="font-semibold">Purok</Text>
                                             <Text className="text-red-500 ml-1">*</Text>
                                         </View>
                                         <TouchableOpacity
@@ -530,7 +530,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                                 }`}
                                         >
                                             <Text className={form.street ? "text-black" : "text-gray-400"}>
-                                                {form.street || "Select street/purok"}
+                                                {form.street || "Select your Purok"}
                                             </Text>
                                             <Ionicons name="chevron-down" size={18} color="gray" />
                                         </TouchableOpacity>
@@ -626,7 +626,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             onPress={() => { }}
                         >
                             <View className="flex-row justify-between items-center px-5 py-4 border-b border-gray-200">
-                                <Text className="text-lg font-bold">Select Street/Purok</Text>
+                                <Text className="text-lg font-bold">Select Purok</Text>
                                 <TouchableOpacity onPress={() => setStreetPickerOpen(false)} hitSlop={8}>
                                     <Ionicons name="close" size={22} color="gray" />
                                 </TouchableOpacity>

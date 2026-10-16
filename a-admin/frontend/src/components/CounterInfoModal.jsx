@@ -1,7 +1,8 @@
-import { X, Calendar } from "lucide-react";
+import { X, Calendar, Search } from "lucide-react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ViolationModal from "./ViolationModal";
 import Pagination from "./Pagination";
+import SuccessToast from "../assets/Toast";
 import BASE_URL from "../config";
 
 const LOGS_LIMIT = 7;       // rows per page in the table
@@ -16,6 +17,43 @@ const toLocalDateString = (d = new Date()) => {
     return `${year}-${month}-${day}`;
 };
 
+// Penalized log IDs are remembered in this browser so the button stays disabled
+// after a refresh. (Stopgap: the real source of truth should be `log.penalized`
+// from the backend, which also covers other admins/devices.)
+const PENALIZED_KEY = "penalizedLogIds";
+
+const loadPenalizedIds = () => {
+    try {
+        return new Set(JSON.parse(localStorage.getItem(PENALIZED_KEY) || "[]"));
+    } catch {
+        return new Set();
+    }
+};
+
+const savePenalizedIds = (set) => {
+    try {
+        localStorage.setItem(PENALIZED_KEY, JSON.stringify([...set]));
+    } catch {
+        /* storage unavailable: fall back to in-memory only */
+    }
+};
+
+// Builds the searchable text of a log row (everything in the table except date & time)
+const buildSearchText = (log) => {
+    const hh = log.household;
+    const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "";
+    return [
+        householdId,
+        log.disposalOrder != null ? `#${log.disposalOrder} ${log.disposalOrder}` : "",
+        hh?.fullname,
+        hh?.contactNumber,
+        hh?.email,
+    ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+};
+
 export default function CounterInfoModal({ isOpen, onClose, bin }) {
     const [openModal, setOpenModal] = useState(false);
     const [activeHH, setActiveHH] = useState(null);
@@ -24,18 +62,24 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [page, setPage] = useState(1);
+    const [search, setSearch] = useState("");
+    // IDs of logs that were already penalized (keeps the button disabled for good)
+    const [penalizedIds, setPenalizedIds] = useState(loadPenalizedIds);
+    // Toast lives here (not in ViolationModal) so the modal can close instantly
+    const [toast, setToast] = useState({ show: false, message: "" });
 
     const abortRef = useRef(null);
 
     // Load all disposal logs for the bin (filtering by day happens below).
-    const fetchLogs = useCallback(async () => {
+    // silent = true -> refresh in the background WITHOUT the "Loading logs..." flash.
+    const fetchLogs = useCallback(async (silent = false) => {
         if (!bin?.id) return;
 
         abortRef.current?.abort();
         const controller = new AbortController();
         abortRef.current = controller;
 
-        setLoading(true);
+        if (!silent) setLoading(true);
         setError("");
         try {
             const collected = [];
@@ -79,6 +123,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
         if (!isOpen || !bin?.id) return;
         setFromDate(toLocalDateString());
         setPage(1);
+        setSearch("");
         setAllLogs([]);
         fetchLogs();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,11 +131,15 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
 
     useEffect(() => () => abortRef.current?.abort(), []);
 
-    // Only the logs that belong to the selected day (local time).
-    const dayLogs = useMemo(
-        () => allLogs.filter((log) => toLocalDateString(new Date(log.scannedAt)) === fromDate),
-        [allLogs, fromDate]
-    );
+    // Only the logs that belong to the selected day (local time),
+    // narrowed down by the search text (if any).
+    const dayLogs = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return allLogs.filter((log) => {
+            if (toLocalDateString(new Date(log.scannedAt)) !== fromDate) return false;
+            return !q || buildSearchText(log).includes(q);
+        });
+    }, [allLogs, fromDate, search]);
 
     // Current page of that day's logs.
     const pagedLogs = useMemo(
@@ -101,7 +150,28 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
     if (!isOpen || !bin) return null;
 
     const isToday = fromDate === toLocalDateString();
+    const isSearching = search.trim() !== "";
     const emptyRows = Math.max(0, LOGS_LIMIT - pagedLogs.length);
+
+    // Called by ViolationModal after a successful approve / decline.
+    // ViolationModal closes itself right after calling this.
+    // - approve -> remember this log as penalized (button disabled instantly)
+    // - decline -> do NOT mark as penalized (the report is just removed)
+    const handlePenalized = (_data, action, message) => {
+        const logId = activeHH?._id;
+
+        if (action === "approve" && logId) {
+            setPenalizedIds((prev) => {
+                const next = new Set(prev).add(logId);
+                savePenalizedIds(next);
+                return next;
+            });
+        }
+
+        if (message) setToast({ show: true, message });
+
+        fetchLogs(true); // silent refresh: no table flicker
+    };
 
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -122,6 +192,32 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                             {bin.id} - <span>{bin.type}</span>
                         </h2>
                     </div>
+                    <div className="flex flex-col sm:flex-row items-center gap-3 w-auto">
+                    <div className="relative">
+                        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                            type="text"
+                            value={search}
+                            onChange={(e) => {
+                                setSearch(e.target.value);
+                                setPage(1);
+                            }}
+                            placeholder="Search household, resident, contact, email..."
+                            className="border rounded-lg pl-9 pr-8 py-2 text-sm w-72"
+                        />
+                        {search && (
+                            <button
+                                onClick={() => {
+                                    setSearch("");
+                                    setPage(1);
+                                }}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 cursor-pointer"
+                                aria-label="Clear search"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
                     <div className="flex items-center gap-2 w-auto">
                         <Calendar className="w-4 h-4 md:w-5 md:h-5" />
                         <p>Date Collected:</p>
@@ -135,6 +231,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                             }}
                             className="border rounded-lg px-3 py-2 text-sm w-50"
                         />
+                    </div>
                     </div>
                 </div>
 
@@ -161,9 +258,11 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                 {pagedLogs.length === 0 ? (
                                     <tr>
                                         <td colSpan="7" className="text-center py-6 text-gray-500">
-                                            {isToday
-                                                ? "No disposal today"
-                                                : `No disposal on ${fromDate}`}
+                                            {isSearching
+                                                ? `No results for "${search.trim()}"`
+                                                : isToday
+                                                    ? "No disposal today"
+                                                    : `No disposal on ${fromDate}`}
                                         </td>
                                     </tr>
                                 ) : (
@@ -175,8 +274,11 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                         });
                                         const hh = log.household;
                                         const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "—";
-                                        const contact = hh?.contactNumber ? `+63-${hh.contactNumber}` : "—";
+                                        const contact = hh?.contactNumber ? `${hh.contactNumber}` : "—";
                                         const isFlagged = !!log.flagged;
+                                        // Already penalized (this browser, or marked by the backend)
+                                        const isPenalized = penalizedIds.has(log._id) || !!log.penalized;
+                                        const canPenalize = isFlagged && !isPenalized;
 
                                         return (
                                             <tr
@@ -211,21 +313,21 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                                 <td>{contact}</td>
                                                 <td>{hh?.email ?? "—"}</td>
 
-                                                {/* Penalize button */}
+                                                {/* Penalize button (disabled once penalized) */}
                                                 <td>
                                                     <button
                                                         onClick={() => {
                                                             setActiveHH(log);
                                                             setOpenModal(true);
                                                         }}
-                                                        disabled={!isFlagged}
+                                                        disabled={!canPenalize}
                                                         className={
-                                                            isFlagged
+                                                            canPenalize
                                                                 ? "bg-red-600 text-white px-2 py-1 rounded-lg cursor-pointer hover:bg-red-700 transition"
                                                                 : "bg-gray-300 text-gray-500 px-2 py-1 rounded-lg cursor-not-allowed"
                                                         }
                                                     >
-                                                        Penalize
+                                                        {isPenalized ? "Penalized" : "Penalize"}
                                                     </button>
                                                 </td>
                                             </tr>
@@ -260,10 +362,13 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 isOpen={openModal}
                 onClose={() => setOpenModal(false)}
                 household={activeHH}
-                onPenalized={() => {
-                    setOpenModal(false);
-                    fetchLogs();
-                }}
+                onPenalized={handlePenalized}
+            />
+
+            <SuccessToast
+                show={toast.show}
+                onClose={() => setToast({ show: false, message: "" })}
+                message={toast.message}
             />
         </div>
     );

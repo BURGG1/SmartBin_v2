@@ -28,6 +28,7 @@ const disposalSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    penalized: { type: Boolean, default: false },
     disposedAt: {
       type: Date,
       default: Date.now,

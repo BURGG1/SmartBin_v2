@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Navbar from "../../components/Navbar";
 import {
     Star,
@@ -26,7 +26,6 @@ import AwardModal from "../../components/AwardModal";
 import ClaimReward from "../../components/ClaimReward";
 import BASE_URL from "../../config";
 import Pagination from "../../components/Pagination";
-import useDebounce from "../../hooks/useDebounce";
 
 import { getRewards, deleteReward } from "../../api/rewardAPI";
 import { getRules, deleteRule } from "../../api/rulesAPI";
@@ -35,24 +34,39 @@ const REWARDS_PER_PAGE = 4;
 const RULES_PER_PAGE = 4;
 const LOGS_PER_PAGE = 10;
 
-// Normalises an API response into { list, total } for the current page.
-// Works whether the server paginates properly or just returns everything:
-//  - if more than `limit` items come back, the server didn't paginate,
-//    so we slice the requested page ourselves
-//  - otherwise the server already gave us exactly this page
-const paginateResponse = (res, page, limit) => {
-    const all = Array.isArray(res) ? res : res?.data ?? [];
-    if (all.length > limit) {
-        return {
-            list: all.slice((page - 1) * limit, page * limit),
-            total: all.length,
-        };
-    }
-    return {
-        list: all,
-        total: Array.isArray(res) ? all.length : res?.total ?? all.length,
-    };
+const FETCH_ALL_LIMIT = 1000; // load everything, then filter/paginate client-side
+
+const toList = (res) => (Array.isArray(res) ? res : res?.data ?? []);
+
+// Every search term must appear somewhere in the item's searchable text
+const matchesSearch = (parts, query) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    const haystack = parts
+        .filter((v) => v !== undefined && v !== null && v !== "")
+        .join(" ")
+        .toLowerCase();
+    return q.split(/\s+/).every((term) => haystack.includes(term));
 };
+
+// Everything visible on a reward card
+const rewardSearchParts = (r) => [
+    r.name,
+    r.points,
+    `${r.points} pts`,
+    r.stocks,
+    Number(r.stocks) <= 0 ? "out of stock" : `${r.stocks} in stock`,
+];
+
+// Everything visible on a rule card
+const ruleSearchParts = (r) => [
+    r.name,
+    r.points,
+    `+${r.points} pts`,
+    r.freq,
+    r.decs,
+    r.auto ? "auto-awarded auto" : "manual",
+];
 
 export default function Gamified() {
     const [activeTab, setActiveTab] = useState("rewards");
@@ -64,15 +78,13 @@ export default function Gamified() {
     const [pointNeed, setPointNeed] = useState();
     const [clickedRule, setClickRule] = useState(null);
 
-    // ---- Rewards come from the database (server-paginated) ----
-    const [rewards, setRewards] = useState([]);
-    const [rewardsTotal, setRewardsTotal] = useState(0);
+    // ---- Rewards (full list loaded, filtered + paginated client-side) ----
+    const [allRewards, setAllRewards] = useState([]);
     const [rewardsLoading, setRewardsLoading] = useState(true);
     const [rewardsError, setRewardsError] = useState("");
 
-    // ---- Rules come from the database (server-paginated) ----
-    const [rules, setRules] = useState([]);
-    const [rulesTotal, setRulesTotal] = useState(0);
+    // ---- Rules (full list loaded, filtered + paginated client-side) ----
+    const [allRules, setAllRules] = useState([]);
     const [rulesLoading, setRulesLoading] = useState(true);
     const [rulesError, setRulesError] = useState("");
     const [editRuleData, setEditRuleData] = useState(null); // which rule is being edited
@@ -95,30 +107,55 @@ export default function Gamified() {
     const [removing, setRemoving] = useState(false);
     const menuRef = useRef(null);
 
+    // Local filtering is instant, so no debounce is needed
     const [search, setSearch] = useState("");
-    const debouncedSearch = useDebounce(search, 400);
 
-    // ── Pagination (server-side) ──
+    // ── Pagination ──
     const [rewardPage, setRewardPage] = useState(1);
     const [rulePage, setRulePage] = useState(1);
     const [logPage, setLogPage] = useState(1);
+
+    // ── Filtered + paginated lists (derived) ──
+    const filteredRewards = useMemo(
+        () => allRewards.filter((r) => matchesSearch(rewardSearchParts(r), search)),
+        [allRewards, search]
+    );
+    const rewardsTotal = filteredRewards.length;
+    const rewards = filteredRewards.slice(
+        (rewardPage - 1) * REWARDS_PER_PAGE,
+        rewardPage * REWARDS_PER_PAGE
+    );
+
+    const filteredRules = useMemo(
+        () => allRules.filter((r) => matchesSearch(ruleSearchParts(r), search)),
+        [allRules, search]
+    );
+    const rulesTotal = filteredRules.length;
+    const rules = filteredRules.slice(
+        (rulePage - 1) * RULES_PER_PAGE,
+        rulePage * RULES_PER_PAGE
+    );
+
+    // Fixed numbers: based on position in the full list, not the filtered/paged view
+    const rewardNumbers = useMemo(
+        () => new Map(allRewards.map((r, i) => [r._id, i + 1])),
+        [allRewards]
+    );
+    const ruleNumbers = useMemo(
+        () => new Map(allRules.map((r, i) => [r._id, i + 1])),
+        [allRules]
+    );
 
     const fetchRewards = async (signal) => {
         try {
             setRewardsLoading(true);
             setRewardsError("");
-            const res = await getRewards(
-                { search: debouncedSearch, page: rewardPage, limit: REWARDS_PER_PAGE },
-                signal
-            );
-
-            const { list, total } = paginateResponse(res, rewardPage, REWARDS_PER_PAGE);
-            setRewards(list);
-            setRewardsTotal(total);
+            const res = await getRewards({ page: 1, limit: FETCH_ALL_LIMIT }, signal);
+            setAllRewards(toList(res));
         } catch (err) {
             if (err.name === "AbortError") return;
             console.error(err);
-            setRewards([]);
+            setAllRewards([]);
             setRewardsError("Failed to load rewards. Is the server running?");
         } finally {
             setRewardsLoading(false);
@@ -129,18 +166,12 @@ export default function Gamified() {
         try {
             setRulesLoading(true);
             setRulesError("");
-            const res = await getRules(
-                { search: debouncedSearch, page: rulePage, limit: RULES_PER_PAGE },
-                signal
-            );
-
-            const { list, total } = paginateResponse(res, rulePage, RULES_PER_PAGE);
-            setRules(list);
-            setRulesTotal(total);
+            const res = await getRules({ page: 1, limit: FETCH_ALL_LIMIT }, signal);
+            setAllRules(toList(res));
         } catch (err) {
             if (err.name === "AbortError") return;
             console.error(err);
-            setRules([]);
+            setAllRules([]);
             setRulesError("Failed to load rules. Is the server running?");
         } finally {
             setRulesLoading(false);
@@ -169,14 +200,14 @@ export default function Gamified() {
         }
     };
 
-    // Rewards: refetch when its own search/page changes
+    // Rewards: load once per tab visit
     useEffect(() => {
         if (activeTab !== "rewards") return;
         const controller = new AbortController();
         fetchRewards(controller.signal);
         return () => controller.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, debouncedSearch, rewardPage]);
+    }, [activeTab]);
 
     // Logs: separate effect so paging rewards doesn't reload the logs
     useEffect(() => {
@@ -187,19 +218,20 @@ export default function Gamified() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, logPage]);
 
+    // Rules: load once per tab visit
     useEffect(() => {
         if (activeTab !== "rules") return;
         const controller = new AbortController();
         fetchRules(controller.signal);
         return () => controller.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, debouncedSearch, rulePage]);
+    }, [activeTab]);
 
     // Reset to page 1 whenever the search term changes
     useEffect(() => {
         setRewardPage(1);
         setRulePage(1);
-    }, [debouncedSearch]);
+    }, [search]);
 
     // Step back if a page becomes invalid (e.g. after a delete)
     useEffect(() => {
@@ -228,9 +260,10 @@ export default function Gamified() {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // Close any open dropdown when switching tabs
+    // Clear search + close any open dropdown when switching tabs
     useEffect(() => {
         setOpenMenuId(null);
+        setSearch("");
     }, [activeTab]);
 
     // Remove a reward or a rule (whichever is in removeTarget)
@@ -461,7 +494,7 @@ export default function Gamified() {
                                                         <div className="flex justify-between items-start gap-2">
                                                             <h3 className="font-semibold text-gray-900 leading-snug">
                                                                 <span className="text-gray-400 font-medium">
-                                                                    Reward {(rewardPage - 1) * REWARDS_PER_PAGE + idx + 1}
+                                                                    Reward {rewardNumbers.get(item._id)}
                                                                 </span>{" "}
                                                                 - {item.name}
                                                             </h3>
@@ -753,7 +786,7 @@ export default function Gamified() {
                                                     <div className="flex justify-between items-start gap-2">
                                                         <h3 className="font-semibold text-gray-900 leading-snug">
                                                             <span className="text-gray-400 font-medium">
-                                                                Rule {(rulePage - 1) * RULES_PER_PAGE + idx + 1}
+                                                                Rule {ruleNumbers.get(r._id)}
                                                             </span>{" "}
                                                             - {r.name}
                                                         </h3>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useCallback } from "react";
 import {
     View,
     Text,
@@ -10,10 +10,12 @@ import {
     Modal,
     KeyboardAvoidingView,
     Platform,
+    RefreshControl,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { API_BASE } from "@/config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -58,7 +60,11 @@ const getInitials = (name = "") => {
 export default function Profile() {
     const router = useRouter();
     const [household, setHousehold] = useState(null);
+    // null = not loaded yet. The household document has no violation count,
+    // so this comes from the /violations endpoint (same one the Home tab uses).
+    const [violationCount, setViolationCount] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [updating, setUpdating] = useState(false);
     const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -82,12 +88,33 @@ export default function Profile() {
         confirmPassword: "",
     });
 
+    // Total violations on record. limit=1 keeps the request tiny; we only need pagination.total.
+    // Failures are isolated so the rest of the profile still loads.
+    const fetchViolationCount = async (userId, token) => {
+        try {
+            const res = await fetch(
+                `${API_BASE}/api/households/${userId}/violations?page=1&limit=1`,
+                { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+            );
+            const data = await res.json();
+            if (data.success) {
+                setViolationCount(
+                    data.pagination?.total ?? (Array.isArray(data.data) ? data.data.length : 0)
+                );
+            }
+        } catch (err) {
+            console.error("Failed to fetch violations:", err);
+        }
+    };
+
     const fetchHousehold = async () => {
         try {
             const token = await AsyncStorage.getItem("token");
             const userStr = await AsyncStorage.getItem("user");
             const user = userStr ? JSON.parse(userStr) : null;
             if (!user?.id) return;
+
+            const violationPromise = fetchViolationCount(user.id, token);
 
             const res = await fetch(`${API_BASE}/api/households/${user.id}`, {
                 headers: { Authorization: `Bearer ${token}` },
@@ -104,6 +131,7 @@ export default function Profile() {
                     email: data.data.email || "",
                 });
             }
+            await violationPromise;
         } catch (err) {
             console.error("Failed to fetch household:", err);
         } finally {
@@ -111,9 +139,20 @@ export default function Profile() {
         }
     };
 
-    useEffect(() => {
-        fetchHousehold();
-    }, []);
+    // Runs on first open AND every time the tab regains focus, so a new
+    // violation issued by an admin shows up without a manual refresh.
+    useFocusEffect(
+        useCallback(() => {
+            fetchHousehold();
+        }, [])
+    );
+
+    // used by pull-to-refresh
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await fetchHousehold();
+        setRefreshing(false);
+    };
 
     // ── Availability checks (same pattern as registration forms) ──
     const isEmailTaken = async (email) => {
@@ -280,16 +319,26 @@ export default function Profile() {
         }
     };
 
-    const handleLogout = async () => {
-        await AsyncStorage.removeItem("token");
-        await AsyncStorage.removeItem("user");
-        router.replace("/");
+    const handleLogout = () => {
+        Alert.alert("Log out", "Are you sure you want to log out?", [
+            { text: "Cancel", style: "cancel" },
+            {
+                text: "Log out",
+                style: "destructive",
+                onPress: async () => {
+                    await AsyncStorage.removeItem("token");
+                    await AsyncStorage.removeItem("user");
+                    router.replace("/");
+                },
+            },
+        ]);
     };
 
     if (loading) {
         return (
-            <SafeAreaView className="flex-1 items-center justify-center bg-white">
+            <SafeAreaView className="flex-1 items-center justify-center bg-gray-50">
                 <ActivityIndicator size="large" color="#16A34A" />
+                <Text className="text-gray-600 text-base mt-3">Loading profile...</Text>
             </SafeAreaView>
         );
     }
@@ -297,28 +346,33 @@ export default function Profile() {
     const fullAddress =
         [household?.address?.houseNo, household?.address?.street].filter(Boolean).join(", ") || "—";
 
-    // NOTE: adjust these field names to match whatever your API actually
-    // returns for violations (e.g. household?.violations, household?.flaggedCount).
-    const violationCount = household?.violationCount ?? household?.violations ?? 0;
-    const hasViolations = violationCount > 0;
+    const hasViolations = (violationCount ?? 0) > 0;
 
-    const infoItems = [
+    // 09171234567 -> 0917 123 4567 (easier to read, no country prefix)
+    const formatContact = (n) => {
+        if (!n) return "—";
+        const d = String(n).replace(/\D/g, "");
+        return d.length === 11 ? `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}` : String(n);
+    };
+
+    const contactItems = [
         { label: "Address", value: fullAddress, icon: "map-pin" },
-        { label: "Contact number", value: household?.contactNumber ? `+63 ${household.contactNumber}` : "—", icon: "phone" },
+        { label: "Contact number", value: formatContact(household?.contactNumber), icon: "phone" },
         { label: "Email", value: household?.email || "—", icon: "mail" },
         {
             label: "Family members",
-            value: household?.familyMember ? `${household.familyMember} ${household.familyMember === 1 ? "person" : "people"}` : "—",
+            value: household?.familyMember
+                ? `${household.familyMember} ${household.familyMember === 1 ? "person" : "people"}`
+                : "—",
             icon: "users",
         },
-        {
-            label: "Reward points",
-            value: `${household?.points?.total ?? 0} pts · +${household?.points?.thisMonth ?? 0} this month`,
-            icon: "award",
-        },
+    ];
+
+    const stats = [
+        { label: "Points", value: String(household?.points?.total ?? 0), icon: "award" },
         {
             label: "Violations",
-            value: hasViolations ? `${violationCount} flagged` : "No flags on record",
+            value: violationCount === null ? "—" : String(violationCount),
             icon: "alert-triangle",
             danger: hasViolations,
         },
@@ -336,38 +390,92 @@ export default function Profile() {
 
     return (
         <SafeAreaView className="flex-1 bg-gray-50">
-            <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 32 }}>
+            <ScrollView
+                className="flex-1"
+                contentContainerStyle={{ paddingBottom: 32 }}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#16A34A" colors={["#16A34A"]} />
+                }
+            >
 
-                <View className="px-5 pt-2 pb-5">
-                    <Text className="text-2xl font-bold text-gray-900">Household Profile</Text>
-                    <Text className="text-gray-500 mt-0.5">View and manage your household information</Text>
-                </View>
-
-                {/* Hero identity card */}
-                <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 items-center">
-                    <View className="w-16 h-16 rounded-full bg-green-100 items-center justify-center mb-3">
-                        <Text className="text-green-700 text-lg font-bold">{getInitials(household?.fullname)}</Text>
+                <View className="px-5 pt-2 pb-5 flex-row items-center justify-between">
+                    <View className="flex-1 pr-3">
+                        <Text className="text-3xl font-bold text-gray-900">Household Profile</Text>
+                        <Text className="text-base text-gray-600 mt-1">View and manage your household information</Text>
                     </View>
-                    <Text className="text-lg font-bold text-gray-900">{household?.fullname || "—"}</Text>
-                    <Text className="text-gray-500 text-sm mt-0.5">Household account</Text>
                 </View>
 
-                {/* Grouped info card */}
-                <View className="mx-4 mt-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    {infoItems.map((item, idx) => (
+                {/* Hero identity card with key stats */}
+                <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 items-center">
+                    <View className="w-20 h-20 rounded-full bg-green-100 items-center justify-center mb-3">
+                        <Text className="text-green-700 text-2xl font-bold">{getInitials(household?.fullname)}</Text>
+                    </View>
+                    <Text className="text-2xl font-bold text-gray-900 text-center">{household?.fullname || "—"}</Text>
+                    <View className="bg-green-100 rounded-full px-3 py-1 mt-2">
+                        <Text className="text-green-800 text-sm font-semibold">Household account</Text>
+                    </View>
+
+                    <View className="flex-row w-full mt-5 pt-5 border-t border-gray-100">
+                        {stats.map((st, i) => (
+                            <View
+                                key={st.label}
+                                accessible
+                                accessibilityLabel={`${st.label}: ${st.value}`}
+                                className={`flex-1 items-center ${i > 0 ? "border-l border-gray-100" : ""}`}
+                            >
+                                <Feather name={st.icon} size={18} color={st.danger ? "#DC2626" : "#16A34A"} />
+                                <Text className={`text-xl font-extrabold mt-1 ${st.danger ? "text-red-600" : "text-gray-900"}`}>
+                                    {st.value}
+                                </Text>
+                                <Text className="text-sm text-gray-600">{st.label}</Text>
+                            </View>
+                        ))}
+                    </View>
+                </View>
+
+                {/* Account standing */}
+                {violationCount !== null && (
+                    <View
+                        className={`mx-4 mt-4 rounded-2xl border p-4 flex-row items-center gap-3 ${hasViolations ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"
+                            }`}
+                    >
+                        <View className={`w-11 h-11 rounded-full items-center justify-center ${hasViolations ? "bg-red-100" : "bg-green-100"}`}>
+                            <Feather
+                                name={hasViolations ? "alert-triangle" : "check-circle"}
+                                size={22}
+                                color={hasViolations ? "#B91C1C" : "#15803D"}
+                            />
+                        </View>
+                        <View className="flex-1">
+                            <Text className={`text-base font-semibold ${hasViolations ? "text-red-700" : "text-green-800"}`}>
+                                {hasViolations
+                                    ? `${violationCount} ${violationCount === 1 ? "violation" : "violations"} on record`
+                                    : "Good standing"}
+                            </Text>
+                            <Text className={`text-sm mt-0.5 ${hasViolations ? "text-red-600" : "text-green-700"}`}>
+                                {hasViolations
+                                    ? "Check the Rules tab for recent penalties."
+                                    : "No violations on record. Keep it up!"}
+                            </Text>
+                        </View>
+                    </View>
+                )}
+
+                {/* Household details */}
+                <Text className="mx-5 mt-6 mb-2 text-sm font-bold text-gray-600 tracking-wide">HOUSEHOLD DETAILS</Text>
+                <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    {contactItems.map((item, idx) => (
                         <View
                             key={item.label}
-                            className={`flex-row items-center gap-3 px-4 py-4 ${idx !== infoItems.length - 1 ? "border-b border-gray-100" : ""
+                            className={`flex-row items-center gap-3 px-4 py-4 ${idx !== contactItems.length - 1 ? "border-b border-gray-100" : ""
                                 }`}
                         >
-                            <View className={`w-9 h-9 rounded-full items-center justify-center ${item.danger ? "bg-red-50" : "bg-green-50"}`}>
-                                <Feather name={item.icon} size={16} color={item.danger ? "#DC2626" : "#16A34A"} />
+                            <View className="w-11 h-11 rounded-full items-center justify-center bg-green-50">
+                                <Feather name={item.icon} size={20} color="#16A34A" />
                             </View>
                             <View className="ml-1 flex-1">
-                                <Text className="text-xs text-gray-500">{item.label}</Text>
-                                <Text className={`text-sm font-semibold mt-0.5 ${item.danger ? "text-red-600" : "text-gray-900"}`}>
-                                    {item.value}
-                                </Text>
+                                <Text className="text-sm text-gray-600">{item.label}</Text>
+                                <Text className="text-base font-semibold mt-0.5 text-gray-900">{item.value}</Text>
                             </View>
                         </View>
                     ))}
@@ -377,19 +485,22 @@ export default function Profile() {
                 <View className="mx-4 mt-5 gap-3">
                     <TouchableOpacity
                         onPress={() => setIsModalOpen(true)}
+                        accessibilityRole="button"
                         activeOpacity={0.8}
-                        className="w-full py-3.5 rounded-xl border border-green-600 items-center bg-white"
+                        className="w-full py-4 rounded-xl border-2 border-green-600 items-center bg-white flex-row justify-center"
                     >
-                        <Text className="text-green-700 text-sm font-semibold">Update information</Text>
+                        <Feather name="edit-2" size={18} color="#15803d" />
+                        <Text className="text-green-700 text-base font-semibold ml-2">Update information</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                         onPress={handleLogout}
+                        accessibilityRole="button"
                         activeOpacity={0.8}
-                        className="w-full py-3.5 rounded-xl bg-gray-600 flex-row items-center justify-center"
+                        className="w-full py-4 rounded-xl bg-gray-700 flex-row items-center justify-center"
                     >
-                        <Feather name="log-out" size={16} color="white" />
-                        <Text className="text-white text-sm font-semibold ml-2">Logout</Text>
+                        <Feather name="log-out" size={18} color="white" />
+                        <Text className="text-white text-base font-semibold ml-2">Logout</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -406,19 +517,19 @@ export default function Profile() {
                             <View className="bg-white w-full rounded-2xl p-6 gap-4">
 
                                 <View className="flex-row justify-between items-center mb-1">
-                                    <Text className="text-lg font-bold text-gray-900">Update Information</Text>
+                                    <Text className="text-xl font-bold text-gray-900">Update Information</Text>
                                     <TouchableOpacity
                                         onPress={() => !updating && resetModalState()}
-                                        className="w-8 h-8 rounded-full bg-gray-100 items-center justify-center"
+                                        className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center"
                                     >
-                                        <Feather name="x" size={18} color="#4B5563" />
+                                        <Feather name="x" size={20} color="#4B5563" />
                                     </TouchableOpacity>
                                 </View>
 
                                 {/* Fullname */}
                                 {genericFields.slice(0, 1).map((field) => (
                                     <View key={field.key}>
-                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">
+                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">
                                             {field.label}
                                             {field.required && <Text className="text-red-500"> *</Text>}
                                         </Text>
@@ -433,27 +544,27 @@ export default function Profile() {
                                             }}
                                             placeholder={field.placeholder}
                                             placeholderTextColor="#9CA3AF"
-                                            className={`border rounded-xl px-3.5 py-3 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-200"
+                                            className={`border rounded-xl px-4 py-3 text-base text-gray-900 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-300"
                                                 }`}
                                         />
                                         {formErrors[field.key] && (
-                                            <Text className="text-red-500 text-xs mt-1">{formErrors[field.key]}</Text>
+                                            <Text className="text-red-600 text-sm mt-1">{formErrors[field.key]}</Text>
                                         )}
                                     </View>
                                 ))}
 
                                 {/* Contact Number — matches AddHousehold's +63 prefixed input */}
                                 <View>
-                                    <Text className="text-sm font-semibold mb-1.5 text-gray-700">
+                                    <Text className="text-base font-semibold mb-1.5 text-gray-800">
                                         Contact Number
                                         <Text className="text-red-500"> *</Text>
                                     </Text>
                                     <View
-                                        className={`flex-row items-center border rounded-xl overflow-hidden bg-gray-50 ${formErrors.contactNumber ? "border-red-500" : "border-gray-200"
+                                        className={`flex-row items-center border rounded-xl overflow-hidden bg-gray-50 ${formErrors.contactNumber ? "border-red-500" : "border-gray-300"
                                             }`}
                                     >
                                         <View className="bg-gray-100 px-3.5 py-3">
-                                            <Text className="text-gray-700 text-sm font-medium">🇵🇭 +63</Text>
+                                            <Text className="text-gray-800 text-base font-medium">🇵🇭 +63</Text>
                                         </View>
                                         <TextInput
                                             editable={!updating}
@@ -470,18 +581,18 @@ export default function Profile() {
                                             placeholderTextColor="#9CA3AF"
                                             keyboardType="phone-pad"
                                             maxLength={10}
-                                            className="flex-1 px-3.5 py-3"
+                                            className="flex-1 px-4 py-3 text-base text-gray-900"
                                         />
                                     </View>
                                     {formErrors.contactNumber && (
-                                        <Text className="text-red-500 text-xs mt-1">{formErrors.contactNumber}</Text>
+                                        <Text className="text-red-600 text-sm mt-1">{formErrors.contactNumber}</Text>
                                     )}
                                 </View>
 
                                 {/* Remaining generic fields */}
                                 {genericFields.slice(1).map((field) => (
                                     <View key={field.key}>
-                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">{field.label}</Text>
+                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">{field.label}</Text>
                                         <TextInput
                                             editable={!updating}
                                             value={form[field.key]}
@@ -495,28 +606,28 @@ export default function Profile() {
                                             placeholderTextColor="#9CA3AF"
                                             keyboardType={field.keyboard || "default"}
                                             autoCapitalize={field.key === "email" ? "none" : "sentences"}
-                                            className={`border rounded-xl px-3.5 py-3 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-200"
+                                            className={`border rounded-xl px-4 py-3 text-base text-gray-900 bg-gray-50 ${formErrors[field.key] ? "border-red-500" : "border-gray-300"
                                                 }`}
                                         />
                                         {formErrors[field.key] && (
-                                            <Text className="text-red-500 text-xs mt-1">{formErrors[field.key]}</Text>
+                                            <Text className="text-red-600 text-sm mt-1">{formErrors[field.key]}</Text>
                                         )}
                                     </View>
                                 ))}
 
                                 {/* Divider */}
-                                <View className="border-t border-gray-100 mt-2 pt-4">
-                                    <Text className="text-xs font-bold text-gray-500 mb-1 tracking-wide">
+                                <View className="border-t border-gray-200 mt-2 pt-4">
+                                    <Text className="text-sm font-bold text-gray-700 mb-1 tracking-wide">
                                         CHANGE PASSWORD
                                     </Text>
-                                    <Text className="text-xs text-gray-400 mb-3">
+                                    <Text className="text-sm text-gray-500 mb-3">
                                         Leave blank if you don't want to change your password.
                                     </Text>
 
                                     {/* Current Password */}
                                     <View className="mb-3">
-                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">Current Password</Text>
-                                        <View className="flex-row items-center border rounded-xl px-3.5 py-3 border-gray-200 bg-gray-50">
+                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">Current Password</Text>
+                                        <View className="flex-row items-center border rounded-xl px-4 py-3 border-gray-300 bg-gray-50">
                                             <TextInput
                                                 editable={!updating}
                                                 value={passwordForm.currentPassword}
@@ -524,18 +635,18 @@ export default function Profile() {
                                                 placeholder="Enter current password"
                                                 placeholderTextColor="#9CA3AF"
                                                 secureTextEntry={!showCurrentPassword}
-                                                className="flex-1"
+                                                className="flex-1 text-base text-gray-900"
                                             />
                                             <TouchableOpacity onPress={() => setShowCurrentPassword(!showCurrentPassword)}>
-                                                <Feather name={showCurrentPassword ? "eye-off" : "eye"} size={18} color="#9CA3AF" />
+                                                <Feather name={showCurrentPassword ? "eye-off" : "eye"} size={20} color="#6B7280" />
                                             </TouchableOpacity>
                                         </View>
                                     </View>
 
                                     {/* New Password */}
                                     <View className="mb-3">
-                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">New Password</Text>
-                                        <View className="flex-row items-center border rounded-xl px-3.5 py-3 border-gray-200 bg-gray-50">
+                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">New Password</Text>
+                                        <View className="flex-row items-center border rounded-xl px-4 py-3 border-gray-300 bg-gray-50">
                                             <TextInput
                                                 editable={!updating}
                                                 value={passwordForm.newPassword}
@@ -543,18 +654,18 @@ export default function Profile() {
                                                 placeholder="Enter new password"
                                                 placeholderTextColor="#9CA3AF"
                                                 secureTextEntry={!showNewPassword}
-                                                className="flex-1"
+                                                className="flex-1 text-base text-gray-900"
                                             />
                                             <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)}>
-                                                <Feather name={showNewPassword ? "eye-off" : "eye"} size={18} color="#9CA3AF" />
+                                                <Feather name={showNewPassword ? "eye-off" : "eye"} size={20} color="#6B7280" />
                                             </TouchableOpacity>
                                         </View>
                                     </View>
 
                                     {/* Confirm New Password */}
                                     <View className="mb-1">
-                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">Confirm New Password</Text>
-                                        <View className="flex-row items-center border rounded-xl px-3.5 py-3 border-gray-200 bg-gray-50">
+                                        <Text className="text-base font-semibold mb-1.5 text-gray-800">Confirm New Password</Text>
+                                        <View className="flex-row items-center border rounded-xl px-4 py-3 border-gray-300 bg-gray-50">
                                             <TextInput
                                                 editable={!updating}
                                                 value={passwordForm.confirmPassword}
@@ -562,10 +673,10 @@ export default function Profile() {
                                                 placeholder="Re-enter new password"
                                                 placeholderTextColor="#9CA3AF"
                                                 secureTextEntry={!showConfirmPassword}
-                                                className="flex-1"
+                                                className="flex-1 text-base text-gray-900"
                                             />
                                             <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
-                                                <Feather name={showConfirmPassword ? "eye-off" : "eye"} size={18} color="#9CA3AF" />
+                                                <Feather name={showConfirmPassword ? "eye-off" : "eye"} size={20} color="#6B7280" />
                                             </TouchableOpacity>
                                         </View>
                                     </View>
@@ -575,16 +686,16 @@ export default function Profile() {
                                     onPress={handleUpdate}
                                     disabled={updating}
                                     activeOpacity={0.85}
-                                    className="bg-green-600 py-3.5 rounded-xl items-center mt-2"
+                                    className="bg-green-600 py-4 rounded-xl items-center mt-2"
                                     style={{ opacity: updating ? 0.6 : 1 }}
                                 >
                                     {updating ? (
                                         <View className="flex-row items-center gap-2">
                                             <ActivityIndicator size="small" color="#fff" />
-                                            <Text className="text-white font-semibold ml-2">Updating...</Text>
+                                            <Text className="text-white text-base font-semibold ml-2">Updating...</Text>
                                         </View>
                                     ) : (
-                                        <Text className="text-white font-semibold">Save Changes</Text>
+                                        <Text className="text-white text-base font-semibold">Save Changes</Text>
                                     )}
                                 </TouchableOpacity>
 
@@ -594,7 +705,7 @@ export default function Profile() {
                                     activeOpacity={0.7}
                                     className="items-center py-1"
                                 >
-                                    <Text className="text-gray-500 text-sm font-medium">Cancel</Text>
+                                    <Text className="text-gray-600 text-base font-medium">Cancel</Text>
                                 </TouchableOpacity>
 
                             </View>

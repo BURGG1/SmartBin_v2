@@ -1,615 +1,386 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
-    View, Text, TouchableOpacity, FlatList, Alert,
-    ActivityIndicator, Modal, Image, Platform, TextInput,
+    View, Text, TouchableOpacity, ActivityIndicator, Alert, Image,
+    Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView, Keyboard,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, router } from "expo-router";
-import { CameraView, CameraType, useCameraPermissions } from "expo-camera";
-import * as ImagePicker from "expo-image-picker";
-import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { API_BASE } from "@/config";
-import Pagination from "@/components/UserPagination";
 
-const LOGS_LIMIT = 11;
+const REQUEST_TIMEOUT_MS = 20_000;
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface Bin {
-    id: string;
-    type?: string;
-    location?: string;
-    fill?: number;
-}
+interface Bin { id: string; type?: string; location?: string; }
 
-interface HouseholdRef {
-    _id: string;
-    fullname?: string;
-    contactNumber?: string;
-    email?: string;
-}
-
-interface RfidLogEntry {
-    _id: string;
-    rfid: string;
-    household: HouseholdRef | null;
-    binId: string | null;
-    action: string;
-    disposalOrder: number | null;
-    flagged?: boolean;
-    flaggedAt?: string | null;
-    evidencePhoto?: string | null;
+interface BagPreview {
+    logId: string;
+    stampNumber: string;
+    binId: string;
+    household: string | { _id?: string; id?: string } | null; // populated object or raw ObjectId string
+    householdId?: string;
     scannedAt: string;
-    note?: string | null;
+    flagged: boolean;
+    flaggedAt: string | null;
 }
 
-function toDateStr(d: string | Date) {
-    return new Date(d).toISOString().split("T")[0];
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
-export default function CounterInformationScreen() {
-    const { bin: binParam } = useLocalSearchParams<{ bin?: string }>();
-
-    let bin: Bin | null = null;
-    if (binParam) {
-        try { bin = JSON.parse(binParam) as Bin; }
-        catch { bin = null; }
+async function apiFetch(path: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS) {
+    const token = await AsyncStorage.getItem("token");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(`${API_BASE}${path}`, {
+            ...init,
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: controller.signal,
+        });
+        let body: any = null;
+        try { body = await res.json(); } catch { /* non-JSON response */ }
+        return { res, body };
+    } finally {
+        clearTimeout(timer);
     }
+}
 
-    const [logs, setLogs] = useState<RfidLogEntry[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState("");
-    const [flaggingId, setFlaggingId] = useState<string | null>(null);
+function describeError(status: number, body: any, fallback: string) {
+    if (status === 401) return "Session expired. Please log in again.";
+    return body?.message ?? fallback;
+}
 
-    // ── Search (disposal order) ───────────────────────────────────────────────
-    // Client-side only: filters the logs already loaded for the current page.
-    // Doesn't reach across pages — see note where it's applied below.
-    const [searchQuery, setSearchQuery] = useState("");
+function networkMessage(err: unknown) {
+    return err instanceof Error && err.name === "AbortError"
+        ? "The request timed out. Please try again."
+        : "Could not reach the server. Check your connection.";
+}
 
-    // ── Date filter state ─────────────────────────────────────────────────────
-    const [selectedDate, setSelectedDate] = useState<string | null>(null);
-    const [anchorDate, setAnchorDate] = useState<string | null>(null);
-    const [pickerVisible, setPickerVisible] = useState(false);
-    const logsAbortRef = useRef<AbortController | null>(null);
+function getHouseholdId(p: BagPreview) {
+    if (p.householdId) return String(p.householdId);
+    const h = p.household;
+    if (!h) return "Unknown";
+    return typeof h === "string" ? h : String(h._id ?? h.id ?? "Unknown");
+}
 
-    // ── Pagination state ──────────────────────────────────────────────────────
-    const [page, setPage] = useState(1);
-    const [total, setTotal] = useState(0);
+function toFilePart(uri: string) {
+    const filename = uri.split("/").pop() ?? "photo.jpg";
+    const ext = filename.split(".").pop()?.toLowerCase();
+    return {
+        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
+        name: filename,
+        type: ext === "png" ? "image/png" : "image/jpeg",
+    } as any;
+}
 
-    // ── Camera modal state ────────────────────────────────────────────────────
-    const [cameraVisible, setCameraVisible] = useState(false);
-    const [pendingLog, setPendingLog] = useState<RfidLogEntry | null>(null);
-    const [capturedUri, setCapturedUri] = useState<string | null>(null);
-    const [uploading, setUploading] = useState(false);
-    const [facing, setFacing] = useState<CameraType>("back");
+export default function TypeNumberScreen() {
+    const { bin: binParam } = useLocalSearchParams<{ bin?: string }>();
+    const bin = useMemo<Bin | null>(() => {
+        try { return binParam ? (JSON.parse(binParam) as Bin) : null; }
+        catch { return null; }
+    }, [binParam]);
+
     const [permission, requestPermission] = useCameraPermissions();
     const cameraRef = useRef<CameraView>(null);
 
-    useEffect(() => {
-        setPage(1);
-        setAnchorDate(null);
-    }, [selectedDate, bin?.id]);
+    const [busy, setBusy] = useState<"idle" | "reading" | "flagging">("idle");
+    const [value, setValue] = useState("");
+    const [error, setError] = useState("");
+    const [preview, setPreview] = useState<BagPreview | null>(null);
+    const [photoUri, setPhotoUri] = useState<string | null>(null);
 
-    // ── Fetch logs (paginated, scoped to a single day) ───────────────────────
-    const fetchLogs = useCallback(async () => {
-        if (!bin?.id) { setError("No bin selected."); setLoading(false); return; }
+    // Proof-photo flow (only used when flagging)
+    const [proofOpen, setProofOpen] = useState(false);
+    const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+    const [capturing, setCapturing] = useState(false);
 
-        logsAbortRef.current?.abort();
-        const controller = new AbortController();
-        logsAbortRef.current = controller;
-
-        setLoading(true);
+    const reset = useCallback(() => {
+        setValue("");
         setError("");
+        setPreview(null);
+        setPhotoUri(null);
+        setBusy("idle");
+        setProofOpen(false);
+        setPendingPhoto(null);
+        setCapturing(false);
+    }, []);
 
-        try {
-            let dateForQuery = selectedDate;
-
-            if (!dateForQuery) {
-                if (!anchorDate) {
-                    const peekParams = new URLSearchParams({
-                        binId: bin.id, action: "dispose", page: "1", limit: "1",
-                    });
-                    const peekRes = await fetch(`${API_BASE}/api/rfid/logs?${peekParams}`, {
-                        signal: controller.signal,
-                    });
-                    const peekData = await peekRes.json();
-                    const latest = peekData?.success && peekData.data?.length > 0 ? peekData.data[0] : null;
-
-                    if (logsAbortRef.current !== controller) return;
-
-                    if (!latest) {
-                        setLogs([]);
-                        setTotal(0);
-                        setLoading(false);
-                        return;
-                    }
-
-                    setAnchorDate(toDateStr(latest.scannedAt));
-                    return;
-                }
-                dateForQuery = anchorDate;
-            }
-
-            const params = new URLSearchParams({
-                binId: bin.id,
-                action: "dispose",
-                page: String(page),
-                limit: String(LOGS_LIMIT),
-                from: dateForQuery,
-                to: dateForQuery,
-            });
-
-            const res = await fetch(`${API_BASE}/api/rfid/logs?${params}`, {
-                signal: controller.signal,
-            });
-            if (!res.ok) throw new Error(`Server error (${res.status})`);
-            const data = await res.json();
-
-            if (logsAbortRef.current !== controller) return;
-
-            if (data.success) {
-                setLogs(data.data);
-                setTotal(data.total ?? data.pagination?.total ?? data.count ?? data.data.length);
-            } else {
-                setError(data.message || "Failed to load logs.");
-            }
-        } catch (err: any) {
-            if (err?.name !== "AbortError") setError("Network error. Could not load logs.");
-        } finally {
-            if (logsAbortRef.current === controller) setLoading(false);
-        }
-    }, [bin?.id, selectedDate, anchorDate, page]);
-
-    useEffect(() => { fetchLogs(); }, [fetchLogs]);
-
-    useEffect(() => () => { logsAbortRef.current?.abort(); }, []);
-
-    // ── Filtered view (search applies only to what's currently loaded) ──────
-    const visibleLogs = useMemo(() => {
-        const q = searchQuery.trim();
-        if (!q) return logs;
-        return logs.filter((log) => String(log.disposalOrder ?? "").includes(q));
-    }, [logs, searchQuery]);
-
-    // ── Date picker handlers ──────────────────────────────────────────────────
-    const onChangeDate = (event: DateTimePickerEvent, date?: Date) => {
-        if (Platform.OS === "android") setPickerVisible(false);
-        if (event.type === "dismissed" || !date) return;
-        setSelectedDate(toDateStr(date));
-    };
-
-    const clearDateFilter = () => setSelectedDate(null);
-
-    // ── Open camera modal ─────────────────────────────────────────────────────
-    const openFlagModal = async (log: RfidLogEntry) => {
-        if (log.flagged) {
-            await submitFlag(log, null, false);
+    // ── Lookup by typed number ───────────────────────────────────────────────
+    const handleLookup = async () => {
+        if (!bin?.id || busy !== "idle") return;
+        if (!/^\d{1,6}$/.test(value)) {
+            setError("Enter the number printed on the bag (up to 6 digits).");
+            setPreview(null);
             return;
         }
+        Keyboard.dismiss();
+        setError("");
+        setPreview(null);
+        setPhotoUri(null);
+        setBusy("reading");
+        try {
+            const { res, body } = await apiFetch(
+                `/api/rfid/stamp/${encodeURIComponent(bin.id)}/${value}`, { method: "GET" }
+            );
+            if (!res.ok || !body?.success) {
+                setError(describeError(res.status, body, "Trash bag record not found."));
+                return;
+            }
+            setPreview(body.data as BagPreview);
+        } catch (err) {
+            setError(networkMessage(err));
+        } finally {
+            setBusy("idle");
+        }
+    };
 
+    // ── Flag ─────────────────────────────────────────────────────────────────
+    const submitFlag = async (evidenceUri: string) => {
+        if (!preview || !bin?.id || busy !== "idle") return;
+        setBusy("flagging");
+        try {
+            const form = new FormData();
+            form.append("source", "mobile-manual");
+            form.append("evidencePhoto", toFilePart(evidenceUri));
+
+            const { res, body } = await apiFetch(
+                `/api/rfid/stamp/${encodeURIComponent(bin.id)}/${preview.stampNumber}/flag`,
+                { method: "PATCH", body: form },
+                30_000
+            );
+
+            if (res.status === 409) {
+                setPreview({ ...preview, flagged: true });
+                return;
+            }
+            if (!res.ok || !body?.success) {
+                Alert.alert("Could not flag", describeError(res.status, body, "Please try again."));
+                return;
+            }
+            Alert.alert(
+                "Household flagged",
+                `Household ${getHouseholdId(preview)} was flagged for bag #${preview.stampNumber}. The admin will review it.`,
+                [{ text: "Done", onPress: reset }]
+            );
+        } catch (err) {
+            Alert.alert("Error", networkMessage(err));
+        } finally {
+            setBusy("idle");
+        }
+    };
+
+    const openProofCamera = async () => {
         if (!permission?.granted) {
             const result = await requestPermission();
             if (!result.granted) {
-                Alert.alert("Permission required", "Camera access is needed to take evidence photos.");
+                Alert.alert("Camera needed", "Camera access is required to take a proof photo.");
                 return;
             }
         }
-
-        setPendingLog(log);
-        setCapturedUri(null);
-        setCameraVisible(true);
+        setPendingPhoto(null);
+        setProofOpen(true);
     };
 
-    // ── Take photo ────────────────────────────────────────────────────────────
-    const takePhoto = async () => {
-        if (!cameraRef.current) return;
-        try {
-            const photo = await cameraRef.current.takePictureAsync({ quality: 0.7, base64: false });
-            if (photo?.uri) setCapturedUri(photo.uri);
-        } catch {
-            Alert.alert("Error", "Failed to take photo. Please try again.");
+    const handleFlagPress = () => {
+        if (!preview || busy !== "idle") return;
+        if (photoUri) {
+            submitFlag(photoUri);
+            return;
         }
-    };
-
-    // ── Pick from gallery ─────────────────────────────────────────────────────
-    const pickFromGallery = async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            quality: 0.7,
-            allowsEditing: true,
-        });
-        if (!result.canceled && result.assets[0]?.uri) {
-            setCapturedUri(result.assets[0].uri);
-        }
-    };
-
-    // ── Submit flag with photo ────────────────────────────────────────────────
-    const submitFlag = async (
-        log: RfidLogEntry,
-        photoUri: string | null,
-        nextFlagged: boolean
-    ) => {
-        setFlaggingId(log._id);
-
-        setLogs((prev) =>
-            prev.map((l) => l._id === log._id ? { ...l, flagged: nextFlagged } : l)
+        Alert.alert(
+            "Take a photo first",
+            "Please take a clear photo of the bag as proof before flagging this household.",
+            [
+                { text: "Cancel", style: "cancel" },
+                { text: "Take photo", onPress: openProofCamera },
+            ]
         );
-        setCameraVisible(false);
-        setUploading(true);
+    };
 
+    const handleProofCapture = async () => {
+        if (!cameraRef.current || capturing) return;
+        setCapturing(true);
         try {
-            const formData = new FormData();
-            formData.append("flagged", String(nextFlagged));
-
-            if (photoUri && nextFlagged) {
-                const filename = photoUri.split("/").pop() ?? "evidence.jpg";
-                const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
-                const mimeType = ext === "png" ? "image/png" : "image/jpeg";
-
-                formData.append("evidencePhoto", {
-                    uri: Platform.OS === "android" ? photoUri : photoUri.replace("file://", ""),
-                    name: filename,
-                    type: mimeType,
-                } as any);
-            }
-
-            const res = await fetch(`${API_BASE}/api/rfid/logs/${log._id}/flag`, {
-                method: "PATCH",
-                body: formData,
-            });
-
-            if (!res.ok) throw new Error(`Server error (${res.status})`);
-            const data = await res.json();
-            if (!data.success) throw new Error(data.message || "Failed to update flag");
-
-            setLogs((prev) =>
-                prev.map((l) => l._id === log._id ? { ...l, ...data.data } : l)
-            );
-
-            if (nextFlagged) {
-                Alert.alert(
-                    "Household Flagged",
-                    `${log.household?.fullname ?? "This household"} has been flagged with evidence photo.`
-                );
-            }
+            const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+            if (photo?.uri) setPendingPhoto(photo.uri);
         } catch {
-            setLogs((prev) =>
-                prev.map((l) => l._id === log._id ? { ...l, flagged: log.flagged } : l)
-            );
-            Alert.alert("Error", "Could not update flag status. Please try again.");
+            Alert.alert("Error", "Could not take the photo. Try again.");
         } finally {
-            setFlaggingId(null);
-            setUploading(false);
-            setPendingLog(null);
-            setCapturedUri(null);
+            setCapturing(false);
         }
     };
 
-    // ── Render row ────────────────────────────────────────────────────────────
-    const renderItem = ({ item: log }: { item: RfidLogEntry }) => {
-        const scannedAt = new Date(log.scannedAt);
-        const date = scannedAt.toISOString().split("T")[0];
-        const time = scannedAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-        const hh = log.household;
-        const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "—";
-        const isFlagged = !!log.flagged;
-        const isBusy = flaggingId === log._id || uploading;
+    const handleUsePhoto = () => {
+        if (!pendingPhoto) return;
+        const uri = pendingPhoto;
+        setPhotoUri(uri);
+        setPendingPhoto(null);
+        setProofOpen(false);
+        submitFlag(uri);
+    };
 
+    // ── UI ───────────────────────────────────────────────────────────────────
+    const renderDetails = () => {
+        if (!preview) return null;
+        const when = new Date(preview.scannedAt);
+        const householdId = getHouseholdId(preview);
         return (
-            <View style={{
-                flexDirection: "row", alignItems: "center",
-                paddingHorizontal: 16, paddingVertical: 12,
-                borderBottomWidth: 1, borderBottomColor: "#F3F4F6",
-                backgroundColor: isFlagged ? "#FEF2F2" : "#FFFFFF",
-            }}>
-                <View style={{ width: 90 }}>
-                    <Text style={{ fontSize: 13, color: "#111827" }}>{date}</Text>
-                    <Text style={{ fontSize: 11, color: "#6B7280" }}>{time}</Text>
+            <View style={{ marginTop: 20 }}>
+                {photoUri && (
+                    <Image source={{ uri: photoUri }} style={{ width: "100%", height: 160, borderRadius: 12, marginBottom: 12 }} resizeMode="cover" />
+                )}
+                <View style={{ backgroundColor: "#F9FAFB", borderRadius: 12, padding: 16, gap: 10, borderWidth: 1, borderColor: "#E5E7EB" }}>
+                    <Row label="Stamp number" value={`#${preview.stampNumber}`} />
+                    <Row label="Household ID" value={householdId} />
+                    <Row label="Bin" value={preview.binId} />
+                    <Row label="Disposed" value={`${when.toLocaleDateString()} ${when.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`} />
                 </View>
 
-                <View style={{ flex: 1, paddingHorizontal: 8 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600", color: "#111827" }}>
-                        #{log.disposalOrder ?? "—"}
-                    </Text>
-                </View>
-
-                <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, color: "#1F2937" }}>{householdId}</Text>
-                    {log.evidencePhoto && (
-                        <Text style={{ fontSize: 10, color: "#16A34A", marginTop: 2 }}>
-                            Evidence attached
-                        </Text>
-                    )}
-                </View>
+                {preview.flagged ? (
+                    <View style={{ marginTop: 16, backgroundColor: "#FEF2F2", borderRadius: 10, padding: 12 }}>
+                        <Text style={{ color: "#B91C1C", textAlign: "center", fontWeight: "600" }}>This bag is already flagged.</Text>
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        onPress={handleFlagPress}
+                        disabled={busy !== "idle"}
+                        style={{ marginTop: 16, backgroundColor: "#DC2626", paddingVertical: 14, borderRadius: 10, alignItems: "center", opacity: busy !== "idle" ? 0.6 : 1 }}
+                    >
+                        {busy === "flagging"
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={{ color: "#fff", fontWeight: "700" }}>Flag violation</Text>}
+                    </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
-                    disabled={isBusy || isFlagged}
-                    onPress={() => openFlagModal(log)}
-                    style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                        borderWidth: 1,
-                        borderRadius: 8,
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderColor: "#DC2626",
-                        backgroundColor: isFlagged ? "#DC2626" : "#FFFFFF",
-                        opacity: isBusy || isFlagged ? 0.5 : 1,
-                    }}
+                    onPress={reset}
+                    disabled={busy === "flagging"}
+                    style={{ marginTop: 10, paddingVertical: 12, alignItems: "center", borderRadius: 10, borderWidth: 1, borderColor: "#D1D5DB" }}
                 >
-                    <Feather name="flag" size={16} color={isFlagged ? "#fff" : "#DC2626"} />
-                    <Text style={{
-                        fontSize: 12,
-                        fontWeight: "600",
-                        color: isFlagged ? "#FFFFFF" : "#DC2626",
-                    }}>
-                        {isFlagged ? "Flagged" : "Flag"}
-                    </Text>
+                    <Text style={{ color: "#374151", fontWeight: "600" }}>Search another</Text>
                 </TouchableOpacity>
             </View>
         );
     };
 
-    const displayedDateLabel = selectedDate ?? anchorDate ?? "Latest day";
-
-    // ── Render ────────────────────────────────────────────────────────────────
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: "#FFFFFF" }}>
-
-            {/* Header */}
-            <View style={{
-                flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-                paddingHorizontal: 16, paddingVertical: 12,
-                borderBottomWidth: 1, borderBottomColor: "#E5E7EB",
-            }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#E5E7EB" }}>
                 <TouchableOpacity onPress={() => router.back()}>
                     <Feather name="chevron-left" size={22} color="#4B5563" />
                 </TouchableOpacity>
-                <Text style={{ fontSize: 15, fontWeight: "600", color: "#4B5563" }}>
-                    Counter Information
-                </Text>
+                <Text style={{ fontSize: 15, fontWeight: "600", color: "#4B5563" }}>Find Trash Bag</Text>
                 <View style={{ width: 22 }} />
             </View>
 
-            {/* Bin Info */}
-            <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 }}>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
                 <Text style={{ fontSize: 15, fontWeight: "700", color: "#111827" }}>
                     {bin?.id ?? "—"}{" "}
-                    <Text style={{ fontWeight: "400", color: "#374151" }}>
-                        — {bin?.type ?? bin?.location ?? ""}
-                    </Text>
+                    <Text style={{ fontWeight: "400", color: "#374151" }}>- {bin?.type ?? bin?.location ?? ""}</Text>
                 </Text>
             </View>
 
-            {/* Search bar */}
-            <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
-                <View style={{
-                    flexDirection: "row", alignItems: "center", gap: 8,
-                    borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 8,
-                    paddingHorizontal: 10, paddingVertical: 8,
-                }}>
-                    <Feather name="search" size={16} color="#9CA3AF" />
-                    <TextInput
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        placeholder="Search disposal order (e.g. 3)"
-                        placeholderTextColor="#9CA3AF"
-                        keyboardType="number-pad"
-                        style={{ flex: 1, fontSize: 13, color: "#111827", padding: 0 }}
-                    />
-                    {searchQuery.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchQuery("")}>
-                            <Feather name="x" size={16} color="#9CA3AF" />
-                        </TouchableOpacity>
-                    )}
-                </View>
-            </View>
-
-            {/* Date filter row */}
-            <View style={{
-                flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-                paddingHorizontal: 16, paddingBottom: 10,
-            }}>
-                <TouchableOpacity
-                    onPress={() => setPickerVisible(true)}
-                    style={{
-                        flexDirection: "row", alignItems: "center", gap: 6,
-                        borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 8,
-                        paddingHorizontal: 10, paddingVertical: 6,
-                    }}
+            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+                <ScrollView
+                    contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+                    keyboardShouldPersistTaps="handled"
                 >
-                    <Feather name="calendar" size={14} color="#4B5563" />
-                    <Text style={{ fontSize: 12, color: "#374151" }}>
-                        {displayedDateLabel}
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: "#111827", marginBottom: 4 }}>Type the stamp number</Text>
+                    <Text style={{ color: "#6B7280", fontSize: 12, marginBottom: 12 }}>
+                        Enter the number printed on the trash bag.
                     </Text>
-                </TouchableOpacity>
 
-                {selectedDate && (
-                    <TouchableOpacity onPress={clearDateFilter}>
-                        <Text style={{ fontSize: 13, color: "#DC2626", fontWeight: "600" }}>
-                            Clear
-                        </Text>
+                    <TextInput
+                        value={value}
+                        onChangeText={(t) => {
+                            setValue(t.replace(/\D/g, "").slice(0, 6));
+                            if (error) setError("");
+                            if (preview) { setPreview(null); setPhotoUri(null); }
+                        }}
+                        keyboardType="number-pad"
+                        maxLength={6}
+                        autoFocus
+                        selectionColor="#16A34A"
+                        returnKeyType="search"
+                        onSubmitEditing={handleLookup}
+                        textAlign="center"
+                        textAlignVertical="center"
+                        style={{ height: 56, borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 8, paddingVertical: 0, paddingHorizontal: 12, fontSize: 20, letterSpacing: 4, textAlign: "center", color: "#111827" }}
+                    />
+                    {!!error && <Text style={{ color: "#DC2626", marginTop: 8, fontSize: 12 }}>{error}</Text>}
+
+                    <TouchableOpacity
+                        onPress={handleLookup}
+                        disabled={busy !== "idle" || value.length === 0}
+                        style={{ marginTop: 14, paddingVertical: 14, borderRadius: 10, backgroundColor: "#16A34A", alignItems: "center", opacity: busy !== "idle" || value.length === 0 ? 0.6 : 1 }}
+                    >
+                        {busy === "reading"
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={{ fontWeight: "700", color: "#fff" }}>Find</Text>}
                     </TouchableOpacity>
-                )}
-            </View>
 
-            {pickerVisible && (
-                <DateTimePicker
-                    value={selectedDate ? new Date(selectedDate) : new Date()}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "inline" : "default"}
-                    maximumDate={new Date()}
-                    onChange={onChangeDate}
-                />
-            )}
+                    {renderDetails()}
+                </ScrollView>
+            </KeyboardAvoidingView>
 
-            {/* Table header */}
-            <View style={{
-                flexDirection: "row", alignItems: "center",
-                paddingHorizontal: 16, paddingVertical: 8,
-                backgroundColor: "#abf7ce",
-                borderBottomWidth: 1, borderBottomColor: "#E5E7EB",
-            }}>
-                <View style={{ width: 90 }}>
-                    <Text style={{ fontSize: 11, fontWeight: "600", color: "#6B7280", textTransform: "uppercase" }}>Date</Text>
-                </View>
-                <View style={{ flex: 1, paddingHorizontal: 8 }}>
-                    <Text style={{ fontSize: 11, fontWeight: "600", color: "#6B7280", textTransform: "uppercase" }}>Order</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 11, fontWeight: "600", color: "#6B7280", textTransform: "uppercase" }}>Household</Text>
-                </View>
-                <View style={{ width: 92, alignItems: "center" }}>
-                    <Text style={{ fontSize: 11, fontWeight: "600", color: "#6B7280", textTransform: "uppercase" }}>Action</Text>
-                </View>
-            </View>
-
-            {/* List */}
-            <View style={{ flex: 1 }}>
-                {loading ? (
-                    <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-                        <ActivityIndicator color="#16A34A" />
-                    </View>
-                ) : error ? (
-                    <Text style={{ textAlign: "center", color: "#EF4444", paddingVertical: 24 }}>{error}</Text>
-                ) : (
-                    <FlatList
-                        data={visibleLogs}
-                        keyExtractor={(item) => String(item._id)}
-                        renderItem={renderItem}
-                        ListEmptyComponent={
-                            <Text style={{ textAlign: "center", color: "#6B7280", paddingVertical: 24 }}>
-                                {searchQuery
-                                    ? `No results for order "${searchQuery}" on this page.`
-                                    : `No records found${selectedDate ? " for this date." : " for this bin."}`}
-                            </Text>
-                        }
-                        contentContainerStyle={{ paddingBottom: 24 }}
-                    />
-                )}
-            </View>
-
-            {/* Pagination — fixed below the list so it doesn't scroll away */}
-            {!loading && !error && logs.length > 0 && (
-                <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-                    <Pagination
-                        currentPage={page}
-                        totalItems={total}
-                        itemsPerPage={LOGS_LIMIT}
-                        onPageChange={setPage}
-                    />
-                </View>
-            )}
-
-            {/* ── Camera / Evidence Modal ───────────────────────────────────── */}
-            <Modal
-                visible={cameraVisible}
-                animationType="slide"
-                onRequestClose={() => { if (!uploading) { setCameraVisible(false); setPendingLog(null); setCapturedUri(null); } }}
-            >
+            {/* Proof photo (camera + review), shown only when flagging */}
+            <Modal visible={proofOpen} animationType="slide" onRequestClose={() => { setProofOpen(false); setPendingPhoto(null); }}>
                 <SafeAreaView style={{ flex: 1, backgroundColor: "#000" }}>
-
-                    <View style={{
-                        flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-                        paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#111827",
-                    }}>
-                        <TouchableOpacity
-                            onPress={() => { setCameraVisible(false); setPendingLog(null); setCapturedUri(null); }}
-                            disabled={uploading}
-                        >
-                            <Feather name="x" size={22} color="#fff" />
-                        </TouchableOpacity>
-                        <Text style={{ color: "#fff", fontWeight: "600", fontSize: 15 }}>
-                            Take Evidence Photo
-                        </Text>
-                        <TouchableOpacity onPress={() => setFacing(f => f === "back" ? "front" : "back")}>
-                            <Feather name="refresh-cw" size={20} color="#fff" />
-                        </TouchableOpacity>
-                    </View>
-
-                    {capturedUri ? (
-                        <View style={{ flex: 1 }}>
-                            <Image
-                                source={{ uri: capturedUri }}
-                                style={{ flex: 1 }}
-                                resizeMode="contain"
-                            />
-                            <View style={{
-                                flexDirection: "row", gap: 12,
-                                padding: 16, backgroundColor: "#111827",
-                            }}>
-                                <TouchableOpacity
-                                    onPress={() => setCapturedUri(null)}
-                                    disabled={uploading}
-                                    style={{
-                                        flex: 1, paddingVertical: 12, borderRadius: 10,
-                                        borderWidth: 1, borderColor: "#fff",
-                                        alignItems: "center",
-                                        opacity: uploading ? 0.5 : 1,
-                                    }}
-                                >
-                                    <Text style={{ color: "#fff", fontWeight: "600" }}>Retake</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    onPress={() => pendingLog && submitFlag(pendingLog, capturedUri, true)}
-                                    disabled={uploading}
-                                    style={{
-                                        flex: 1, paddingVertical: 12, borderRadius: 10,
-                                        backgroundColor: "#DC2626",
-                                        alignItems: "center",
-                                        opacity: uploading ? 0.6 : 1,
-                                    }}
-                                >
-                                    {uploading ? (
-                                        <ActivityIndicator size="small" color="#fff" />
-                                    ) : (
-                                        <Text style={{ color: "#fff", fontWeight: "600" }}>
-                                            Submit Flag
-                                        </Text>
-                                    )}
-                                </TouchableOpacity>
+                    {pendingPhoto ? (
+                        <View style={{ flex: 1, backgroundColor: "#000" }}>
+                            <Image source={{ uri: pendingPhoto }} style={{ flex: 1 }} resizeMode="contain" />
+                            <View style={{ padding: 16, backgroundColor: "#111827" }}>
+                                <Text style={{ color: "#fff", textAlign: "center", marginBottom: 12 }}>
+                                    Is the bag clearly visible?
+                                </Text>
+                                <View style={{ flexDirection: "row", gap: 10 }}>
+                                    <TouchableOpacity
+                                        onPress={() => setPendingPhoto(null)}
+                                        style={{ flex: 1, paddingVertical: 14, borderRadius: 10, borderWidth: 1, borderColor: "#9CA3AF", alignItems: "center" }}
+                                    >
+                                        <Text style={{ color: "#fff", fontWeight: "600" }}>Retake</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPress={handleUsePhoto}
+                                        style={{ flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: "#DC2626", alignItems: "center" }}
+                                    >
+                                        <Text style={{ color: "#fff", fontWeight: "700" }}>Use photo & flag</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
                         </View>
                     ) : (
                         <View style={{ flex: 1 }}>
-                            <CameraView
-                                ref={cameraRef}
-                                style={{ flex: 1 }}
-                                facing={facing}
-                            />
-                            <View style={{
-                                flexDirection: "row", alignItems: "center", justifyContent: "space-around",
-                                padding: 24, backgroundColor: "#111827",
-                            }}>
-                                <TouchableOpacity onPress={pickFromGallery}>
-                                    <Feather name="image" size={28} color="#fff" />
+                            <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back" />
+                            <View pointerEvents="none" style={{ position: "absolute", top: 12, left: 0, right: 0, alignItems: "center" }}>
+                                <Text style={{ color: "#fff", backgroundColor: "rgba(0,0,0,0.5)", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, fontSize: 13 }}>
+                                    Take a clear photo of the bag
+                                </Text>
+                            </View>
+                            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-around", padding: 20, backgroundColor: "#111827" }}>
+                                <TouchableOpacity onPress={() => setProofOpen(false)} style={{ width: 70, alignItems: "center" }}>
+                                    <Text style={{ color: "#fff" }}>Cancel</Text>
                                 </TouchableOpacity>
-
                                 <TouchableOpacity
-                                    onPress={takePhoto}
-                                    style={{
-                                        width: 70, height: 70, borderRadius: 35,
-                                        backgroundColor: "#fff",
-                                        borderWidth: 4, borderColor: "#DC2626",
-                                        alignItems: "center", justifyContent: "center",
-                                    }}
+                                    onPress={handleProofCapture}
+                                    disabled={capturing}
+                                    style={{ width: 70, height: 70, borderRadius: 35, backgroundColor: "#fff", borderWidth: 4, borderColor: "#DC2626", alignItems: "center", justifyContent: "center", opacity: capturing ? 0.6 : 1 }}
                                 >
-                                    <View style={{
-                                        width: 56, height: 56, borderRadius: 28,
-                                        backgroundColor: "#DC2626",
-                                    }} />
+                                    <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: "#DC2626" }} />
                                 </TouchableOpacity>
-
-                                <View style={{ width: 28 }} />
+                                <View style={{ width: 70 }} />
                             </View>
                         </View>
                     )}
                 </SafeAreaView>
             </Modal>
-
         </SafeAreaView>
+    );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+    return (
+        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+            <Text style={{ color: "#6B7280", fontSize: 13 }}>{label}</Text>
+            <Text style={{ color: "#111827", fontSize: 14, fontWeight: "600", flexShrink: 1, textAlign: "right" }}>{value}</Text>
+        </View>
     );
 }

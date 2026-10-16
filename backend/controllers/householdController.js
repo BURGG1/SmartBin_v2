@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Household = require("../models/Household");
 const RfidLog = require("../models/RfidLog");
 const PointLog = require("../models/PointLog");
@@ -624,7 +625,8 @@ const getViolationLogs = async (req, res) => {
     const { page = 1, limit = 10, from, to } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const query = { household: req.params.id };
+    // Cleared (settled) violations are hidden from the log
+    const query = { household: req.params.id, cleared: { $ne: true } };
     if (from || to) {
       query.createdAt = {};
       if (from) {
@@ -663,12 +665,52 @@ const getViolationLogs = async (req, res) => {
   }
 };
 
+// PATCH /api/households/:id/violations/:violationId/clear
+// body: { receiptNumber }
+// Marks one violation as settled (receipt as proof) and subtracts it from
+// the household's violation count.
+const clearViolation = async (req, res) => {
+  try {
+    const { id, violationId } = req.params;
+    const receiptNumber = String(req.body.receiptNumber ?? "").trim();
+
+    if (!mongoose.isValidObjectId(id) || !mongoose.isValidObjectId(violationId)) {
+      return res.status(400).json({ success: false, message: "Invalid id." });
+    }
+    if (!/^[A-Za-z0-9-]{3,}$/.test(receiptNumber)) {
+      return res.status(400).json({ success: false, message: "Invalid receipt number." });
+    }
+
+    // Mark it cleared, only if it belongs to this household and isn't cleared yet
+    const log = await ViolationLog.findOneAndUpdate(
+      { _id: violationId, household: id, cleared: { $ne: true } },
+      { $set: { cleared: true, receiptNumber, clearedAt: new Date(), clearedBy: req.user?.name ?? "Admin" } },
+      { new: true }
+    );
+    if (!log) {
+      return res.status(409).json({ success: false, message: "Violation not found or already cleared." });
+    }
+
+    // Subtract it from the household's count (never below 0)
+    const household = await Household.findOneAndUpdate(
+      { _id: id, violation: { $gt: 0 } },
+      { $inc: { violation: -1 } },
+      { new: true }
+    );
+
+    res.json({ success: true, data: household });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllHouseholds,
   getHouseholdById,
   createHousehold,
   penalizeHousehold,
   getViolationLogs,
+  clearViolation,
   getLeaderboard,
   updateHousehold,
   deleteHousehold,

@@ -15,6 +15,12 @@ const violationLogSchema = new mongoose.Schema(
     communityService: { type: String, default: null },  // null or "15 Days Community Service"
     note: { type: String, default: null },              // optional admin note
     issuedBy: { type: String, default: "System" },      // admin name or "System"
+
+    // ── Clear violation (settled with a receipt) ──
+    cleared: { type: Boolean, default: false },
+    receiptNumber: { type: String, default: null },
+    clearedAt: { type: Date, default: null },
+    clearedBy: { type: String, default: null },
   },
   { timestamps: true }
 );

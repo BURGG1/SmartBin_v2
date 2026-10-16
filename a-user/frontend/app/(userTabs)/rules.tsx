@@ -1,108 +1,109 @@
-import { useState, useEffect } from "react";
-import { View, Text, FlatList, ScrollView, Image, TextInput, TouchableOpacity, Linking, ActivityIndicator } from "react-native";
-import { Feather } from "@expo/vector-icons"; // Expo Icons
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+    View, Text, ScrollView,
+    TextInput, TouchableOpacity, Linking, ActivityIndicator, RefreshControl,
+} from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { API_BASE } from "@/config"; // Import the API_BASE constant
+import { useFocusEffect } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { getRules } from "../../api/rulesAPI"; // API function to fetch rules
+import { API_BASE } from "@/config";
+import { getRules } from "../../api/rulesAPI";
+import { useHousehold, fetchHousehold } from "../store/householdStore";
 import Pagination from "../../components/UserPagination";
-
-// household info
-const household = {
-    id: "HH-202610001",
-    name: "Joel Dela Cruz",
-    address: "123 Green Street, Barangay Sunshine, Metro City",
-    contact: "+63 917 123 4567",
-    members: 5,
-    registeredSince: "January 15, 2026",
-    totalDisposals: 48,
-    compliance: "Excellent",
-    points: {
-        total: 1240,
-        thisMonth: 280,
-    },
-};
-
-// Penalty Data
-const penaltiesData = {
-    note:
-        "Repeated violations may result in additional penalties and suspension of waste disposal privileges.",
-    records: [
-        {
-            reason:
-                "Improper waste segregation (mixed biodegradable with non-biodegradable)",
-            date: "2026-01-15",
-            points: -500,
-            law: "RA 9003 Section 48",
-        },
-    ],
-};
-
-// recent activity
-const recentActivityData = [
-    { type: "Earned points", via: "Rule 1. Return of recyclable material", amount: "2kg", date: "2026-01-24", points: 30 },
-    { type: "Redeemed Reward", via: "Vitamins/Medicine", amount: "1pc", date: "2026-01-23", points: -500 },
-    { type: "Earned points", via: "Rule 2. 10-days Streak", date: "2026-01-22", points: 30 },
-    { type: "Earned points", via: "Rule 1. Return of recyclable material", amount: "3kg", date: "2026-01-22", points: 45 },
-];
-
-type Rule = {
-    _id: string;
-    name: string;
-    decs?: string;
-    freq?: string;
-    points?: number;
-    image?: string;
-    [key: string]: any;
-};
+import RuleDetails, { Rule, RuleCard, matchesRuleSearch } from "../../components/RuleDetails";
+import PenaltyBanner, { ViolationLog } from "../../components/PenaltyBanner";
 
 const RULES_PER_PAGE = 4;
+// Penalties only show for 24h, so one page of the newest violations is plenty
+const VIOLATION_FETCH_LIMIT = 50;
 
 export default function Rules() {
+    const household = useHousehold();
+
+    const [refreshing, setRefreshing] = useState(false);
     const [search, setSearch] = useState("");
 
-    // ---- Rules now come from the database ----
+    // ── Rules (same as Home) ─────────────────────────────────────────────────
     const [rules, setRules] = useState<Rule[]>([]);
     const [rulesLoading, setRulesLoading] = useState(true);
     const [rulesError, setRulesError] = useState("");
     const [rulesPage, setRulesPage] = useState(1);
+    const [selected, setSelected] = useState<{ rule: Rule; number: number } | null>(null);
 
-    const fetchRules = async () => {
+    // ── Violations (feeds the 24h penalty banner) ────────────────────────────
+    const [violations, setViolations] = useState<ViolationLog[]>([]);
+    const violationAbortRef = useRef<AbortController | null>(null);
+
+    // ── Fetch rules ──────────────────────────────────────────────────────────
+    const fetchRules = useCallback(async () => {
         try {
             setRulesLoading(true);
             const data = await getRules();
-            // Handle all possible response shapes
-            if (Array.isArray(data)) {
-                setRules(data);
-            } else if (Array.isArray(data?.data)) {
-                setRules(data.data);
-            } else {
-                setRules([]); // fallback to empty array
-            }
-        } catch (err) {
-            console.error(err);
+            const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+            setRules(list);
+            setRulesError("");
+        } catch {
             setRules([]);
             setRulesError("Failed to load rules. Please try again later.");
         } finally {
             setRulesLoading(false);
         }
-    };
+    }, []);
 
+    // ── Fetch violations ─────────────────────────────────────────────────────
+    const fetchViolations = useCallback(async () => {
+        if (!household?._id) return;
+
+        violationAbortRef.current?.abort();
+        const controller = new AbortController();
+        violationAbortRef.current = controller;
+
+        try {
+            const token = await AsyncStorage.getItem("token");
+            const params = new URLSearchParams({ page: "1", limit: String(VIOLATION_FETCH_LIMIT) });
+            const res = await fetch(`${API_BASE}/api/households/${household._id}/violations?${params}`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                signal: controller.signal,
+            });
+            const data = await res.json();
+            if (data.success) setViolations(Array.isArray(data.data) ? data.data : []);
+        } catch (err: any) {
+            // On failure the banner simply stays hidden
+            if (err?.name !== "AbortError") console.warn("Failed to load violations:", err);
+        }
+    }, [household?._id]);
+
+    // ── Initial load ─────────────────────────────────────────────────────────
     useEffect(() => {
+        if (!household) fetchHousehold();
         fetchRules();
     }, []);
 
-    const filteredRules = rules.filter((r) =>
-        r.name.toLowerCase().includes(search.toLowerCase())
+    // Re-check violations whenever the tab is focused so new penalties appear right away
+    useFocusEffect(
+        useCallback(() => {
+            fetchViolations();
+        }, [fetchViolations])
     );
 
-    
-    // Reset to page 1 whenever the search term changes
-    useEffect(() => {
-        setRulesPage(1);
-    }, [search]);
+    useEffect(() => () => violationAbortRef.current?.abort(), []);
 
-    // Clamp pages if the underlying data shrinks (e.g. a refetch returns fewer rows)
+    // ── Rules helpers ────────────────────────────────────────────────────────
+    // Rule numbers come from the full list so they stay stable while searching
+    const numberedRules = useMemo(
+        () => rules.map((rule, i) => ({ rule, number: i + 1 })),
+        [rules]
+    );
+
+    const filteredRules = useMemo(
+        () => numberedRules.filter(({ rule, number }) => matchesRuleSearch(rule, number, search)),
+        [numberedRules, search]
+    );
+
+    useEffect(() => { setRulesPage(1); }, [search]);
+
     useEffect(() => {
         const totalPages = Math.max(1, Math.ceil(filteredRules.length / RULES_PER_PAGE));
         if (rulesPage > totalPages) setRulesPage(totalPages);
@@ -112,202 +113,103 @@ export default function Rules() {
         (rulesPage - 1) * RULES_PER_PAGE,
         rulesPage * RULES_PER_PAGE
     );
-    const rulesFillerCount = Math.max(0, RULES_PER_PAGE - paginatedRules.length);
-    
-    type RuleItem = Rule & {
-        __filler?: boolean;
-    };
-    
-    const rulesForDisplay: RuleItem[] = [
-        ...paginatedRules,
-        ...Array.from({ length: rulesFillerCount }, (_, i) => ({
-            _id: `__filler-${i}`,
-            name: "",
-            __filler: true,
-        })),
-    ];
+
+    // ── Pull-to-refresh ──────────────────────────────────────────────────────
+    const handleRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try {
+            await Promise.all([fetchHousehold(), fetchRules(), fetchViolations()]);
+        } finally {
+            setRefreshing(false);
+        }
+    }, [fetchRules, fetchViolations]);
 
     return (
-        <SafeAreaView className="flex-1">
-
-            <ScrollView className="flex-1 px-4 py-2 ">
+        <SafeAreaView className="flex-1 bg-gray-50">
+            <ScrollView
+                className="flex-1 px-4 py-2"
+                contentContainerStyle={{ paddingBottom: 24 }}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={handleRefresh}
+                        colors={["#16A34A"]}
+                        tintColor="#16A34A"
+                    />
+                }
+            >
                 {/* Header */}
-                <View>
-                    <Text className="text-3xl font-bold">Rules & Penalties</Text>
-                    <Text className="text-gray-500 mb-6">Rules aligned with RA 9003</Text>
+                <View className="mb-6">
+                    <Text className="text-3xl font-extrabold text-gray-900 tracking-tight">Rules & Penalties</Text>
+                    <Text className="text-base text-gray-600 mt-1 leading-6">Rules aligned with RA 9003</Text>
                 </View>
 
-
-                {/* Penalties & Deductions */}
-                <View className="flex flex-col gap-2 bg-red-50 border border-red-200 shadow-lg rounded-xl p-6 space-y-4 mb-5">
-                    <View>
-                        <Text className="text-lg font-semibold text-red-700">Penalties & Deductions</Text>
-                        <Text className="text-sm text-red-600 mt-1">
-                            Based on Republic Act No. 9003 - Ecological Solid Waste Management Act
-                        </Text>
-                    </View>
-
-                    {penaltiesData.records.map((item, index) => (
-                        <View
-                            key={index}
-                            className="bg-white border border-red-200 rounded-lg p-4 flex-col justify-between items-center"
-                        >
-                            <View>
-                                <Text className="font-medium">{item.reason}</Text>
-                                <Text className="text-xs text-gray-500">{item.date}</Text>
-                            </View>
-                            <View className="">
-                                <Text className="text-red-600 font-semibold">{item.points} pts</Text>
-                                <Text className="text-xs text-gray-400">{item.law}</Text>
-                            </View>
-                        </View>
-                    ))}
-
-                    <View className="bg-white border border-red-300 rounded-lg p-3 text-sm">
-                        <Text className="text-red-600">
-                            <Text className="font-bold">Note: </Text>
-                            {penaltiesData.note}
-                        </Text>
-                    </View>
-                </View>
+                {/* Penalties & Deductions — visible for 24h after being issued, then hidden */}
+                <PenaltyBanner records={violations} />
 
 
-
-                {/* RA 9003 */}
-                <View className="bg-white rounded-xl p-6 shadow">
-
-                    <View className="flex flex-col sm:flex-row sm:justify-between gap-4 mt-5">
-                        <View className="flex-row items-start gap-4">
-
-                            <View>
-                                <Text className="text-xl font-bold text-gray-800">
-                                    Republic Act No. 9003
-                                </Text>
-                                <Text className="text-green-700 text-sm">
-                                    Ecological Solid Waste Management Act of 2000
-                                </Text>
-                            </View>
-                        </View>
-                        <View className="flex-row items-center bg-green-100 px-3 py-1 rounded-full gap-1 self-start">
-                            <Text className="text-green-700 text-xs font-medium">Philippine Law</Text>
-                        </View>
-                    </View>
-
-                    <View className="bg-green-100/60 border border-green-200 rounded-xl p-4 mt-5">
-                        <Text className="text-sm text-gray-700 text-justify">
-                            The Ecological Solid Waste Management Act of 2000, officially known as Republic Act No. 9003,
-                            is a Philippine environmental law enacted to establish a comprehensive and sustainable system
-                            for managing solid waste nationwide.
-                            <Text className="font-semibold">
-                                It promotes waste reduction, mandatory segregation at source, recycling, composting,
-                                and the closure of open dumpsites, while requiring local government units to take primary
-                                responsibility for implementation under the supervision of the Department of Environment
-                                and Natural Resources.
-                            </Text>
-                            The law aims to protect public health and the environment by shifting the country from improper
-                            disposal practices to an ecological and community-based waste management approach.
-                        </Text>
-                    </View>
-
-                </View>
-                <TouchableOpacity
-                    onPress={() => Linking.openURL("https://www.officialgazette.gov.ph/2001/01/26/republic-act-no-9003/")}
-                    className="flex-row items-center gap-2 mb-10"
-                >
-                    <Text className="text-green-600 font-medium">See full text of RA 9003</Text>
-                </TouchableOpacity>
-
-
-
-                {/* Rules Section */}
-                <View className="bg-white rounded-xl p-6 shadow">
-                    <View className="flex-col justify-between items-center mb-4 gap-2">
+                {/* HOW TO EARN POINTS (same as Home) */}
+                <View className="bg-white rounded-2xl p-5 shadow mt-5 border border-gray-100">
+                    <View className="flex-col items-center mb-4 gap-3">
                         <View className="flex-row items-center gap-2">
-                            <Feather name="clipboard" size={18} color="#16A34A" />
-                            <Text className="text-lg font-semibold">How to Earn Points</Text>
+                            <Feather name="clipboard" size={20} color="#16A34A" />
+                            <Text className="text-xl font-bold text-gray-900">Task to Earn Points</Text>
                         </View>
-                        <View className="relative flex-row items-center">
-                            <Feather name="search" size={18} color="gray" className="absolute left-2" />
+                        <View className="flex-row items-center border border-gray-300 bg-gray-50 rounded-xl px-3 w-full">
+                            <Feather name="search" size={18} color="#6B7280" />
                             <TextInput
-                                className="pl-8 pr-4 py-2 border rounded-lg w-64 focus:ring-2 focus:ring-green-500"
-                                placeholder="Search reward"
+                                className="flex-1 py-3 pl-2 text-base text-gray-900"
+                                placeholder="Search name, rule no., or points"
+                                placeholderTextColor="#9CA3AF"
                                 value={search}
                                 onChangeText={setSearch}
+                                returnKeyType="search"
+                                autoCorrect={false}
                             />
+                            {!!search && (
+                                <TouchableOpacity
+                                    onPress={() => setSearch("")}
+                                    accessibilityLabel="Clear search"
+                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                    <Feather name="x-circle" size={18} color="#9CA3AF" />
+                                </TouchableOpacity>
+                            )}
                         </View>
+                        {!!search.trim() && !rulesLoading && (
+                            <Text className="text-sm text-gray-500 self-start">
+                                {filteredRules.length} {filteredRules.length === 1 ? "rule" : "rules"} found
+                            </Text>
+                        )}
                     </View>
 
                     {rulesLoading && (
                         <View className="items-center py-6">
                             <ActivityIndicator color="#16A34A" />
-                            <Text className="text-gray-500 mt-2">Loading rules...</Text>
+                            <Text className="text-gray-600 mt-2 text-base">Loading rules...</Text>
+                        </View>
+                    )}
+                    {!!rulesError && <Text className="text-red-600 text-base mb-2">{rulesError}</Text>}
+
+                    {!rulesLoading && !rulesError && filteredRules.length === 0 && (
+                        <View className="items-center py-6">
+                            <Feather name="search" size={28} color="#9CA3AF" />
+                            <Text className="text-gray-600 text-base text-center mt-2">No rules found.</Text>
                         </View>
                     )}
 
-                    {!!rulesError && (
-                        <Text className="text-red-500 mb-2">{rulesError}</Text>
-                    )}
-
-                    {/* RULEES------------ */}
-                    <FlatList
-                        data={rulesForDisplay}
-                        keyExtractor={(item) => item._id}
-                        numColumns={2}
-                        scrollEnabled={false}
-                        columnWrapperStyle={{ gap: 10 }}
-                        contentContainerStyle={{ gap: 10 }}
-                        ListEmptyComponent={
-                            !rulesLoading && !rulesError ? (
-                                <Text className="text-gray-500 text-center py-6 w-full">
-                                    No rules found.
-                                </Text>
-                            ) : null
-                        }
-                        renderItem={({ item: r, index }) => (
-                            r.__filler ? (
-                                <View className="flex-1 h-56" style={{ opacity: 0 }} />
-                            ) : (
-                                <View className="flex-1 bg-gray-50 rounded-xl shadow-lg overflow-hidden">
-
-                                    {r.image ? (
-                                        <Image
-                                            source={{ uri: r.image }}
-                                            className="w-full h-40"
-                                            resizeMode="cover"
-                                        />
-                                    ) : (
-                                        <View className="w-full h-40 bg-gray-200 items-center justify-center">
-                                            <Text className="text-gray-400">No image</Text>
-                                        </View>
-                                    )}
-
-                                    <View className="p-3 gap-1">
-                                        <Text className="text-sm font-bold">
-                                            Rule {(rulesPage - 1) * RULES_PER_PAGE + index + 1}
-                                        </Text>
-
-                                        <Text className="text-xs text-gray-500">
-                                            {r.name}
-                                        </Text>
-
-                                        <Text className="text-xs text-gray-400">
-                                            {r.decs}
-                                        </Text>
-
-                                        <Text className="text-xs text-gray-400">
-                                            {r.freq}
-                                        </Text>
-                                    </View>
-
-                                    <View className="absolute top-2 right-2 bg-white rounded-lg p-1 shadow-md">
-                                        <Text className="text-green-500 font-bold text-sm text-center">
-                                            +{r.points}
-                                        </Text>
-                                    </View>
-                                </View>
-                            )
-                        )}
-                    />
+                    <View className="gap-3">
+                        {paginatedRules.map(({ rule, number }) => (
+                            <RuleCard
+                                key={rule._id}
+                                rule={rule}
+                                ruleNumber={number}
+                                onPress={() => setSelected({ rule, number })}
+                            />
+                        ))}
+                    </View>
 
                     {!rulesLoading && !rulesError && (
                         <Pagination
@@ -318,10 +220,64 @@ export default function Rules() {
                         />
                     )}
                 </View>
-
-
+                 {/* RA 9003 */}
+                <View className="bg-white rounded-2xl p-5 mt-5 shadow border border-gray-100">
+                    <View className="flex-col gap-3">
+                        <View>
+                            <Text className="text-xl font-bold text-gray-900">
+                                Republic Act No. 9003
+                            </Text>
+                            <Text className="text-green-700 text-base font-medium mt-0.5">
+                                Ecological Solid Waste Management Act of 2000
+                            </Text>
+                        </View>
+                        <View className="bg-green-100 px-3 py-1 rounded-full self-start">
+                            <Text className="text-green-800 text-sm font-semibold">Philippine Law</Text>
+                        </View>
+                    </View>
+                    <View className="bg-green-50 border border-green-200 rounded-xl p-4 mt-4">
+                        <Text className="text-base text-gray-800 leading-6">
+                            The Ecological Solid Waste Management Act of 2000, officially known as
+                            Republic Act No. 9003, is a Philippine environmental law enacted to
+                            establish a comprehensive and sustainable system for managing solid waste
+                            nationwide.{" "}
+                            <Text className="font-semibold text-gray-900">
+                                It promotes waste reduction, mandatory segregation at source,
+                                recycling, composting, and the closure of open dumpsites, while
+                                requiring local government units to take primary responsibility for
+                                implementation under the supervision of the Department of Environment
+                                and Natural Resources.
+                            </Text>{" "}
+                            The law aims to protect public health and the environment by shifting the
+                            country from improper disposal practices to an ecological and
+                            community-based waste management approach.
+                        </Text>
+                    </View>
+                    <TouchableOpacity
+                        onPress={() =>
+                            Linking.openURL(
+                                "https://www.officialgazette.gov.ph/2001/01/26/republic-act-no-9003/"
+                            )
+                        }
+                        className="flex-row items-center gap-2 mt-4"
+                    >
+                        <Feather name="external-link" size={16} color="#15803D" />
+                        <Text className="text-green-700 text-base font-semibold underline">
+                            See full text of RA 9003
+                        </Text>
+                    </TouchableOpacity>
+                </View>
             </ScrollView>
-        </SafeAreaView>
 
+            {/* Rule details page */}
+            <RuleDetails
+                visible={!!selected}
+                rule={selected?.rule ?? null}
+                ruleNumber={selected?.number ?? 0}
+                onClose={() => setSelected(null)}
+            />
+
+            
+        </SafeAreaView>
     );
 }

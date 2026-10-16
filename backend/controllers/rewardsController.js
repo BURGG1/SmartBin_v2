@@ -95,21 +95,41 @@ const redeemReward = async (req, res) => {
   }
 };
 
-// GET /api/rewards/logs?page=1&limit=10
+// GET /api/rewards/logs?page=1&limit=10&search=
 const getRewardLogs = async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, search } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // ── Search by household name or household ID ("HH-XXXXXXXX") ──
+    const query = {};
+    const term = typeof search === "string" ? search.trim() : "";
+    if (term) {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const idPart = term.replace(/^HH-?/i, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const or = [{ fullname: { $regex: escaped, $options: "i" } }];
+      if (idPart) {
+        or.push({
+          $expr: {
+            $regexMatch: { input: { $toString: "$_id" }, regex: idPart, options: "i" },
+          },
+        });
+      }
+
+      const matched = await Household.find({ $or: or }).select("_id").lean();
+      query.household = { $in: matched.map((h) => h._id) };
+    }
+
     const [logs, total] = await Promise.all([
-      RewardLog.find()
+      RewardLog.find(query)
         .populate("household", "fullname _id")
         .populate("reward", "name")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
-      RewardLog.countDocuments(),
+      RewardLog.countDocuments(query),
     ]);
 
     res.json({
@@ -124,6 +144,8 @@ const getRewardLogs = async (req, res) => {
         householdName: log.household?.fullname ?? "—",
         stockUpdate:   -1,
         pointsSpent:   log.pointsSpent,
+        redeemed:      !!log.redeemed,
+        receiptNumber: log.receiptNumber ?? null,
       })),
       pagination: {
         total,
@@ -137,4 +159,36 @@ const getRewardLogs = async (req, res) => {
   }
 };
 
-module.exports = { getAllRewards, redeemReward, getRewardLogs };
+// PATCH /api/rewards/logs/:logId/redeem
+// body: { receiptNumber }
+// Confirms (with a receipt number) that the household claimed this redemption.
+// Does NOT touch points or stock — redeemReward already did that.
+const redeemRewardLog = async (req, res) => {
+  try {
+    const { logId } = req.params;
+    const receiptNumber = String(req.body.receiptNumber ?? "").trim();
+
+    if (!mongoose.isValidObjectId(logId)) {
+      return res.status(400).json({ success: false, message: "Invalid log id." });
+    }
+    if (!/^[A-Za-z0-9-]{3,}$/.test(receiptNumber)) {
+      return res.status(400).json({ success: false, message: "Invalid receipt number." });
+    }
+
+    // Only succeeds if this log hasn't been redeemed yet
+    const log = await RewardLog.findOneAndUpdate(
+      { _id: logId, redeemed: { $ne: true } },
+      { $set: { redeemed: true, receiptNumber, redeemedAt: new Date(), redeemedBy: req.user?.name ?? "Admin" } },
+      { new: true }
+    );
+    if (!log) {
+      return res.status(409).json({ success: false, message: "Log not found or already redeemed." });
+    }
+
+    res.json({ success: true, data: log });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { getAllRewards, redeemReward, getRewardLogs, redeemRewardLog };

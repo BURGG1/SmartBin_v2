@@ -2,12 +2,14 @@ import { X, Calendar, Clipboard, Trash2, Award } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ShieldAlert } from "lucide-react";
 import AssignPointsModal from "./AssignPointsModal";
+import ClearViolationModal from "./ClearViolation";
 import Pagination from "./Pagination";
 import BASE_URL from "../config";
 
 const DISPOSAL_LIMIT = 5;
 const ACTIVITY_LIMIT = 5;
 const VIOLATION_LIMIT = 5;
+
 
 function computeAge(birthday) {
     if (!birthday) return null;
@@ -62,6 +64,12 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     const [violationPage, setViolationPage] = useState(1);
     const [violationTotal, setViolationTotal] = useState(0);
     const violationAbortRef = useRef(null);
+
+    // Clear violation flow: which violation the admin picked, and the ids
+    // already cleared this session (so their button stays disabled even if a
+    // stale refetch briefly still returns them).
+    const [clearTarget, setClearTarget] = useState(null);
+    const [clearedIds, setClearedIds] = useState(() => new Set());
 
     const fetchHousehold = useCallback(async () => {
         if (!householdProp?._id) return;
@@ -315,6 +323,8 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         setFromDate("");
         setToDate("");
         setOpenPointsModal(false);
+        setClearTarget(null);
+        setClearedIds(new Set());
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, householdProp?._id]);
 
@@ -340,6 +350,30 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         await fetchActivityLogs(1);
     }, [fetchHousehold, fetchActivityLogs]);
 
+    // ── Called after a violation has been settled (receipt accepted) ─────────
+    // 1. Remove the chosen violation from the log right away.
+    // 2. Subtract it from the household's violation count so the header
+    //    shows the accurate offense number.
+    // 3. Remember its id so its button stays disabled.
+    // 4. Re-sync with the server (household + current page of the log).
+    const handleViolationCleared = useCallback(async (clearedViolation) => {
+        const clearedId = clearedViolation._id;
+
+        setClearedIds((prev) => new Set(prev).add(clearedId));
+        setViolationLogs((prev) => prev.filter((v) => v._id !== clearedId));
+        setViolationTotal((prev) => Math.max(0, prev - 1));
+        setHousehold((prev) =>
+            prev ? { ...prev, violation: Math.max(0, (prev.violation ?? 0) - 1) } : prev
+        );
+
+        // If that was the last row on a page past the first, step back a page.
+        const nextPage =
+            violationLogs.length === 1 && violationPage > 1 ? violationPage - 1 : violationPage;
+
+        await fetchHousehold();
+        await fetchViolationLogs(nextPage);
+    }, [fetchHousehold, fetchViolationLogs, violationLogs.length, violationPage]);
+
     if (!isOpen || !household) return null;
 
     const fullname = household.fullname || "—";
@@ -355,9 +389,9 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     const violation = household.violation ?? 0;
     const suffix = ["st", "nd", "rd"];
 
-    // Whether the user has picked an explicit filter; when they haven't,
-    // each tab is silently scoped to its own latest date instead.
-    const hasExplicitFilter = !!(fromDate || toDate);
+    // "Clear violation" is available whenever the household has at least
+    // one violation on record; it's disabled only when there are none.
+    const canClearViolation = violation > 0;
 
     // Only pad each tab's table to a fixed height once that tab actually
     // spans more than one page — a single page just renders at its
@@ -643,25 +677,49 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                                 <th>Fine</th>
                                                 <th>Community Service</th>
                                                 <th>Issued By</th>
+                                                <th>Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="text-center">
                                             {violationLogs.length === 0 ? (
                                                 <tr>
-                                                    <td colSpan="7" className="py-6 text-gray-500">No violations on record</td>
+                                                    <td colSpan="8" className="py-6 text-gray-500">No violations on record</td>
                                                 </tr>
                                             ) : (
-                                                violationLogs.map((log) => (
-                                                    <tr key={log._id}>
-                                                        <td className="py-3">{new Date(log.createdAt).toLocaleDateString("en-CA")}</td>
-                                                        <td className="font-semibold text-red-600">#{log.offenseNumber}</td>
-                                                        <td>{log.penaltyType}</td>
-                                                        <td>{log.pointsDeducted > 0 ? `-${log.pointsDeducted}` : "—"}</td>
-                                                        <td>{log.fineAmount > 0 ? `₱${log.fineAmount}` : "—"}</td>
-                                                        <td>{log.communityService ?? "—"}</td>
-                                                        <td>{log.issuedBy}</td>
-                                                    </tr>
-                                                ))
+                                                violationLogs.map((log) => {
+                                                    // Disabled unless the household has 2+ violations,
+                                                    // and permanently disabled for a violation that
+                                                    // has already been cleared.
+                                                    const alreadyCleared = clearedIds.has(log._id);
+                                                    const clearDisabled = !canClearViolation || alreadyCleared;
+                                                    return (
+                                                        <tr key={log._id}>
+                                                            <td className="py-3">{new Date(log.createdAt).toLocaleDateString("en-CA")}</td>
+                                                            <td className="font-semibold text-red-600">#{log.offenseNumber}</td>
+                                                            <td>{log.penaltyType}</td>
+                                                            <td>{log.pointsDeducted > 0 ? `-${log.pointsDeducted}` : "—"}</td>
+                                                            <td>{log.fineAmount > 0 ? `₱${log.fineAmount}` : "—"}</td>
+                                                            <td>{log.communityService ?? "—"}</td>
+                                                            <td>{log.issuedBy}</td>
+                                                            <td>
+                                                                <button
+                                                                    onClick={() => setClearTarget(log)}
+                                                                    disabled={clearDisabled}
+                                                                    title={
+                                                                        alreadyCleared
+                                                                            ? "This violation has already been cleared"
+                                                                            : !canClearViolation
+                                                                                ? "No violations to clear"
+                                                                                : "Clear this violation"
+                                                                    }
+                                                                    className="px-3 py-1 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700 cursor-pointer disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                                                                >
+                                                                    Clear violation
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })
                                             )}
                                             {/* Pad remaining slots so table height stays constant at
                                                 VIOLATION_LIMIT rows, but only once there's more than
@@ -670,7 +728,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                             {violationLogs.length > 0 &&
                                                 Array.from({ length: violationEmptyRows }).map((_, i) => (
                                                     <tr key={`v-empty-${i}`} aria-hidden="true">
-                                                        <td className="py-3" colSpan="7">&nbsp;</td>
+                                                        <td className="py-3" colSpan="8">&nbsp;</td>
                                                     </tr>
                                                 ))}
                                         </tbody>
@@ -696,6 +754,15 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                 onClose={() => setOpenPointsModal(false)}
                 household={household}
                 onAwarded={handlePointsAwarded}
+            />
+
+            {/* Receipt validation before a violation is cleared */}
+            <ClearViolationModal
+                isOpen={!!clearTarget}
+                onClose={() => setClearTarget(null)}
+                household={household}
+                violationRecord={clearTarget}
+                onCleared={handleViolationCleared}
             />
         </>
     );

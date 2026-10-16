@@ -235,7 +235,7 @@ const getRfidLogs = async (req, res) => {
 
         const [logs, total] = await Promise.all([
             RfidLog.find(query)
-                .populate("household", "fullname address contactNumber email")
+                .populate("household", "fullname address contactNumber email violation")
                 .sort({ scannedAt: -1 })
                 .skip(skip)
                 .limit(parseInt(limit)),
@@ -266,7 +266,7 @@ const getRfidHistory = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.params.rfid);
         const logs = await RfidLog.find({ rfid })
-            .populate("household", "fullname address contactNumber email")
+            .populate("household", "fullname address contactNumber email violation")
             .sort({ scannedAt: -1 });
 
         return res.json({ success: true, data: logs });

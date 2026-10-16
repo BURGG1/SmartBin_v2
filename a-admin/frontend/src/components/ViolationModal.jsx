@@ -35,8 +35,12 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
     // setActiveHH(log)) — its `.household` field is the populated
     // Household sub-document, and `_id`/`evidencePhoto` live on the log
     // itself, not nested.
-    const currentViolation = household?.household?.violation ?? household?.violation ?? 0;
-    const nextOffense = currentViolation >= 3 ? 1 : currentViolation + 1;
+    const currentViolation =
+    household?.household?.violation ??
+    household?.violation ??
+    0;
+
+    const nextOffense = Math.min(currentViolation + 1, 3);
     const penalty = PENALTY_CONFIG[nextOffense];
     const evidenceImage = household?.evidencePhoto ?? null;
     const logId = household?._id; // the id of the disposal log (NOT the household)
@@ -173,15 +177,19 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                             </div>
 
                             {/* Offense level */}
+                            
                             <div className="bg-blue-50 p-4 rounded-lg border">
                                 <p className="font-semibold">Offense Level: {nextOffense}</p>
                                 <p className="text-sm text-gray-600">
                                     Current violations: {currentViolation} — this will be offense #{nextOffense}
                                     {currentViolation >= 3 && (
-                                        <span className="ml-1 text-orange-600 font-medium">(reset from 3rd offense)</span>
+                                        <span className="ml-1 text-orange-600 font-medium">
+                                            (maximum offense level reached)
+                                        </span>
                                     )}
                                 </p>
                             </div>
+
 
                             {/* Penalty */}
                             <div className="bg-red-100 p-4 rounded-lg border border-red-200">

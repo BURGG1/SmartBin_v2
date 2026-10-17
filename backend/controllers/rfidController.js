@@ -34,8 +34,8 @@ async function logScan({
 // 1. BIN SCAN
 // POST /api/rfid/bin-scan
 //
-// Offline bins are allowed to scan RFID cards.
-// Only bins that do not exist or are explicitly deactivated are rejected.
+// Allows scanning even when a bin is offline or isActive === false.
+// Only an active, registered household RFID is authorized.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const binScan = async (req, res) => {
@@ -57,7 +57,8 @@ const binScan = async (req, res) => {
             });
         }
 
-        // Find the bin regardless of its online/offline status.
+        // Find the bin without filtering by status or isActive.
+        // Offline or deactivated status must not block RFID authorization.
         const bin = await Bin.findOne({ binId }).lean();
 
         if (!bin) {
@@ -67,38 +68,28 @@ const binScan = async (req, res) => {
             });
         }
 
-        // Reject only bins explicitly deactivated by an administrator.
-        // Do not reject a bin merely because status === "offline".
-        if (bin.isActive === false) {
-            return res.status(403).json({
-                success: false,
-                message: `Bin ${binId} is deactivated.`,
-            });
-        }
-
-        // Find the registered household.
+        // The RFID must belong to an active, registered household.
         const household = await Household.findOne({
             rfid,
             isActive: true,
         });
 
-        // Unregistered RFID: deny access and record the scan.
         if (!household) {
             await logScan({
                 rfid,
                 binId,
                 action: "scan",
-                note: `Unregistered RFID scanned at ${binId} — access denied`,
+                note: `Unregistered or inactive RFID scanned at ${binId} — access denied`,
             });
 
             return res.status(404).json({
                 success: false,
-                message: "RFID not registered.",
+                message: "RFID not registered or inactive.",
                 rfid,
             });
         }
 
-        // Registered RFID: calculate the next disposal order.
+        // Calculate the next disposal order.
         const existingCount = await RfidLog.countDocuments({
             binId,
             action: "dispose",
@@ -106,8 +97,8 @@ const binScan = async (req, res) => {
 
         const disposalOrder = existingCount + 1;
 
-        // Update coordinates only when both are provided.
-        // Do not change the bin's online/offline status here.
+        // Update GPS coordinates only when both values are supplied.
+        // This does not change bin status or isActive.
         if (
             lat !== undefined &&
             lat !== null &&
@@ -125,7 +116,7 @@ const binScan = async (req, res) => {
             );
         }
 
-        // Record the successful disposal.
+        // Log the authorized disposal.
         await logScan({
             rfid,
             householdId: household._id,

@@ -43,10 +43,34 @@ const binScan = async (req, res) => {
         }
 
         // Verify bin exists
-        const bin = await Bin.findOne({ binId, isActive: true });
-        if (!bin) {
-            return res.status(404).json({ success: false, message: `Bin ${binId} not found.` });
-        }
+        
+const bin = await Bin.findOne({ binId, isActive: true });
+
+console.log("[BIN_SCAN_DEBUG]", {
+    requestedBinId: binId,
+    found: !!bin,
+    foundBinId: bin?.binId ?? null,
+    isActive: bin?.isActive ?? null,
+    database: Bin.db.name,
+    readyState: Bin.db.readyState
+});
+
+if (!bin) {
+    const anyBin = await Bin.findOne({ binId }).lean();
+
+    console.log("[BIN_SCAN_DEBUG] Inactive or missing:", {
+        requestedBinId: binId,
+        existsWithoutActiveFilter: !!anyBin,
+        storedBinId: anyBin?.binId ?? null,
+        storedIsActive: anyBin?.isActive ?? null
+    });
+
+    return res.status(404).json({
+        success: false,
+        message: `Bin ${binId} not found.`
+    });
+}
+
 
         // Look up household
         const household = await Household.findOne({ rfid, isActive: true });

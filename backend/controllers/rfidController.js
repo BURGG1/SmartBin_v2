@@ -1,6 +1,7 @@
-const Household      = require("../models/Household");
-const RfidLog        = require("../models/RfidLog");
-const Bin            = require("../models/Bin");
+
+const Household = require("../models/Household");
+const RfidLog = require("../models/RfidLog");
+const Bin = require("../models/Bin");
 const Collector = require("../models/Collector");
 const { cloudinary } = require("../middleware/upload");
 const { createNotification } = require("./notificationController");
@@ -11,10 +12,17 @@ const { extractStampCandidates } = require("../utils/stampOCR");
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function logScan({ rfid, householdId = null, binId = null, action, note, disposalOrder = null }) {
+async function logScan({
+    rfid,
+    householdId = null,
+    binId = null,
+    action,
+    note,
+    disposalOrder = null,
+}) {
     return RfidLog.create({
         rfid,
-        household:    householdId,
+        household: householdId,
         binId,
         action,
         note,
@@ -24,122 +32,162 @@ async function logScan({ rfid, householdId = null, binId = null, action, note, d
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. BIN SCAN
-//    POST /api/rfid/bin-scan  (also aliased to /scan and /scan-bin)
-//    Called by ESP32 when a card is tapped at a physical bin.
-//    Registered   → opens bin, logs disposal with disposal order
-//    Unregistered → denies access, logs scan
+// POST /api/rfid/bin-scan
+//
+// Allows scanning even when a bin is offline or isActive === false.
+// Only an active, registered household RFID is authorized.
 // ─────────────────────────────────────────────────────────────────────────────
+
 const binScan = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.body.rfid);
         const { binId, lat, lng } = req.body;
 
-        // Validate
         if (!rfid) {
-            return res.status(400).json({ success: false, message: "rfid is required." });
+            return res.status(400).json({
+                success: false,
+                message: "rfid is required.",
+            });
         }
+
         if (!binId) {
-            return res.status(400).json({ success: false, message: "binId is required." });
+            return res.status(400).json({
+                success: false,
+                message: "binId is required.",
+            });
         }
 
-        // Verify bin exists
-        const bin = await Bin.findOne({ binId, isActive: true });
+        // Find the bin without filtering by status or isActive.
+        // Offline or deactivated status must not block RFID authorization.
+        const bin = await Bin.findOne({ binId }).lean();
+
         if (!bin) {
-            return res.status(404).json({ success: false, message: `Bin ${binId} not found.` });
+            return res.status(404).json({
+                success: false,
+                message: `Bin ${binId} not found.`,
+            });
         }
 
-        // Look up household
-        const household = await Household.findOne({ rfid, isActive: true });
+        // The RFID must belong to an active, registered household.
+        const household = await Household.findOne({
+            rfid,
+            isActive: true,
+        });
 
-        // Unregistered card — deny access
         if (!household) {
             await logScan({
                 rfid,
                 binId,
                 action: "scan",
-                note:   `Unregistered RFID scanned at ${binId} — access denied`,
+                note: `Unregistered or inactive RFID scanned at ${binId} — access denied`,
             });
 
             return res.status(404).json({
                 success: false,
-                message: "RFID not registered.",
+                message: "RFID not registered or inactive.",
                 rfid,
             });
         }
 
-        // Registered — compute disposal order for this bin
-        const existingCount = await RfidLog.countDocuments({ binId, action: "dispose" });
+        // Calculate the next disposal order.
+        const existingCount = await RfidLog.countDocuments({
+            binId,
+            action: "dispose",
+        });
+
         const disposalOrder = existingCount + 1;
 
-        // Save GPS coords to bin if provided
-        if (lat && lng) {
-            await Bin.findOneAndUpdate({ binId }, { lat, lng });
+        // Update GPS coordinates only when both values are supplied.
+        // This does not change bin status or isActive.
+        if (
+            lat !== undefined &&
+            lat !== null &&
+            lng !== undefined &&
+            lng !== null
+        ) {
+            await Bin.findOneAndUpdate(
+                { binId },
+                {
+                    $set: {
+                        lat,
+                        lng,
+                    },
+                }
+            );
         }
 
+        // Log the authorized disposal.
         await logScan({
             rfid,
-            householdId:  household._id,
+            householdId: household._id,
             binId,
-            action:       "dispose",
+            action: "dispose",
             disposalOrder,
-            note:         `${household.fullname} tapped at ${binId} (${bin.type})`,
+            note: `${household.fullname} tapped at ${binId} (${bin.type})`,
         });
 
         return res.json({
             success: true,
             message: "Access granted. Bin opening.",
             data: {
-                household:    household.fullname,
+                household: household.fullname,
                 binId,
-                binType:      bin.type,
+                binType: bin.type,
                 disposalOrder,
-                scannedAt:    new Date(),
+                scannedAt: new Date(),
             },
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[binScan]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. WEB SCAN
-//    POST /api/rfid/web-scan
-//    Called by the web dashboard admin desk reader.
-//    Registered   → returns household info
-//    Unregistered → returns RFID for pre-filling registration form
+// POST /api/rfid/web-scan
 // ─────────────────────────────────────────────────────────────────────────────
+
 const webScan = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.body.rfid);
 
         if (!rfid) {
-            return res.status(400).json({ success: false, message: "rfid is required." });
+            return res.status(400).json({
+                success: false,
+                message: "rfid is required.",
+            });
         }
 
-        const household = await Household.findOne({ rfid, isActive: true });
+        const household = await Household.findOne({
+            rfid,
+            isActive: true,
+        });
 
-        // Unregistered — log and return RFID for form pre-fill
         if (!household) {
             await logScan({
                 rfid,
                 action: "scan",
-                note:   "Unregistered RFID scanned at web desk — pending registration",
+                note: "Unregistered RFID scanned at web desk — pending registration",
             });
 
             return res.status(404).json({
-                success:     false,
-                message:     "RFID not registered.",
+                success: false,
+                message: "RFID not registered.",
                 rfid,
                 canRegister: true,
             });
         }
 
-        // Registered — log and return household info
         await logScan({
             rfid,
             householdId: household._id,
-            action:      "scan",
-            note:        "Web desk scan — already registered",
+            action: "scan",
+            note: "Web desk scan — already registered",
         });
 
         return res.json({
@@ -147,329 +195,509 @@ const webScan = async (req, res) => {
             message: "RFID already registered.",
             data: {
                 household: {
-                    id:            household._id,
-                    fullname:      household.fullname,
-                    address:       household.address,
+                    id: household._id,
+                    fullname: household.fullname,
+                    address: household.address,
                     contactNumber: household.contactNumber,
-                    email:         household.email,
-                    rfid:          household.rfid,
+                    email: household.email,
+                    rfid: household.rfid,
                 },
             },
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[webScan]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. LATEST SCAN
-//    GET /api/rfid/latest-scan
-//    Web dashboard polls this to auto-fill the RFID field during registration.
-//    Only returns scans from the last 5 seconds that are unregistered.
+// GET /api/rfid/latest-scan
 // ─────────────────────────────────────────────────────────────────────────────
+
 const getLatestScan = async (req, res) => {
     try {
         const latest = await RfidLog.findOne({
-            action:    "scan",
+            action: "scan",
             household: null,
         }).sort({ scannedAt: -1 });
 
         if (!latest) {
-            return res.json({ success: false, message: "No pending scan." });
+            return res.json({
+                success: false,
+                message: "No pending scan.",
+            });
         }
 
         const fiveSecondsAgo = new Date(Date.now() - 5000);
+
         if (latest.scannedAt < fiveSecondsAgo) {
-            return res.json({ success: false, message: "No recent scan." });
+            return res.json({
+                success: false,
+                message: "No recent scan.",
+            });
         }
 
-        return res.json({ success: true, rfid: latest.rfid });
+        return res.json({
+            success: true,
+            rfid: latest.rfid,
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[getLatestScan]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. CHECK RFID AVAILABILITY
-//    GET /api/rfid/check/:rfid
-//    Used during registration to check if an RFID is already taken.
+// GET /api/rfid/check/:rfid
 // ─────────────────────────────────────────────────────────────────────────────
+
 const checkRfid = async (req, res) => {
     try {
-        const rfid     = normalizeRfid(req.params.rfid);
+        const rfid = normalizeRfid(req.params.rfid);
         const existing = await Household.findOne({ rfid });
 
         if (existing) {
             return res.json({
-                success:   true,
+                success: true,
                 available: false,
-                message:   `RFID is already assigned to ${existing.fullname}`,
+                message: `RFID is already assigned to ${existing.fullname}`,
             });
         }
 
         return res.json({
-            success:   true,
+            success: true,
             available: true,
-            message:   "RFID is available.",
+            message: "RFID is available.",
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[checkRfid]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. ALL RFID LOGS
-//    GET /api/rfid/logs
-//    Paginated, filterable by rfid, action, binId.
+// GET /api/rfid/logs
 // ─────────────────────────────────────────────────────────────────────────────
+
 const getRfidLogs = async (req, res) => {
     try {
-        const { rfid, action, binId, page = 1, limit = 20 } = req.query;
+        const {
+            rfid,
+            action,
+            binId,
+            page = 1,
+            limit = 20,
+        } = req.query;
 
         const query = {};
-        if (rfid)   query.rfid   = normalizeRfid(rfid);
-        if (action) query.action = action;
-        if (binId)  query.binId  = binId;
 
-        const skip = (parseInt(page) - 1) * parseInt(limit);
+        if (rfid) query.rfid = normalizeRfid(rfid);
+        if (action) query.action = action;
+        if (binId) query.binId = binId;
+
+        const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+        const parsedLimit = Math.max(1, parseInt(limit, 10) || 20);
+        const skip = (parsedPage - 1) * parsedLimit;
 
         const [logs, total] = await Promise.all([
             RfidLog.find(query)
-                .populate("household", "fullname address contactNumber email violation")
+                .populate(
+                    "household",
+                    "fullname address contactNumber email violation"
+                )
                 .sort({ scannedAt: -1 })
                 .skip(skip)
-                .limit(parseInt(limit)),
+                .limit(parsedLimit),
+
             RfidLog.countDocuments(query),
         ]);
 
         return res.json({
             success: true,
-            data:    logs,
+            data: logs,
             pagination: {
                 total,
-                page:       parseInt(page),
-                limit:      parseInt(limit),
-                totalPages: Math.ceil(total / parseInt(limit)),
+                page: parsedPage,
+                limit: parsedLimit,
+                totalPages: Math.ceil(total / parsedLimit),
             },
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[getRfidLogs]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. RFID HISTORY FOR ONE CARD
-//    GET /api/rfid/logs/:rfid
-//    Full scan history for a specific RFID card.
+// GET /api/rfid/logs/:rfid
 // ─────────────────────────────────────────────────────────────────────────────
+
 const getRfidHistory = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.params.rfid);
+
         const logs = await RfidLog.find({ rfid })
-            .populate("household", "fullname address contactNumber email violation")
+            .populate(
+                "household",
+                "fullname address contactNumber email violation"
+            )
             .sort({ scannedAt: -1 });
 
-        return res.json({ success: true, data: logs });
+        return res.json({
+            success: true,
+            data: logs,
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[getRfidHistory]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. FLAG A LOG ENTRY
-//    PATCH /api/rfid/logs/:id/flag
-//    Flags or unflags a disposal log with an optional Cloudinary evidence photo.
+// PATCH /api/rfid/logs/:id/flag
 // ─────────────────────────────────────────────────────────────────────────────
+
 const flagLog = async (req, res) => {
     try {
         const { flagged } = req.body;
         const log = await RfidLog.findById(req.params.id);
 
         if (!log) {
-            return res.status(404).json({ success: false, message: "Log not found." });
+            return res.status(404).json({
+                success: false,
+                message: "Log not found.",
+            });
         }
 
-        log.flagged   = flagged === "true" || flagged === true;
+        log.flagged = flagged === "true" || flagged === true;
         log.flaggedAt = log.flagged ? new Date() : null;
 
         if (log.flagged && req.file) {
-            // Delete old evidence photo from Cloudinary if it exists
             if (log.evidencePhoto) {
-                try {
-                    const publicId = log.evidencePhoto
-                        .split("/").slice(-2).join("/").split(".")[0];
-                    await cloudinary.uploader.destroy(publicId);
-                } catch (err) {
-                    console.warn("[Cloudinary] Failed to delete old evidence:", err.message);
-                }
+                await destroyEvidence(log.evidencePhoto);
             }
-            // Save new Cloudinary URL
+
             log.evidencePhoto = req.file.path;
         }
 
-        // Clear evidence photo when unflagging
         if (!log.flagged && log.evidencePhoto) {
-            try {
-                const publicId = log.evidencePhoto
-                    .split("/").slice(-2).join("/").split(".")[0];
-                await cloudinary.uploader.destroy(publicId);
-            } catch (err) {
-                console.warn("[Cloudinary] Failed to delete evidence on unflag:", err.message);
-            }
+            await destroyEvidence(log.evidencePhoto);
             log.evidencePhoto = null;
         }
 
         await log.save();
-        return res.json({ success: true, data: log });
+
+        return res.json({
+            success: true,
+            data: log,
+        });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("[flagLog]", error);
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. STAMP SCAN / FLAG  (collector mobile app)
+// 8. STAMP SCAN / FLAG — COLLECTOR MOBILE APP
 // ─────────────────────────────────────────────────────────────────────────────
+
 const STAMP_RE = /^\d{1,6}$/;
 
 const toPreview = (log) => ({
-    logId:       log._id,
+    logId: log._id,
     stampNumber: String(log.disposalOrder).padStart(6, "0"),
-    binId:       log.binId,
-    household:   log.household ? { fullname: log.household.fullname } : null,
-    scannedAt:   log.scannedAt,
-    flagged:     !!log.flagged,
-    flaggedAt:   log.flaggedAt,
+    binId: log.binId,
+    household: log.household
+        ? { fullname: log.household.fullname }
+        : null,
+    scannedAt: log.scannedAt,
+    flagged: !!log.flagged,
+    flaggedAt: log.flaggedAt,
 });
 
 async function destroyEvidence(url) {
     try {
-        const publicId = url.split("/").slice(-2).join("/").split(".")[0];
+        const publicId = url
+            .split("/")
+            .slice(-2)
+            .join("/")
+            .split(".")[0];
+
         await cloudinary.uploader.destroy(publicId);
-    } catch (err) {
-        console.warn("[Cloudinary] cleanup failed:", err.message);
+    } catch (error) {
+        console.warn(
+            "[Cloudinary] Failed to delete evidence:",
+            error.message
+        );
     }
 }
 
 async function assertAssignedBin(userId, binId) {
-    const collector = await Collector.findById(userId).select("assignedBins isActive");
+    const collector = await Collector.findById(userId)
+        .select("assignedBins isActive");
+
     if (!collector || collector.isActive === false) {
-        return { status: 403, message: "Collector account is not active." };
+        return {
+            status: 403,
+            message: "Collector account is not active.",
+        };
     }
+
     if (!collector.assignedBins.includes(binId)) {
-        return { status: 403, message: "This bin is not assigned to you." };
+        return {
+            status: 403,
+            message: "This bin is not assigned to you.",
+        };
     }
+
     return null;
 }
 
 async function findBag(binId, orders) {
-    const logs = await RfidLog.find({ binId, action: "dispose", disposalOrder: { $in: orders } })
+    const logs = await RfidLog.find({
+        binId,
+        action: "dispose",
+        disposalOrder: { $in: orders },
+    })
         .sort({ scannedAt: -1 })
         .limit(5)
         .populate("household", "fullname");
 
     if (logs.length === 0) {
-        return { status: 404, message: "Trash bag record not found." };
+        return {
+            status: 404,
+            message: "Trash bag record not found.",
+        };
     }
-    if (new Set(logs.map((l) => l.disposalOrder)).size > 1) {
-        return { status: 422, message: "More than one stamp number detected. Retake the photo closer to the stamp." };
+
+    if (new Set(logs.map((log) => log.disposalOrder)).size > 1) {
+        return {
+            status: 422,
+            message:
+                "More than one stamp number detected. Retake the photo closer to the stamp.",
+        };
     }
+
     if (logs.length > 1) {
-        return { status: 409, message: "Duplicate stamp number on this bin. Please report it to the admin." };
+        return {
+            status: 409,
+            message:
+                "Duplicate stamp number on this bin. Please report it to the admin.",
+        };
     }
+
     return { log: logs[0] };
 }
 
-// Middleware: validates stamp, checks bin assignment, loads the log into req.bagLog.
-// Runs BEFORE the Cloudinary upload so invalid requests never upload anything.
+// Middleware: validates stamp, checks assignment, loads req.bagLog.
 const prepareBag = async (req, res, next) => {
     try {
         const binId = String(req.params.binId || "").trim();
         const { stamp } = req.params;
 
         if (!binId || !STAMP_RE.test(stamp)) {
-            return res.status(400).json({ success: false, message: "Enter a valid stamp number (up to 6 digits)." });
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Enter a valid stamp number (up to 6 digits).",
+            });
         }
-        const denied = await assertAssignedBin(req.user.id, binId);
-        if (denied) return res.status(denied.status).json({ success: false, message: denied.message });
 
-        const found = await findBag(binId, [parseInt(stamp, 10)]);
-        if (found.status) return res.status(found.status).json({ success: false, message: found.message });
+        const denied = await assertAssignedBin(req.user.id, binId);
+
+        if (denied) {
+            return res.status(denied.status).json({
+                success: false,
+                message: denied.message,
+            });
+        }
+
+        const found = await findBag(binId, [
+            parseInt(stamp, 10),
+        ]);
+
+        if (found.status) {
+            return res.status(found.status).json({
+                success: false,
+                message: found.message,
+            });
+        }
 
         req.bagLog = found.log;
-        next();
+        return next();
     } catch (error) {
         console.error("[prepareBag]", error);
-        res.status(500).json({ success: false, message: "Could not look up that bag." });
+
+        return res.status(500).json({
+            success: false,
+            message: "Could not look up that bag.",
+        });
     }
 };
 
 const rejectIfAlreadyFlagged = (req, res, next) => {
     if (req.bagLog.flagged) {
-        return res.status(409).json({ success: false, message: "This bag has already been flagged." });
+        return res.status(409).json({
+            success: false,
+            message: "This bag has already been flagged.",
+        });
     }
-    next();
+
+    return next();
 };
 
-// GET /api/rfid/stamp/:binId/:stamp  (typed-number fallback)
-const getBagByStamp = (req, res) =>
-    res.json({ success: true, data: toPreview(req.bagLog) });
+// GET /api/rfid/stamp/:binId/:stamp
+const getBagByStamp = (req, res) => {
+    return res.json({
+        success: true,
+        data: toPreview(req.bagLog),
+    });
+};
 
-// POST /api/rfid/stamp/scan  (multipart: photo + binId)
+// POST /api/rfid/stamp/scan
 const scanStampImage = async (req, res) => {
     try {
         const binId = String(req.body?.binId || "").trim();
-        if (!binId) return res.status(400).json({ success: false, message: "binId is required." });
-        if (!req.file) return res.status(400).json({ success: false, message: "photo is required." });
 
-        const denied = await assertAssignedBin(req.user.id, binId);
-        if (denied) return res.status(denied.status).json({ success: false, message: denied.message });
-
-        const candidates = await extractStampCandidates(req.file.buffer);
-        if (candidates.length === 0) {
-            return res.status(422).json({
+        if (!binId) {
+            return res.status(400).json({
                 success: false,
-                message: "Couldn't read a 6-digit number. Move closer, avoid glare, or type it in.",
+                message: "binId is required.",
             });
         }
 
-        // The database decides which candidate is real.
-        const found = await findBag(binId, candidates.map((c) => parseInt(c, 10)));
-        if (found.status) return res.status(found.status).json({ success: false, message: found.message });
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "photo is required.",
+            });
+        }
 
-        return res.json({ success: true, data: toPreview(found.log) });
+        const denied = await assertAssignedBin(req.user.id, binId);
+
+        if (denied) {
+            return res.status(denied.status).json({
+                success: false,
+                message: denied.message,
+            });
+        }
+
+        const candidates = await extractStampCandidates(req.file.buffer);
+
+        if (candidates.length === 0) {
+            return res.status(422).json({
+                success: false,
+                message:
+                    "Couldn't read a 6-digit number. Move closer, avoid glare, or type it in.",
+            });
+        }
+
+        const found = await findBag(
+            binId,
+            candidates.map((candidate) => parseInt(candidate, 10))
+        );
+
+        if (found.status) {
+            return res.status(found.status).json({
+                success: false,
+                message: found.message,
+            });
+        }
+
+        return res.json({
+            success: true,
+            data: toPreview(found.log),
+        });
     } catch (error) {
         console.error("[scanStampImage]", error);
-        res.status(500).json({ success: false, message: "Could not read the stamp. Please try again." });
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Could not read the stamp. Please try again.",
+        });
     }
 };
 
-// PATCH /api/rfid/stamp/:binId/:stamp/flag  (multipart: evidencePhoto optional)
+// PATCH /api/rfid/stamp/:binId/:stamp/flag
 const flagBagByStamp = async (req, res) => {
-    const discardUpload = async () => { if (req.file?.path) await destroyEvidence(req.file.path); };
-    try {
-        const update = { flagged: true, flaggedAt: new Date(), flaggedBy: req.user.id };
-        if (req.file) update.evidencePhoto = req.file.path;
+    const discardUpload = async () => {
+        if (req.file?.path) {
+            await destroyEvidence(req.file.path);
+        }
+    };
 
-        // Atomic: only one request can flip flagged false -> true.
+    try {
+        const update = {
+            flagged: true,
+            flaggedAt: new Date(),
+            flaggedBy: req.user.id,
+        };
+
+        if (req.file) {
+            update.evidencePhoto = req.file.path;
+        }
+
+        // Atomic update: only one request can flag the bag.
         const updated = await RfidLog.findOneAndUpdate(
-            { _id: req.bagLog._id, flagged: { $ne: true } },
+            {
+                _id: req.bagLog._id,
+                flagged: { $ne: true },
+            },
             { $set: update },
             { new: true }
-        ).populate("household", "fullname householdId"); // add whichever ID field your Household model has
+        ).populate("household", "fullname householdId");
 
         if (!updated) {
             await discardUpload();
-            return res.status(409).json({ success: false, message: "This bag has already been flagged." });
+
+            return res.status(409).json({
+                success: false,
+                message: "This bag has already been flagged.",
+            });
         }
 
-        // ── Notify admin: segregation anomaly ──
         const preview = toPreview(updated);
         const household = updated.household;
-        const householdId = String(household?.householdId ?? household?._id ?? "Unknown");
+
+        const householdId = String(
+            household?.householdId ?? household?._id ?? "Unknown"
+        );
 
         await createNotification({
             title: "Household flagged: segregation anomaly",
-            message: `Household ${householdId} (${household?.fullname ?? "Unknown"}) was flagged for bag #${preview.stampNumber} at ${updated.binId}.`,
+            message:
+                `Household ${householdId} (${household?.fullname ?? "Unknown"}) ` +
+                `was flagged for bag #${preview.stampNumber} at ${updated.binId}.`,
             type: "household_flagged",
             meta: {
                 householdId,
@@ -481,18 +709,37 @@ const flagBagByStamp = async (req, res) => {
             },
         });
 
-        return res.json({ success: true, data: preview });
+        return res.json({
+            success: true,
+            data: preview,
+        });
     } catch (error) {
         await discardUpload();
         console.error("[flagBagByStamp]", error);
-        res.status(500).json({ success: false, message: "Could not flag this bag. Please try again." });
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Could not flag this bag. Please try again.",
+        });
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
+
 module.exports = {
-    binScan, webScan, getLatestScan, checkRfid, getRfidLogs, getRfidHistory, flagLog,
-    prepareBag, rejectIfAlreadyFlagged, getBagByStamp, scanStampImage, flagBagByStamp,
+    binScan,
+    webScan,
+    getLatestScan,
+    checkRfid,
+    getRfidLogs,
+    getRfidHistory,
+    flagLog,
+    prepareBag,
+    rejectIfAlreadyFlagged,
+    getBagByStamp,
+    scanStampImage,
+    flagBagByStamp,
 };

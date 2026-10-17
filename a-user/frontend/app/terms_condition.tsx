@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTerms } from "../context/termContext";
 
 // ---------------------------------------------------------------------------
@@ -173,7 +174,7 @@ function TermsSection({ section }: { section: Section }) {
         <View className="mb-2 pl-1">
           {section.clauses.map((clause, idx) => (
             <View key={idx} className="flex-row mb-1.5 pr-2">
-              <Text className="text-sm text-gray-700 mr-2">{"\u2022"}</Text>
+              <Text className="text-sm text-gray-700 mr-2">{"•"}</Text>
               <Text className="flex-1 text-sm leading-6 text-gray-700">
                 {clause}
               </Text>
@@ -195,10 +196,14 @@ function TermsSection({ section }: { section: Section }) {
 // Screen
 // ---------------------------------------------------------------------------
 type Props = {
-  // When true, shows an "I Agree" footer that stores acceptance and
-  // navigates to /login. When false (default), renders as a plain
-  // read-only page (e.g. when opened later from Settings) with just a
-  // back header and no footer button.
+  // When true (default), shows an "I Agree" footer that stores acceptance
+  // and continues into the app. When false, renders as a plain read-only
+  // page with just a back button and no footer.
+  //
+  // The screen is also switched to read-only when the route is opened with
+  // the `readonly=1` param, e.g. router.push("/terms_condition?readonly=1")
+  // from the Profile tab. That is how a "visit again" button works without
+  // asking the user to accept a second time.
   requireAcceptance?: boolean;
 };
 
@@ -206,7 +211,53 @@ export default function TermsAndConditionsScreen({
   requireAcceptance = true,
 }: Props) {
   const [submitting, setSubmitting] = useState(false);
-  const { markAccepted } = useTerms();
+  const { markAccepted, termsAccepted } = useTerms();
+  // Snapshot taken when the screen opens. Gate in _layout.tsx only renders
+  // screens after the stored value has loaded, so this is reliable. Using a
+  // snapshot (not the live value) stops the button from flipping to "Back"
+  // the instant the user taps "I Agree".
+  const [alreadyAccepted] = useState(termsAccepted);
+  const { readonly } = useLocalSearchParams<{ readonly?: string }>();
+
+  // Read-only if opened from Profile (param) or explicitly via the prop.
+  // Deliberately NOT derived from `termsAccepted`: that flips to true the
+  // moment the user taps "I Agree", which would swap the UI mid-navigation.
+  const isReadOnly = !requireAcceptance || readonly === "1";
+
+  // Whether someone is logged in. On a read-only visit this swaps the footer
+  // for a "Back to Profile" button. `checked` avoids a flicker while
+  // AsyncStorage is being read.
+  const [session, setSession] = useState<{
+    checked: boolean;
+    loggedIn: boolean;
+    isCollector: boolean;
+  }>({ checked: false, loggedIn: false, isCollector: false });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [token, role] = await Promise.all([
+          AsyncStorage.getItem("token"),
+          AsyncStorage.getItem("role"),
+        ]);
+        if (!cancelled) {
+          setSession({
+            checked: true,
+            loggedIn: !!token,
+            isCollector: role === "collector",
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setSession({ checked: true, loggedIn: false, isCollector: false });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleAgree = async () => {
     try {
@@ -214,22 +265,60 @@ export default function TermsAndConditionsScreen({
       // Updates the SAME shared state that _layout.tsx's redirect effect
       // reads — this is what prevents the bounce-back-to-terms bug.
       await markAccepted();
-      router.replace("/");
+
+      // If the user is already logged in, skip the login page.
+      const token = await AsyncStorage.getItem("token");
+      if (token) {
+        const role = await AsyncStorage.getItem("role");
+        router.replace(
+          role === "collector" ? "/(collectorTabs)/home" : "/(userTabs)/profile"
+        );
+      } else {
+        router.replace("/");
+      }
     } catch (err) {
       console.error("Failed to save terms acceptance:", err);
       setSubmitting(false);
     }
   };
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/");
+    }
+  };
+
+  // Logged in and terms already accepted: nothing to agree to, so the footer
+  // button becomes a plain "Back". (If someone is logged in but has NOT
+  // accepted yet, they still get "I Agree", otherwise the gate in
+  // _layout.tsx would just send them straight back here.)
+  const showBack = session.loggedIn && alreadyAccepted;
+
+  // "Back" button: returns to wherever the user came from (the Profile tab),
+  // with a direct route as a fallback.
+  const handleBackToApp = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace(
+        session.isCollector ? "/(collectorTabs)/home" : "/(userTabs)/profile"
+      );
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-white" edges={["top", "bottom"]}>
       {/* Floating back button — only shown when opened as a normal page
-          (e.g. from Settings), not during the mandatory first-run gate */}
-      {!requireAcceptance && (
+          (e.g. from Profile), not during the mandatory first-run gate */}
+      {isReadOnly && (
         <View className="px-4 pt-2">
           <Pressable
-            onPress={() => router.back()}
+            onPress={handleBack}
             hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
             className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center active:opacity-70"
           >
             <Ionicons name="arrow-back" size={20} color="#111827" />
@@ -242,13 +331,11 @@ export default function TermsAndConditionsScreen({
         className="flex-1"
         contentContainerStyle={{
           paddingHorizontal: 20,
-          paddingTop: requireAcceptance ? 24 : 8,
+          paddingTop: isReadOnly ? 8 : 24,
           paddingBottom: 32,
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Icon badge */}
-       
         <Text className="text-2xl font-bold text-gray-900 mb-1">
           Terms & Conditions
         </Text>
@@ -279,8 +366,8 @@ export default function TermsAndConditionsScreen({
         ))}
       </ScrollView>
 
-      {/* Footer accept button — only shown on first-run gate */}
-      {requireAcceptance && (
+      {/* Footer accept button — first-run gate, user not logged in yet */}
+      {session.checked && !showBack && !isReadOnly && (
         <View className="px-5 pt-3 pb-4 border-t border-gray-100 bg-white">
           <Pressable
             onPress={handleAgree}
@@ -297,13 +384,26 @@ export default function TermsAndConditionsScreen({
             {submitting ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <>
-                
-                <Text className="text-white font-semibold text-base">
-                  I Agree, Continue to Login
-                </Text>
-              </>
+              <Text className="text-white font-semibold text-base">
+                I Agree, Continue to Login
+              </Text>
             )}
+          </Pressable>
+        </View>
+      )}
+
+      {/* Footer back button — logged-in user who already accepted the terms */}
+      {session.checked && showBack && (
+        <View className="px-5 pt-3 pb-4 border-t border-gray-100 bg-white">
+          <Pressable
+            onPress={handleBackToApp}
+            accessibilityRole="button"
+            className="bg-green-600 rounded-2xl py-4 items-center flex-row justify-center active:opacity-80"
+          >
+            <Ionicons name="arrow-back" size={18} color="#fff" />
+            <Text className="text-white font-semibold text-base ml-2">
+              Back
+            </Text>
           </Pressable>
         </View>
       )}

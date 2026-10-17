@@ -558,6 +558,18 @@ export default function Profile() {
                         <Text className="text-white text-base font-semibold ml-2">Update information</Text>
                     </TouchableOpacity> */}
 
+                    {/* Re-open the Terms & Conditions in read-only mode */}
+                    <TouchableOpacity
+                        onPress={() => router.push("/terms_condition")}
+                        accessibilityRole="button"
+                        accessibilityLabel="View Terms and Conditions"
+                        activeOpacity={0.8}
+                        className="w-full py-4 rounded-xl bg-white border border-gray-300 flex-row items-center justify-center"
+                    >
+                        <Feather name="file-text" size={18} color="#374151" />
+                        <Text className="text-gray-700 text-base font-semibold ml-2">Terms & Conditions</Text>
+                    </TouchableOpacity>
+
                     <TouchableOpacity
                         onPress={handleLogout}
                         accessibilityRole="button"

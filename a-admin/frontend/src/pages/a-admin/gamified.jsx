@@ -126,6 +126,24 @@ export default function Gamified() {
         rewardPage * REWARDS_PER_PAGE
     );
 
+
+    const formatRedemptionLimit = (limit, period) => {
+        if (limit === 0) return "Unlimited redemptions";
+        if (limit == null || !period) return null;
+
+        const periodLabels = {
+            day: "day",
+            week: "week",
+            month: "month",
+            year: "year",
+            lifetime: "lifetime",
+        };
+
+        const label = periodLabels[period.toLowerCase()] ?? period;
+        return `Limit: ${limit} per ${label}`;
+    };
+
+
     const filteredRules = useMemo(
         () => allRules.filter((r) => matchesSearch(ruleSearchParts(r), search)),
         [allRules, search]
@@ -508,6 +526,12 @@ export default function Gamified() {
                                                         >
                                                             {outOfStock ? "Out of stock" : `${item.stocks} in stock`}
                                                         </span>
+
+                                                        {formatRedemptionLimit(item.claimLimit, item.claimPeriod) && (
+                                                            <span className="inline-flex w-fit items-center text-xs font-medium text-green-700 px-2 py-1 rounded-full mt-1">
+                                                                {formatRedemptionLimit(item.claimLimit, item.claimPeriod)}
+                                                            </span>
+                                                        )}
 
                                                         <div className="w-full flex items-center gap-2 mt-auto pt-4">
                                                             <button

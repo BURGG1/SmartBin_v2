@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  Keyboard,
+  ScrollView,
+  Platform,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { API_BASE } from "@/config";
@@ -109,6 +119,30 @@ export default function AuthPage() {
   const attemptsRef = useRef<number>(0);
   const lockedUntilRef = useRef<number>(0);
   const inFlightRef = useRef<boolean>(false);
+
+  // Keyboard handling: track the keyboard height ourselves and add it as
+  // bottom padding inside the ScrollView. This works on iOS and on Android
+  // (including edge-to-edge, where KeyboardAvoidingView/adjustResize can
+  // silently do nothing), so the Login button can always be scrolled into view.
+  const scrollRef = useRef<ScrollView>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+      // Wait a tick for the padding to render, then scroll the button into view.
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // NEW (stay logged in): when the app opens, look for a saved token. If it's
   // there, skip the login screen and go straight to the right home screen.
@@ -278,187 +312,204 @@ export default function AuthPage() {
   }
 
   return (
-    <View className="flex-1 bg-gray-100 justify-center px-4">
-      <View className="w-full max-w-md self-center space-y-6">
+    <View className="flex-1 bg-gray-100">
+      {/* flexGrow + justifyContent keeps the form centered when there's room;
+          the extra paddingBottom (= keyboard height) lets it scroll above the keyboard. */}
+      <ScrollView
+        ref={scrollRef}
+        className="flex-1"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: "center",
+          paddingHorizontal: 16,
+          paddingTop: 24,
+          paddingBottom: 24 + keyboardHeight,
+        }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
+        <View className="w-full max-w-md self-center space-y-6">
 
-        {/* LOGO */}
-        <View className="items-center space-y-2 mb-6">
-          <View className="w-16 h-16 bg-green-600 rounded-full items-center justify-center">
-            <Feather name="trash-2" size={32} color="white" />
-          </View>
-
-          <Text className="text-xl font-semibold text-center">
-            Smart Bin Waste Management
-          </Text>
-
-          <Text className="text-gray-500 text-sm text-center">
-            Manage waste collection efficiently
-          </Text>
-        </View>
-
-        {/* CARD */}
-        <View className="bg-white rounded-2xl shadow-lg p-6 space-y-6">
-
-          <Text className="text-lg font-medium text-center">
-            Welcome Back!
-          </Text>
-
-          {/* EMAIL */}
-          <View>
-            <Text className="text-sm mb-1 font-semibold">Email</Text>
-            <View className="flex-row items-center mb-4 bg-gray-100 rounded-lg px-3 py-3">
-              <Feather name="mail" size={18} color="gray" />
-
-              <TextInput
-                placeholder="Enter your email"
-                placeholderTextColor="#6B7280"
-                value={form.email}
-                onChangeText={(text: string) =>
-                  setForm((f) => ({ ...f, email: text }))
-                }
-                className="flex-1 ml-3 text-gray-900"
-                style={{
-                  color: "#111827",
-                  backgroundColor: "transparent",
-                }}
-                underlineColorAndroid="transparent"
-                selectionColor="#16A34A"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                textContentType="emailAddress"
-                autoComplete="email"
-                editable={!loading && !isLocked}
-                maxLength={254}
-                accessibilityLabel="Email"
-              />
-
+          {/* LOGO */}
+          <View className="items-center space-y-2 mb-6">
+            <View className="w-16 h-16 bg-green-600 rounded-full items-center justify-center">
+              <Feather name="trash-2" size={32} color="white" />
             </View>
+
+            <Text className="text-xl font-semibold text-center">
+              Smart Bin Waste Management
+            </Text>
+
+            <Text className="text-gray-500 text-sm text-center">
+              Manage waste collection efficiently
+            </Text>
           </View>
 
-          {/* PASSWORD */}
-          <View>
-            <Text className="text-sm mb-1 font-semibold">Password</Text>
-            <View className="flex-row items-center bg-gray-100 rounded-lg px-3 py-3">
-              <Feather name="lock" size={18} color="gray" />
+          {/* CARD */}
+          <View className="bg-white rounded-2xl shadow-lg p-6 space-y-6">
 
-              <TextInput
-                placeholder="Enter your password"
-                placeholderTextColor="#6B7280"
-                secureTextEntry={!showPassword}
-                value={form.password}
-                onChangeText={(text: string) =>
-                  setForm((f) => ({ ...f, password: text }))
-                }
-                className="flex-1 ml-3 text-gray-900"
-                style={{
-                  color: "#111827",
-                  backgroundColor: "transparent",
-                }}
-                underlineColorAndroid="transparent"
-                selectionColor="#16A34A"
-                autoCapitalize="none"
-                autoCorrect={false}
-                textContentType="password"
-                autoComplete="password"
-                editable={!loading && !isLocked}
-                maxLength={128}
-                accessibilityLabel="Password"
-                returnKeyType="send"
-                onSubmitEditing={() => handleLogin()}
-              />
+            <Text className="text-lg font-medium text-center">
+              Welcome Back!
+            </Text>
 
-              <TouchableOpacity
-                onPress={() => setShowPassword((prev) => !prev)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel={showPassword ? "Hide password" : "Show password"}
-              >
-                <Feather
-                  name={showPassword ? "eye-off" : "eye"}
-                  size={18}
-                  color="gray"
+            {/* EMAIL */}
+            <View>
+              <Text className="text-sm mb-1 font-semibold">Email</Text>
+              <View className="flex-row items-center mb-4 bg-gray-100 rounded-lg px-3 py-3">
+                <Feather name="mail" size={18} color="gray" />
+
+                <TextInput
+                  placeholder="Enter your email"
+                  placeholderTextColor="#6B7280"
+                  value={form.email}
+                  onChangeText={(text: string) =>
+                    setForm((f) => ({ ...f, email: text }))
+                  }
+                  className="flex-1 ml-3 text-gray-900"
+                  style={{
+                    color: "#111827",
+                    backgroundColor: "transparent",
+                  }}
+                  underlineColorAndroid="transparent"
+                  selectionColor="#16A34A"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  textContentType="emailAddress"
+                  autoComplete="email"
+                  editable={!loading && !isLocked}
+                  maxLength={254}
+                  accessibilityLabel="Email"
                 />
-              </TouchableOpacity>
+
+              </View>
             </View>
-          </View>
 
-          {/* NEW: SAVE PASSWORD CHECKBOX */}
-          <TouchableOpacity
-            onPress={toggleSavePassword}
-            disabled={loading}
-            activeOpacity={0.7}
-            className="flex-row items-center mt-4"
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: savePassword }}
-            accessibilityLabel="Save password"
-          >
-            <Feather
-              name={savePassword ? "check-square" : "square"}
-              size={20}
-              color={savePassword ? "#16A34A" : "gray"}
+            {/* PASSWORD */}
+            <View>
+              <Text className="text-sm mb-1 font-semibold">Password</Text>
+              <View className="flex-row items-center bg-gray-100 rounded-lg px-3 py-3">
+                <Feather name="lock" size={18} color="gray" />
+
+                <TextInput
+                  placeholder="Enter your password"
+                  placeholderTextColor="#6B7280"
+                  secureTextEntry={!showPassword}
+                  value={form.password}
+                  onChangeText={(text: string) =>
+                    setForm((f) => ({ ...f, password: text }))
+                  }
+                  className="flex-1 ml-3 text-gray-900"
+                  style={{
+                    color: "#111827",
+                    backgroundColor: "transparent",
+                  }}
+                  underlineColorAndroid="transparent"
+                  selectionColor="#16A34A"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType="password"
+                  autoComplete="password"
+                  editable={!loading && !isLocked}
+                  maxLength={128}
+                  accessibilityLabel="Password"
+                  returnKeyType="send"
+                  onSubmitEditing={() => handleLogin()}
+                />
+
+                <TouchableOpacity
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                >
+                  <Feather
+                    name={showPassword ? "eye-off" : "eye"}
+                    size={18}
+                    color="gray"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* NEW: SAVE PASSWORD CHECKBOX */}
+            <TouchableOpacity
+              onPress={toggleSavePassword}
+              disabled={loading}
+              activeOpacity={0.7}
+              className="flex-row items-center mt-4"
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: savePassword }}
+              accessibilityLabel="Save password"
+            >
+              <Feather
+                name={savePassword ? "check-square" : "square"}
+                size={20}
+                color={savePassword ? "#16A34A" : "gray"}
+              />
+              <Text className="ml-2 text-gray-700 text-sm">Save password</Text>
+            </TouchableOpacity>
+
+            {/* LOGIN BUTTON */}
+            <TouchableOpacity
+              onPress={() => handleLogin()}
+              disabled={loading || isLocked}
+              className="bg-green-600 mt-8 mb-4 py-3 rounded-lg flex-row items-center justify-center"
+              style={{ opacity: loading || isLocked ? 0.6 : 1 }}
+              accessibilityRole="button"
+            >
+              {loading && <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />}
+              <Text className="text-white text-center font-medium">
+                {loading
+                  ? "Logging in..."
+                  : isLocked
+                    ? `Try again in ${lockoutSecondsLeft}s`
+                    : "Login"}
+              </Text>
+            </TouchableOpacity>
+
+
+            <TouchableOpacity onPress={() => setIsForgotPasswordOpen(true)} disabled={loading}>
+              <Text className="text-green-600 text-center mt-5 font-medium">Forgot Password?</Text>
+            </TouchableOpacity>
+
+            <View className="flex-row items-center my-4">
+              <View className="flex-1 h-px bg-gray-300" />
+              <Text className="mx-3 text-gray-500 font-medium">
+                OR
+              </Text>
+              <View className="flex-1 h-px bg-gray-300" />
+            </View>
+
+            {/* REGISTER BUTTON */}
+            <TouchableOpacity
+              onPress={() => setIsRegisterOpen(true)}
+              disabled={loading}
+              accessibilityRole="button"
+              accessibilityLabel="Register household account"
+              activeOpacity={0.8}
+              className="w-full py-4 rounded-xl bg-white border border-green-600 flex-row items-center justify-center"
+              style={{ opacity: loading ? 0.6 : 1 }}
+            >
+              {/* <Feather name="user-plus" size={18} color="#10B981" /> */}
+              <Text className="text-green-600 text-base font-semibold ml-2">
+                Register Household Account
+              </Text>
+            </TouchableOpacity>
+
+            <RegisterHousehold
+              isOpen={isRegisterOpen}
+              onClose={() => setIsRegisterOpen(false)}
             />
-            <Text className="ml-2 text-gray-700 text-sm">Save password</Text>
-          </TouchableOpacity>
 
-          {/* LOGIN BUTTON */}
-          <TouchableOpacity
-            onPress={() => handleLogin()}
-            disabled={loading || isLocked}
-            className="bg-green-600 mt-8 mb-4 py-3 rounded-lg flex-row items-center justify-center"
-            style={{ opacity: loading || isLocked ? 0.6 : 1 }}
-            accessibilityRole="button"
-          >
-            {loading && <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />}
-            <Text className="text-white text-center font-medium">
-              {loading
-                ? "Logging in..."
-                : isLocked
-                  ? `Try again in ${lockoutSecondsLeft}s`
-                  : "Login"}
-            </Text>
-          </TouchableOpacity>
+            <ForgotPasswordModal
+              isOpen={isForgotPasswordOpen}
+              onClose={() => setIsForgotPasswordOpen(false)}
+            />
 
-
-          <TouchableOpacity onPress={() => setIsForgotPasswordOpen(true)} disabled={loading}>
-            <Text className="text-green-600 text-center mt-5 font-medium">Forgot Password?</Text>
-          </TouchableOpacity>
-
-          <View className="flex-row items-center my-4">
-            <View className="flex-1 h-px bg-gray-300" />
-            <Text className="mx-3 text-gray-500 font-medium">
-              OR
-            </Text>
-            <View className="flex-1 h-px bg-gray-300" />
           </View>
-          
-          {/* REGISTER BUTTON */}
-          <TouchableOpacity
-            onPress={() => setIsRegisterOpen(true)}
-            disabled={loading}
-            accessibilityRole="button"
-            accessibilityLabel="Register household account"
-            activeOpacity={0.8}
-            className="w-full py-4 rounded-xl bg-white border border-green-600 flex-row items-center justify-center"
-            style={{ opacity: loading ? 0.6 : 1 }}
-          >
-            {/* <Feather name="user-plus" size={18} color="#10B981" /> */}
-            <Text className="text-green-600 text-base font-semibold ml-2">
-              Register Household Account
-            </Text>
-          </TouchableOpacity>
-
-          <RegisterHousehold
-            isOpen={isRegisterOpen}
-            onClose={() => setIsRegisterOpen(false)}
-          />
-
-          <ForgotPasswordModal
-            isOpen={isForgotPasswordOpen}
-            onClose={() => setIsForgotPasswordOpen(false)}
-          />
-
         </View>
-      </View>
+      </ScrollView>
     </View>
   );
 }

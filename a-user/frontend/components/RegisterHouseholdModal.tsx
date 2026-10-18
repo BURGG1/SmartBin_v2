@@ -9,7 +9,6 @@ import {
     ScrollView,
     Alert,
     KeyboardAvoidingView,
-    Platform,
     FlatList,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -411,17 +410,20 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     };
 
     return (
-        <Modal visible={isOpen} className="bg-white" animationType="fade" onRequestClose={handleClose}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === "ios" ? "padding" : undefined}
-                className="flex-1"
-            >
+        <Modal
+            visible={isOpen}
+            className="bg-white"
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={handleClose}
+        >
+            <KeyboardAvoidingView behavior="padding" className="flex-1">
                 <Pressable
                     className="flex-1 bg-black/40 justify-center items-center p-4"
                     onPress={handleClose}
                 >
                     <Pressable
-                        className="bg-white w-full max-w-lg rounded-2xl overflow-hidden"
+                        className="bg-white w-full max-w-lg max-h-[90%] rounded-2xl overflow-hidden"
                         onPress={() => { }}
                     >
                         {/* HEADER */}
@@ -432,7 +434,13 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             </TouchableOpacity>
                         </View>
 
-                        <ScrollView className="p-5" keyboardShouldPersistTaps="handled">
+                        <ScrollView
+                            className="p-5"
+                            keyboardShouldPersistTaps="handled"
+                            keyboardDismissMode="on-drag"
+                            automaticallyAdjustKeyboardInsets
+                            contentContainerStyle={{ paddingBottom: 24 }}
+                        >
                             {/* Fullname */}
                             <View className="mb-3">
                                 <View className="flex-row items-center">

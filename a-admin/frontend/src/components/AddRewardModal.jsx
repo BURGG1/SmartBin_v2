@@ -137,7 +137,7 @@ export default function RewardFormModal({
                         disabled={saving}
                         aria-label="Close modal"
                     >
-                        <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

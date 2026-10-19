@@ -118,7 +118,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                         )}
                     </div>
                     <button onClick={onClose}>
-                        <X className="text-gray-500 hover:text-gray-800 cursor-pointer" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

@@ -135,7 +135,7 @@ export default function ViolationModal({ isOpen, onClose, household, onPenalized
                 <div className="flex justify-between items-center px-6 py-4 border-b">
                     <h2 className="text-xl font-bold">{household.household?.fullname ?? household.fullname ?? "Household"}</h2>
                     <button onClick={onClose} disabled={loading}>
-                        <X className="cursor-pointer text-gray-500 hover:text-gray-800" />
+                        <X className="cursor-pointer text-gray-500 hover:text-red-400" />
                     </button>
                 </div>
 

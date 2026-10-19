@@ -54,7 +54,7 @@ export default function PenaltyModal({ isOpen, onClose, household }) {
                         {household?.name || "Household Violation"}
                     </h2>
                     <button onClick={onClose}>
-                        <X className="cursor-pointer text-gray-500 hover:text-gray-800" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

@@ -421,7 +421,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                     <div className="flex justify-between items-center px-5 py-1 border-b">
                         <h3 className="text-gray-600 text-sm">{fullname}'s Record</h3>
                         <button onClick={onClose}>
-                            <X className="w-5 h-5 text-gray-500 cursor-pointer hover:text-gray-800" />
+                            <X className="w-5 h-5 text-gray-500 hover:text-red-400 cursor-pointer" />
                         </button>
                     </div>
 

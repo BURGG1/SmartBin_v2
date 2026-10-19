@@ -65,14 +65,22 @@ const createRequest = async (req, res) => {
 // GET /api/requests  — admin fetches all requests
 const getAllRequests = async (req, res) => {
   try {
-    const { status } = req.query;
-    const query = status ? { status } : {};
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit) || 10);
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
 
-    const requests = await RegistrationRequest.find(query).sort({ createdAt: -1 });
+    const [data, total] = await Promise.all([
+      RegistrationRequest.find(filter) // use your actual model name
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      RegistrationRequest.countDocuments(filter),
+    ]);
 
-    res.json({ success: true, data: requests });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.json({ success: true, data, total });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 

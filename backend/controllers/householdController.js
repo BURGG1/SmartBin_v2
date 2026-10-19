@@ -47,45 +47,37 @@ const normalizeContactNumber = (input) => {
 // GET /api/households
 const getAllHouseholds = async (req, res) => {
   try {
-    const { search, page = 1, limit = 10, isActive } = req.query;
-    const query = {};
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit) || 10);
+    const search = (req.query.search || "").trim();
 
+    const filter = {};
     if (search) {
-      query.$or = [
-        { fullname: { $regex: search, $options: "i" } },
-        { contactNumber: { $regex: search, $options: "i" } },
-        { rfid: { $regex: search, $options: "i" } },
-        { "address.houseNo": { $regex: search, $options: "i" } },
-        { "address.street": { $regex: search, $options: "i" } },
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      filter.$or = [
+        { fullname: rx },
+        { contactNumber: rx },
+        { rfid: rx },
+        { email: rx },
+        { "address.street": rx },
+        { "address.houseNo": rx },
       ];
     }
 
-    if (isActive !== undefined) {
-      query.isActive = isActive === "true";
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const [households, total] = await Promise.all([
-      Household.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
-      Household.countDocuments(query),
+    const [data, total] = await Promise.all([
+      Household.find(filter)
+        .select("-password -resetPasswordCodeHash -resetPasswordExpires")
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      Household.countDocuments(filter),
     ]);
 
-    res.json({
-      success: true,
-      data: households,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(total / parseInt(limit)),
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.json({ success: true, data, total });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
-
 // GET /api/households/:id
 const getHouseholdById = async (req, res) => {
   try {

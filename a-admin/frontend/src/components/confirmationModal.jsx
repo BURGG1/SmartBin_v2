@@ -16,7 +16,7 @@ export default function ConfirmationModal({ isOpen, onClose, onConfirm }) {
                 <div className="flex justify-between items-center px-6 py-4 border-b">
                     <h3 className="text-md">Confirmation Modal</h3>
                     <button onClick={onClose}>
-                        <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

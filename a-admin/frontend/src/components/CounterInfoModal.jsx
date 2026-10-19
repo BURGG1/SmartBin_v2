@@ -181,7 +181,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 <div className="flex justify-between items-center px-6 py-1 border-b">
                     <h2 className="text-md text-gray-600 font-semi-bold">Counter Information</h2>
                     <button onClick={onClose}>
-                        <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

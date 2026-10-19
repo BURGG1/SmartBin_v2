@@ -310,7 +310,7 @@ export default function ForgotPasswordModal({ isOpen, onClose, onResetSuccess })
             onClick={handleClose}
             disabled={loading}
             aria-label="Close"
-            className="text-gray-500 hover:text-gray-700 disabled:opacity-50"
+            className="text-gray-500 hover:text-red-400 cursor-pointer disabled:opacity-50"
           >
             <X size={20} />
           </button>

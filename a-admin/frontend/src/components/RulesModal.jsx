@@ -127,7 +127,7 @@ export default function RulesModal({ isOpen, onClose, edit, ruleData, onSaved })
                         {edit ? "Update Rule" : "Add New Rule"}
                     </h2>
                     <button onClick={onClose}>
-                        <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

@@ -148,7 +148,7 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                             <p className="text-gray-500 text-sm">Showing redemption history for: <span className="font-medium">{rName}</span></p>
                         </div>
                         <button onClick={onClose}>
-                            <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                            <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                         </button>
                     </div>
 

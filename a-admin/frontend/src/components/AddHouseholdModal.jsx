@@ -265,7 +265,7 @@ export default function AddHousehold({ isOpen, onClose }) {
                 <div className="flex justify-between items-center px-4 sm:px-6 py-4 border-b">
                     <h2 className="text-lg sm:text-xl font-bold">Register Household</h2>
                     <button onClick={onClose}>
-                        <X className="text-gray-500 hover:text-gray-800" />
+                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
                     </button>
                 </div>
 

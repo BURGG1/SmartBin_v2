@@ -21,6 +21,9 @@ const API_URL = (
 
 const POLL_MS = 30000;
 
+// File lives in the Vite public/ folder: public/smartbin_new_notification.mp3
+const NOTIFICATION_SOUND_URL = "../resources/smartbin_new_notification.mp3";
+
 const TYPE_ICON = {
   bin_critical: <Trash2 size={16} className="text-red-500" />,
   household_flagged: (
@@ -103,6 +106,11 @@ export default function Navbar() {
   const notifRef = useRef(null);
   const reassignBusyRef = useRef(false);
 
+  // Notification sound state.
+  const audioRef = useRef(null);
+  // null = first load not finished yet (so we don't ding on page open)
+  const seenIdsRef = useRef(null);
+
   let user = null;
 
   try {
@@ -113,37 +121,113 @@ export default function Navbar() {
 
   const email = user?.email || "No email on file";
 
-  // Load notifications from the authenticated backend.
-  const fetchNotifications = useCallback(async (signal) => {
-    try {
-      const response = await fetch(`${API_URL}/api/notifications`, {
-        headers: getAuthHeaders(),
-        signal,
-      });
+  // Create the audio element once.
+  useEffect(() => {
+    const audio = new Audio(NOTIFICATION_SOUND_URL);
+    audio.preload = "auto";
+    audio.volume = 0.6;
+    audioRef.current = audio;
 
-      const data = await readJsonResponse(response);
-
-      const items = Array.isArray(data)
-        ? data
-        : Array.isArray(data.notifications)
-          ? data.notifications
-          : Array.isArray(data.data)
-            ? data.data
-            : [];
-
-      setNotifications(items);
-      setNotifError(false);
-    } catch (error) {
-      if (error.name !== "AbortError") {
-        console.error("Failed to load notifications:", error);
-        setNotifError(true);
-      }
-    } finally {
-      if (!signal?.aborted) {
-        setNotifLoading(false);
-      }
-    }
+    return () => {
+      audio.pause();
+      audioRef.current = null;
+    };
   }, []);
+
+  // Browsers block audio until the user interacts with the page.
+  // Silently "unlock" it on the first click or key press.
+  useEffect(() => {
+    const unlock = () => {
+      const audio = audioRef.current;
+
+      if (audio) {
+        audio.muted = true;
+        audio
+          .play()
+          .then(() => {
+            audio.pause();
+            audio.currentTime = 0;
+            audio.muted = false;
+          })
+          .catch(() => {
+            audio.muted = false;
+          });
+      }
+
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+
+    window.addEventListener("click", unlock);
+    window.addEventListener("keydown", unlock);
+
+    return () => {
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
+  const playNotificationSound = useCallback(() => {
+    const audio = audioRef.current;
+
+    if (!audio) return;
+
+    audio.currentTime = 0;
+    audio.play().catch(() => {
+      // Autoplay blocked until the user interacts with the page.
+    });
+  }, []);
+
+  // Load notifications from the authenticated backend.
+  const fetchNotifications = useCallback(
+    async (signal) => {
+      try {
+        const response = await fetch(`${API_URL}/api/notifications`, {
+          headers: getAuthHeaders(),
+          signal,
+        });
+
+        const data = await readJsonResponse(response);
+
+        const items = Array.isArray(data)
+          ? data
+          : Array.isArray(data.notifications)
+            ? data.notifications
+            : Array.isArray(data.data)
+              ? data.data
+              : [];
+
+        // Play a sound when unread notifications we haven't seen arrive.
+        if (seenIdsRef.current === null) {
+          // First load: remember what exists, stay silent.
+          seenIdsRef.current = new Set(items.map((n) => n._id));
+        } else {
+          const fresh = items.filter(
+            (n) => !n.read && !seenIdsRef.current.has(n._id)
+          );
+
+          items.forEach((n) => seenIdsRef.current.add(n._id));
+
+          if (fresh.length > 0) {
+            playNotificationSound();
+          }
+        }
+
+        setNotifications(items);
+        setNotifError(false);
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          console.error("Failed to load notifications:", error);
+          setNotifError(true);
+        }
+      } finally {
+        if (!signal?.aborted) {
+          setNotifLoading(false);
+        }
+      }
+    },
+    [playNotificationSound]
+  );
 
   // Initial load and polling. Pause polling while the tab is hidden.
   useEffect(() => {

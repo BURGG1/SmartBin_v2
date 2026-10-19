@@ -8,13 +8,17 @@ import { getRewards, redeemReward, getHouseholdActivity } from "../../api/reward
 import { useHousehold, fetchHousehold, setHousehold } from "../store/householdStore";
 import Pagination from "../../components/UserPagination";
 
+
 type Reward = {
     _id: string;
     name: string;
     points: number;
     stocks: number;
     image?: string;
+    claimLimit?: number;
+    claimPeriod?: string;
 };
+
 
 type ActivityItem = {
     type: string;
@@ -24,35 +28,35 @@ type ActivityItem = {
     amount?: string;
 };
 
-const REWARDS_PER_PAGE      = 4;
-const ACTIVITY_PER_PAGE     = 7;
-const ACTIVITY_FETCH_LIMIT  = 50;
-const ACTIVITY_HISTORY_CAP  = 50;
-const REDEEMED_PER_PAGE     = 8;
-const FAB_SIZE               = 58;
-const FAB_EDGE_MARGIN        = 16;
-const DRAG_THRESHOLD         = 6; // px of movement before a press is treated as a drag
+const REWARDS_PER_PAGE = 4;
+const ACTIVITY_PER_PAGE = 7;
+const ACTIVITY_FETCH_LIMIT = 50;
+const ACTIVITY_HISTORY_CAP = 50;
+const REDEEMED_PER_PAGE = 7;
+const FAB_SIZE = 58;
+const FAB_EDGE_MARGIN = 16;
+const DRAG_THRESHOLD = 6; // px of movement before a press is treated as a drag
 
 export default function Rewards() {
     const household = useHousehold();
     const [householdLoading, setHouseholdLoading] = useState(!household);
-    const [refreshing, setRefreshing]             = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
 
-    const [rewards, setRewards]           = useState<Reward[]>([]);
+    const [rewards, setRewards] = useState<Reward[]>([]);
     const [rewardsLoading, setRewardsLoading] = useState(true);
     const [rewardsError, setRewardsError] = useState("");
-    const [rewardsPage, setRewardsPage]   = useState(1);
+    const [rewardsPage, setRewardsPage] = useState(1);
 
-    const [activity, setActivity]           = useState<ActivityItem[]>([]);
+    const [activity, setActivity] = useState<ActivityItem[]>([]);
     const [activityLoading, setActivityLoading] = useState(true);
-    const [activityPage, setActivityPage]   = useState(1);
+    const [activityPage, setActivityPage] = useState(1);
 
     const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
-    const [redeeming, setRedeeming]           = useState(false);
+    const [redeeming, setRedeeming] = useState(false);
 
     // ── Redeemed history (chest FAB) ──
     const [historyVisible, setHistoryVisible] = useState(false);
-    const [historyPage, setHistoryPage]       = useState(1);
+    const [historyPage, setHistoryPage] = useState(1);
 
     // ── Draggable floating chest button ──
     const insets = useSafeAreaInsets();
@@ -63,13 +67,29 @@ export default function Rewards() {
         minY: insets.top + FAB_EDGE_MARGIN,
         maxY: screenHeight - FAB_SIZE - insets.bottom - FAB_EDGE_MARGIN,
     };
-    const fabPan   = useRef(
+    const fabPan = useRef(
         new Animated.ValueXY({
             x: fabBounds.maxX,
             y: fabBounds.maxY - 80, // start a bit above the bottom edge
         })
     ).current;
-    const didDrag  = useRef(false);
+    const didDrag = useRef(false);
+
+    const formatRedemptionLimit = (limit?: number, period?: string) => {
+        if (limit === 0) return "Unlimited redemptions";
+        if (limit == null || !period) return null;
+
+        const periodLabels: Record<string, string> = {
+            day: "day",
+            week: "week",
+            month: "month",
+            year: "year",
+            lifetime: "lifetime",
+        };
+
+        const label = periodLabels[period.toLowerCase()] ?? period;
+        return `Limit: ${limit} per ${label}`;
+    };
 
     const fabPanResponder = useRef(
         PanResponder.create({
@@ -239,7 +259,7 @@ export default function Rewards() {
             const res = await redeemReward(selectedReward._id, household._id);
 
             // ── Update points in store using server response as source of truth ──
-            const newTotal     = res?.data?.household?.points?.total
+            const newTotal = res?.data?.household?.points?.total
                 ?? (household.points.total - selectedReward.points);
             const newThisMonth = res?.data?.household?.points?.thisMonth
                 ?? (household.points.thisMonth - selectedReward.points);
@@ -247,7 +267,7 @@ export default function Rewards() {
             setHousehold({
                 ...household,
                 points: {
-                    total:     newTotal,
+                    total: newTotal,
                     thisMonth: newThisMonth,
                 },
             });
@@ -263,9 +283,9 @@ export default function Rewards() {
             setActivity((prev) =>
                 [
                     {
-                        type:   "Redeemed Reward",
-                        via:    selectedReward.name,
-                        date:   new Date().toISOString(),
+                        type: "Redeemed Reward",
+                        via: selectedReward.name,
+                        date: new Date().toISOString(),
                         points: -selectedReward.points,
                     },
                     ...prev,
@@ -286,18 +306,18 @@ export default function Rewards() {
         }
     };
 
-    const paginatedRewards      = rewards.slice(
+    const paginatedRewards = rewards.slice(
         (rewardsPage - 1) * REWARDS_PER_PAGE,
         rewardsPage * REWARDS_PER_PAGE
     );
 
-    const paginatedActivity     = activity.slice(
+    const paginatedActivity = activity.slice(
         (activityPage - 1) * ACTIVITY_PER_PAGE,
         activityPage * ACTIVITY_PER_PAGE
     );
-    const activityFillerCount   = Math.max(0, ACTIVITY_PER_PAGE - paginatedActivity.length);
+    const activityFillerCount = Math.max(0, ACTIVITY_PER_PAGE - paginatedActivity.length);
 
-    const paginatedHistory      = redeemedHistory.slice(
+    const paginatedHistory = redeemedHistory.slice(
         (historyPage - 1) * REDEEMED_PER_PAGE,
         historyPage * REDEEMED_PER_PAGE
     );
@@ -456,11 +476,11 @@ export default function Rewards() {
                         <View className="flex flex-col gap-3">
                             {paginatedRewards.map((item) => {
                                 const canRedeem = item.stocks > 0 && (household?.points?.total ?? 0) >= item.points;
-                                const lowStock  = item.stocks > 0 && item.stocks <= 3;
+                                const lowStock = item.stocks > 0 && item.stocks <= 3;
                                 return (
                                     <View
                                         key={item._id}
-                                        className="bg-gray-50 border border-gray-100 rounded-2xl p-4 w-full flex-row gap-4"
+                                        className="bg-gray-50 flex items-center border border-gray-100 rounded-2xl p-4 w-full flex-row gap-4"
                                     >
                                         {item.image ? (
                                             <Image
@@ -476,25 +496,33 @@ export default function Rewards() {
                                         <View className="flex-1 justify-between">
                                             <View>
                                                 <View className="flex-row items-center justify-between">
-                                                    <Text className="text-base font-bold text-gray-900 flex-1" numberOfLines={1}>
+                                                    <Text className="text-base font-bold text-xl text-gray-900 flex-1" numberOfLines={1}>
                                                         {item.name}
                                                     </Text>
                                                     {lowStock && (
                                                         <View className="bg-amber-100 px-2 py-0.5 rounded-full ml-2">
-                                                            <Text className="text-amber-800 text-xs font-semibold">
+                                                            <Text className="text-amber-800 text-lg font-semibold">
                                                                 Low stock
                                                             </Text>
                                                         </View>
                                                     )}
                                                 </View>
-                                                <View className="flex-row items-center gap-3 mt-1">
-                                                    <Text className="text-green-700 font-bold text-base">
+
+                                                <View className="flex-row items-center gap-3 mt-1 flex-wrap">
+                                                    <Text className="text-green-700 font-bold text-base text-lg">
                                                         {item.points} pts
                                                     </Text>
-                                                    <Text className="text-gray-600 text-sm">
+                                                    <Text className="text-gray-600 text-lg">
                                                         {item.stocks} left
                                                     </Text>
                                                 </View>
+
+                                                {formatRedemptionLimit(item.claimLimit, item.claimPeriod) && (
+                                                    <Text className="text-gray-500 text-md mt-1">
+                                                        {formatRedemptionLimit(item.claimLimit, item.claimPeriod)}
+                                                    </Text>
+                                                )}
+
                                             </View>
                                             <TouchableOpacity
                                                 disabled={!canRedeem}
@@ -507,8 +535,8 @@ export default function Rewards() {
                                                     {item.stocks < 1
                                                         ? "Out of stock"
                                                         : canRedeem
-                                                        ? "Redeem"
-                                                        : "Not enough points"}
+                                                            ? "Redeem"
+                                                            : "Not enough points"}
                                                 </Text>
                                             </TouchableOpacity>
                                         </View>

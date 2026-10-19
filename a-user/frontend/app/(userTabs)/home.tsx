@@ -502,53 +502,7 @@ export default function Home() {
                     )}
                 </View>
 
-                {/* RA 9003 */}
-                <View className="bg-white rounded-2xl p-5 shadow mt-8 border border-gray-100">
-                    <View className="flex-col gap-3">
-                        <View>
-                            <Text className="text-xl font-bold text-gray-900">
-                                Republic Act No. 9003
-                            </Text>
-                            <Text className="text-green-700 text-base font-medium mt-0.5">
-                                Ecological Solid Waste Management Act of 2000
-                            </Text>
-                        </View>
-                        <View className="bg-green-100 px-3 py-1 rounded-full self-start">
-                            <Text className="text-green-800 text-sm font-semibold">Philippine Law</Text>
-                        </View>
-                    </View>
-                    <View className="bg-green-50 border border-green-200 rounded-xl p-4 mt-4">
-                        <Text className="text-base text-gray-800 leading-6">
-                            The Ecological Solid Waste Management Act of 2000, officially known as
-                            Republic Act No. 9003, is a Philippine environmental law enacted to
-                            establish a comprehensive and sustainable system for managing solid waste
-                            nationwide.{" "}
-                            <Text className="font-semibold text-gray-900">
-                                It promotes waste reduction, mandatory segregation at source,
-                                recycling, composting, and the closure of open dumpsites, while
-                                requiring local government units to take primary responsibility for
-                                implementation under the supervision of the Department of Environment
-                                and Natural Resources.
-                            </Text>{" "}
-                            The law aims to protect public health and the environment by shifting the
-                            country from improper disposal practices to an ecological and
-                            community-based waste management approach.
-                        </Text>
-                    </View>
-                    <TouchableOpacity
-                        onPress={() =>
-                            Linking.openURL(
-                                "https://www.officialgazette.gov.ph/2001/01/26/republic-act-no-9003/"
-                            )
-                        }
-                        className="flex-row items-center gap-2 mt-4"
-                    >
-                        <Feather name="external-link" size={16} color="#15803D" />
-                        <Text className="text-green-700 text-base font-semibold underline">
-                            See full text of RA 9003
-                        </Text>
-                    </TouchableOpacity>
-                </View>
+            
 
                 {/* RECENT ACTIVITY */}
                 <View className="bg-white rounded-2xl p-5 shadow mt-5 mb-5 border border-gray-100">

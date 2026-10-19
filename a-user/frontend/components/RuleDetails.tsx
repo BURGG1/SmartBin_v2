@@ -96,53 +96,61 @@ export function RuleCard({
             {rule.image ? (
                 <Image
                     source={{ uri: rule.image }}
-                    style={{ width: 112, minHeight: 136 }}
+                    style={{ width: 96, minHeight: 156 }}
                     resizeMode="cover"
                 />
             ) : (
                 <View
                     className="bg-gray-100 items-center justify-center"
-                    style={{ width: 112, minHeight: 136 }}
+                    style={{ width: 96, minHeight: 156 }}
                 >
-                    <Feather name="image" size={24} color="#9CA3AF" />
-                    <Text className="text-gray-500 text-xs mt-1">No image</Text>
+                    <Feather name="image" size={26} color="#9CA3AF" />
+                    <Text className="text-gray-500 text-sm mt-1">No image</Text>
                 </View>
             )}
 
             {/* Content (right) */}
-            <View className="flex-1 p-3 justify-between gap-2">
-                <View className="gap-1">
+            <View className="flex-1 p-4 justify-between gap-3">
+                <View className="gap-2">
+                    {/* Rule number + points */}
                     <View className="flex-row items-center justify-between">
-                        <Text className="text-xs font-semibold text-green-700">Rule {ruleNumber}</Text>
-                        <View className="bg-green-600 rounded-full px-2.5 py-0.5">
-                            <Text className="text-white font-bold text-sm">+{rule.points ?? 0}</Text>
+                        <Text className="text-sm font-bold text-green-700 uppercase tracking-wide">
+                            Rule {ruleNumber}
+                        </Text>
+                        <View className="bg-green-600 rounded-full px-3 py-1">
+                            <Text className="text-white font-extrabold text-base">
+                                +{rule.points ?? 0} pts
+                            </Text>
                         </View>
                     </View>
 
-                    <Text className="text-base font-bold text-gray-900 leading-5" numberOfLines={2}>
+                    {/* Name */}
+                    <Text className="text-xl font-bold text-gray-900 leading-6" numberOfLines={2}>
                         {rule.name}
                     </Text>
 
+                    {/* Description */}
                     {!!description && (
-                        <Text className="text-sm text-gray-600 leading-5" numberOfLines={2}>
+                        <Text className="text-base text-gray-600 leading-6" numberOfLines={2}>
                             {description}
                         </Text>
                     )}
                 </View>
 
-                <View className="flex-row items-center justify-between">
+                {/* Footer */}
+                <View className="flex-row items-center justify-between gap-2">
                     {!!frequency ? (
-                        <View className="bg-gray-100 px-2 py-0.5 rounded-full flex-shrink">
-                            <Text className="text-xs text-gray-700 font-medium" numberOfLines={1}>
+                        <View className="bg-gray-100 px-3 py-1 rounded-full flex-shrink">
+                            <Text className="text-sm text-gray-800 font-semibold" numberOfLines={1}>
                                 {frequency}
                             </Text>
                         </View>
                     ) : (
                         <View />
                     )}
-                    <View className="flex-row items-center gap-0.5">
-                        <Text className="text-sm font-semibold text-green-700">Details</Text>
-                        <Feather name="chevron-right" size={16} color="#15803D" />
+                    <View className="flex-row items-center gap-1">
+                        <Text className="text-base font-bold text-green-700">Details</Text>
+                        <Feather name="chevron-right" size={20} color="#15803D" />
                     </View>
                 </View>
             </View>

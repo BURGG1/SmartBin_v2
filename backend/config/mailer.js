@@ -47,7 +47,7 @@ const getTransporter = async () => {
   cachedTransporter = buildTransporter();
   cachedAt = now;
   return cachedTransporter;
-};
+}; 
 
 // Drop the cached transporter so the next attempt builds a fresh one
 // instead of retrying against a connection/socket that just failed.

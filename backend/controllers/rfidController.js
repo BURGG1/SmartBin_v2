@@ -44,37 +44,86 @@ const binScan = async (req, res) => {
         const { binId, lat, lng } = req.body;
 
         if (!rfid) {
-            return res.status(400).json({ success: false, message: "rfid is required." });
+            return res.status(400).json({
+                success: false,
+                message: "rfid is required.",
+            });
         }
+
         if (!binId) {
-            return res.status(400).json({ success: false, message: "binId is required." });
+            return res.status(400).json({
+                success: false,
+                message: "binId is required.",
+            });
         }
 
+        // Find the bin without filtering by status or isActive.
+        // Offline or deactivated status must not block RFID authorization.
         const bin = await Bin.findOne({ binId }).lean();
+
         if (!bin) {
-            return res.status(404).json({ success: false, message: `Bin ${binId} not found.` });
+            return res.status(404).json({
+                success: false,
+                message: `Bin ${binId} not found.`,
+            });
         }
 
-        const household = await Household.findOne({ rfid, isActive: true });
+        // The RFID must belong to an active, registered household.
+        const household = await Household.findOne({
+            rfid,
+            isActive: true,
+        });
+
         if (!household) {
             await logScan({
-                rfid, binId, action: "scan",
+                rfid,
+                binId,
+                action: "scan",
                 note: `Unregistered or inactive RFID scanned at ${binId} — access denied`,
             });
+
             return res.status(404).json({
-                success: false, message: "RFID not registered or inactive.", rfid,
+                success: false,
+                message: "RFID not registered or inactive.",
+                rfid,
             });
         }
 
-        // Store GPS only when both coordinates are provided. Authorization scans
-        // intentionally do NOT create a disposal log or increment disposalOrder.
-        if (lat !== undefined && lat !== null && lng !== undefined && lng !== null) {
-            await Bin.findOneAndUpdate({ binId }, { $set: { lat, lng } });
+        // Calculate the next disposal order.
+        const existingCount = await RfidLog.countDocuments({
+            binId,
+            action: "dispose",
+        });
+
+        const disposalOrder = existingCount + 1;
+
+        // Update GPS coordinates only when both values are supplied.
+        // This does not change bin status or isActive.
+        if (
+            lat !== undefined &&
+            lat !== null &&
+            lng !== undefined &&
+            lng !== null
+        ) {
+            await Bin.findOneAndUpdate(
+                { binId },
+                {
+                    $set: {
+                        lat,
+                        lng,
+                    },
+                }
+            );
         }
 
+        // Log the authorized disposal.
         await logScan({
-            rfid, householdId: household._id, binId, action: "scan",
-            note: `${household.fullname} authorized at ${binId}; awaiting completed disposal`,
+            rfid,
+            householdId: household._id,
+            binId,
+            action: "dispose",
+            disposalOrder,
+            note: `${household.fullname} tapped at ${binId} (${bin.type})`,
         });
 
         return res.json({
@@ -84,91 +133,17 @@ const binScan = async (req, res) => {
                 household: household.fullname,
                 binId,
                 binType: bin.type,
+                disposalOrder,
                 scannedAt: new Date(),
             },
         });
     } catch (error) {
         console.error("[binScan]", error);
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
 
-// POST /api/rfid/complete-disposal
-// Called by the ESP32 only after its actuator cycle has completed retraction.
-// cycleId makes retries idempotent: the same physical cycle cannot create two logs.
-const completeDisposal = async (req, res) => {
-    try {
-        const rfid = normalizeRfid(req.body.rfid);
-        const binId = String(req.body.binId || "").trim();
-        const cycleId = String(req.body.cycleId || "").trim();
-
-        if (!rfid || !binId || !cycleId) {
-            return res.status(400).json({
-                success: false,
-                message: "rfid, binId, and cycleId are required.",
-            });
-        }
-        if (cycleId.length > 120) {
-            return res.status(400).json({ success: false, message: "cycleId is too long." });
-        }
-
-        const bin = await Bin.findOne({ binId }).lean();
-        if (!bin) {
-            return res.status(404).json({ success: false, message: `Bin ${binId} not found.` });
-        }
-        const household = await Household.findOne({ rfid, isActive: true });
-        if (!household) {
-            return res.status(404).json({ success: false, message: "RFID not registered or inactive." });
-        }
-
-        const existing = await RfidLog.findOne({ binId, cycleId });
-        if (existing) {
-            return res.json({
-                success: true,
-                duplicate: true,
-                message: "This disposal cycle was already recorded.",
-                data: { disposalOrder: existing.disposalOrder, cycleId, binId },
-            });
-        }
-
-        // Assign the next per-bin disposal order only after the ESP32 reports retraction.
-        const existingCount = await RfidLog.countDocuments({ binId, action: "dispose" });
-        const disposalOrder = existingCount + 1;
-
-        let disposalLog;
-        try {
-            disposalLog = await RfidLog.create({
-                rfid,
-                household: household._id,
-                binId,
-                action: "dispose",
-                disposalOrder,
-                cycleId,
-                note: `${household.fullname} completed disposal at ${binId} (${bin.type})`,
-            });
-        } catch (error) {
-            // A concurrent retry may win the unique cycleId index.
-            if (error.code === 11000) {
-                const duplicate = await RfidLog.findOne({ binId, cycleId });
-                if (duplicate) {
-                    return res.json({
-                        success: true, duplicate: true,
-                        message: "This disposal cycle was already recorded.",
-                        data: { disposalOrder: duplicate.disposalOrder, cycleId, binId },
-                    });
-                }
-            }
-            throw error;
-        }
-
-        return res.status(201).json({
-            success: true,
-            message: "Disposal completed and order recorded.",
-            data: { disposalOrder, cycleId, binId, household: household.fullname, scannedAt: disposalLog.scannedAt },
+        return res.status(500).json({
+            success: false,
+            message: error.message,
         });
-    } catch (error) {
-        console.error("[completeDisposal]", error);
-        return res.status(500).json({ success: false, message: error.message });
     }
 };
 
@@ -756,7 +731,6 @@ const flagBagByStamp = async (req, res) => {
 
 module.exports = {
     binScan,
-    completeDisposal,
     webScan,
     getLatestScan,
     checkRfid,

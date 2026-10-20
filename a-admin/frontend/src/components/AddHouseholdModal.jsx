@@ -304,7 +304,7 @@ export default function AddHousehold({ isOpen, onClose }) {
                         </div>
 
                         <div className="flex flex-col">
-                            <label className="font-semibold">Email</label>
+                            <label className="font-semibold flex items-center gap-1">Email  <Asterisk className="text-red-500 w-3 h-3" /></label>
                             <input type="email" name="email" value={form.email} onChange={handleChange} maxLength={100} autoCapitalize="none" autoCorrect="off" className="mt-1 px-3 py-2 rounded-lg border w-full" placeholder="jdelacruz@email.com" />
                         </div>
 

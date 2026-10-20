@@ -142,8 +142,8 @@ export default function Rules() {
             >
                 {/* Header */}
                 <View className="mb-6">
-                    <Text className="text-3xl font-extrabold text-gray-900 tracking-tight">Rules & Penalties</Text>
-                    <Text className="text-base text-gray-600 mt-1 leading-6">Rules aligned with RA 9003</Text>
+                    <Text className="text-3xl font-extrabold text-gray-900 tracking-tight">Activities & Penalties</Text>
+                    <Text className="text-base text-gray-600 mt-1 leading-6">Activities and penalties associated with waste management</Text>
                 </View>
 
                 {/* Penalties & Deductions — visible for 24h after being issued, then hidden */}
@@ -155,13 +155,13 @@ export default function Rules() {
                     <View className="flex-col items-center mb-4 gap-3">
                         <View className="flex-row items-center gap-2">
                             <Feather name="clipboard" size={20} color="#16A34A" />
-                            <Text className="text-xl font-bold text-gray-900">Task to Earn Points</Text>
+                            <Text className="text-xl font-bold text-gray-900">How to Earn Points</Text>
                         </View>
                         <View className="flex-row items-center border border-gray-300 bg-gray-50 rounded-xl px-3 w-full">
                             <Feather name="search" size={18} color="#6B7280" />
                             <TextInput
                                 className="flex-1 py-3 pl-2 text-base text-gray-900"
-                                placeholder="Search "
+                                placeholder="Search Activity"
                                 placeholderTextColor="#9CA3AF"
                                 value={search}
                                 onChangeText={setSearch}
@@ -188,7 +188,7 @@ export default function Rules() {
                     {rulesLoading && (
                         <View className="items-center py-6">
                             <ActivityIndicator color="#16A34A" />
-                            <Text className="text-gray-600 mt-2 text-base">Loading rules...</Text>
+                            <Text className="text-gray-600 mt-2 text-base">Loading Activities...</Text>
                         </View>
                     )}
                     {!!rulesError && <Text className="text-red-600 text-base mb-2">{rulesError}</Text>}
@@ -196,7 +196,7 @@ export default function Rules() {
                     {!rulesLoading && !rulesError && filteredRules.length === 0 && (
                         <View className="items-center py-6">
                             <Feather name="search" size={28} color="#9CA3AF" />
-                            <Text className="text-gray-600 text-base text-center mt-2">No rules found.</Text>
+                            <Text className="text-gray-600 text-base text-center mt-2">No activities found.</Text>
                         </View>
                     )}
 

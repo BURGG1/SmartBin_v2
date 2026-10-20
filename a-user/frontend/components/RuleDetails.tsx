@@ -115,7 +115,7 @@ export function RuleCard({
                     {/* Rule number + points */}
                     <View className="flex-row items-center justify-between">
                         <Text className="text-sm font-bold text-green-700 uppercase tracking-wide">
-                            Rule {ruleNumber}
+                            Activity {ruleNumber}
                         </Text>
                         <View className="bg-green-600 rounded-full px-3 py-1">
                             <Text className="text-white font-extrabold text-base">
@@ -199,7 +199,7 @@ export default function RuleDetails({ rule, ruleNumber, visible, onClose }: Rule
                         <Text className="text-base font-semibold text-green-700">Back</Text>
                     </TouchableOpacity>
                     <Text className="flex-1 text-center text-lg font-bold text-gray-900 pr-16" numberOfLines={1}>
-                        Rule {ruleNumber}
+                        Activity {ruleNumber}
                     </Text>
                 </View>
 
@@ -223,7 +223,7 @@ export default function RuleDetails({ rule, ruleNumber, visible, onClose }: Rule
                             {/* Title block */}
                             <View className="gap-2">
                                 <View className="bg-green-100 self-start px-3 py-1 rounded-full">
-                                    <Text className="text-green-800 text-sm font-semibold">Rule {ruleNumber}</Text>
+                                    <Text className="text-green-800 text-sm font-semibold">Activity {ruleNumber}</Text>
                                 </View>
                                 <Text className="text-2xl font-extrabold text-gray-900 leading-8">{rule.name}</Text>
                             </View>
@@ -258,7 +258,7 @@ export default function RuleDetails({ rule, ruleNumber, visible, onClose }: Rule
                                     <Text className="text-lg font-bold text-gray-900">Details</Text>
                                 </View>
 
-                                <DetailRow label="Rule number" value={`Rule ${ruleNumber}`} />
+                                <DetailRow label="Activity number" value={`Activity ${ruleNumber}`} />
                                 <DetailRow label="Points" value={`+${rule.points ?? 0} points`} />
                                 <DetailRow label="Frequency" value={frequency || "Not specified"} />
                                

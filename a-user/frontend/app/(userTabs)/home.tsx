@@ -43,6 +43,7 @@ type ViolationLog = {
     communityService?: string;
     issuedBy?: string;
     createdAt: string;
+    cleared?: boolean;
 };
 
 type LogTab = "disposal" | "activity" | "violations";
@@ -227,6 +228,7 @@ export default function Home() {
             const params = new URLSearchParams({
                 page: String(pageArg),
                 limit: String(VIOLATION_LIMIT),
+                includeCleared: "true", // settled violations stay visible here, shown as "Settled"
             });
             const res = await fetch(
                 `${API_BASE}/api/households/${household._id}/violations?${params}`,
@@ -442,7 +444,7 @@ export default function Home() {
                             <Feather name="search" size={18} color="#6B7280" />
                             <TextInput
                                 className="flex-1 py-3 pl-2 text-base text-gray-900"
-                                placeholder="Search name, rule no., or points"
+                                placeholder="Search name, activity no., or points"
                                 placeholderTextColor="#9CA3AF"
                                 value={search}
                                 onChangeText={setSearch}
@@ -669,7 +671,6 @@ export default function Home() {
                                         </Text>
                                         <Text className="text-sm text-gray-600 mt-0.5">
                                             {new Date(v.createdAt).toLocaleDateString("en-CA")}
-                                            {v.fineAmount ? ` · ₱${v.fineAmount}` : ""}
                                             {v.communityService ? ` · ${v.communityService}` : ""}
                                         </Text>
                                         {v.issuedBy && (
@@ -678,9 +679,16 @@ export default function Home() {
                                             </Text>
                                         )}
                                     </View>
-                                    <Text className="text-base font-bold text-red-600 ml-2">
-                                        {v.pointsDeducted ? `-${v.pointsDeducted}` : "—"}
-                                    </Text>
+                                    {v.cleared ? (
+                                        <Text className="text-base font-bold text-yellow-500 ml-2">
+                                            Settled
+                                        </Text>
+                                    ) : (
+                                        <Text className="text-base font-bold text-red-600 ml-2">
+                                            {v.fineAmount ? `- ₱${v.fineAmount}` : ""}
+                                            {v.pointsDeducted ? `-${v.pointsDeducted}` : ""}
+                                        </Text>
+                                    )}
                                 </View>
                             ))}
                             {!violationLoading && !violationError && violationLogs.length > 0 && (
@@ -706,4 +714,4 @@ export default function Home() {
             />
         </SafeAreaView>
     );
-}
+}   

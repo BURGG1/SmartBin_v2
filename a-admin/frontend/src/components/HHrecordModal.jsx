@@ -350,29 +350,25 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         await fetchActivityLogs(1);
     }, [fetchHousehold, fetchActivityLogs]);
 
-    // ── Called after a violation has been settled (receipt accepted) ─────────
-    // 1. Remove the chosen violation from the log right away.
-    // 2. Subtract it from the household's violation count so the header
-    //    shows the accurate offense number.
-    // 3. Remember its id so its button stays disabled.
-    // 4. Re-sync with the server (household + current page of the log).
+    // ── Called after violations have been settled (receipt accepted) ─────────
+    // Settling with a receipt clears the household's whole violation record:
+    // 1. Remove every displayed violation from the log right away.
+    // 2. Reset the household's violation count so the header shows
+    //    "No violation".
+    // 3. Remember the ids so their buttons stay disabled.
+    // 4. Re-sync with the server (household + violation log).
     const handleViolationCleared = useCallback(async (clearedViolation) => {
-        const clearedId = clearedViolation._id;
+        const displayedIds = violationLogs.map((v) => v._id);
 
-        setClearedIds((prev) => new Set(prev).add(clearedId));
-        setViolationLogs((prev) => prev.filter((v) => v._id !== clearedId));
-        setViolationTotal((prev) => Math.max(0, prev - 1));
-        setHousehold((prev) =>
-            prev ? { ...prev, violation: Math.max(0, (prev.violation ?? 0) - 1) } : prev
-        );
-
-        // If that was the last row on a page past the first, step back a page.
-        const nextPage =
-            violationLogs.length === 1 && violationPage > 1 ? violationPage - 1 : violationPage;
+        setClearedIds((prev) => new Set([...prev, clearedViolation._id, ...displayedIds]));
+        setViolationLogs([]);
+        setViolationTotal(0);
+        setViolationPage(1);
+        setHousehold((prev) => (prev ? { ...prev, violation: 0 } : prev));
 
         await fetchHousehold();
-        await fetchViolationLogs(nextPage);
-    }, [fetchHousehold, fetchViolationLogs, violationLogs.length, violationPage]);
+        await fetchViolationLogs(1);
+    }, [fetchHousehold, fetchViolationLogs, violationLogs]);
 
     if (!isOpen || !household) return null;
 

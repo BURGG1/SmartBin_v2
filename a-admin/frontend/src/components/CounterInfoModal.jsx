@@ -2,7 +2,6 @@ import { X, Calendar, Search } from "lucide-react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ViolationModal from "./ViolationModal";
 import Pagination from "./Pagination";
-import SuccessToast from "../assets/Toast";
 import BASE_URL from "../config";
 
 const LOGS_LIMIT = 7;       // rows per page in the table
@@ -65,21 +64,18 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
     const [search, setSearch] = useState("");
     // IDs of logs that were already penalized (keeps the button disabled for good)
     const [penalizedIds, setPenalizedIds] = useState(loadPenalizedIds);
-    // Toast lives here (not in ViolationModal) so the modal can close instantly
-    const [toast, setToast] = useState({ show: false, message: "" });
 
     const abortRef = useRef(null);
 
     // Load all disposal logs for the bin (filtering by day happens below).
-    // silent = true -> refresh in the background WITHOUT the "Loading logs..." flash.
-    const fetchLogs = useCallback(async (silent = false) => {
+    const fetchLogs = useCallback(async () => {
         if (!bin?.id) return;
 
         abortRef.current?.abort();
         const controller = new AbortController();
         abortRef.current = controller;
 
-        if (!silent) setLoading(true);
+        setLoading(true);
         setError("");
         try {
             const collected = [];
@@ -153,26 +149,6 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
     const isSearching = search.trim() !== "";
     const emptyRows = Math.max(0, LOGS_LIMIT - pagedLogs.length);
 
-    // Called by ViolationModal after a successful approve / decline.
-    // ViolationModal closes itself right after calling this.
-    // - approve -> remember this log as penalized (button disabled instantly)
-    // - decline -> do NOT mark as penalized (the report is just removed)
-    const handlePenalized = (_data, action, message) => {
-        const logId = activeHH?._id;
-
-        if (action === "approve" && logId) {
-            setPenalizedIds((prev) => {
-                const next = new Set(prev).add(logId);
-                savePenalizedIds(next);
-                return next;
-            });
-        }
-
-        if (message) setToast({ show: true, message });
-
-        fetchLogs(true); // silent refresh: no table flicker
-    };
-
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white max-h-[90vh] w-full max-w-5xl rounded-2xl shadow-lg flex flex-col overflow-y-auto">
@@ -181,7 +157,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 <div className="flex justify-between items-center px-6 py-1 border-b">
                     <h2 className="text-md text-gray-600 font-semi-bold">Counter Information</h2>
                     <button onClick={onClose}>
-                        <X className="text-gray-500 hover:text-red-400 cursor-pointer" />
+                        <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
                     </button>
                 </div>
 
@@ -276,7 +252,7 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                                         const householdId = hh?._id ? `HH-${hh._id.slice(-8).toUpperCase()}` : "—";
                                         const contact = hh?.contactNumber ? `${hh.contactNumber}` : "—";
                                         const isFlagged = !!log.flagged;
-                                        // Already penalized (this browser, or marked by the backend)
+                                        // Already penalized (this session, or flagged by the backend)
                                         const isPenalized = penalizedIds.has(log._id) || !!log.penalized;
                                         const canPenalize = isFlagged && !isPenalized;
 
@@ -362,13 +338,17 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                 isOpen={openModal}
                 onClose={() => setOpenModal(false)}
                 household={activeHH}
-                onPenalized={handlePenalized}
-            />
-
-            <SuccessToast
-                show={toast.show}
-                onClose={() => setToast({ show: false, message: "" })}
-                message={toast.message}
+                onPenalized={() => {
+                    if (activeHH?._id) {
+                        setPenalizedIds((prev) => {
+                            const next = new Set(prev).add(activeHH._id);
+                            savePenalizedIds(next);
+                            return next;
+                        });
+                    }
+                    setOpenModal(false);
+                    fetchLogs();
+                }}
             />
         </div>
     );

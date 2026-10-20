@@ -231,14 +231,21 @@ const redeemReward = async (req, res) => {
   }
 };
 
-// GET /api/rewards/logs?page=1&limit=10&search=
+// GET /api/rewards/logs?page=1&limit=10&search=&rewardName=
 const getRewardLogs = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search } = req.query;
+    const { page = 1, limit = 10, search, rewardName } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // ── Search by household name or household ID ("HH-XXXXXXXX") ──
     const query = {};
+
+    // ── Only logs of the reward being viewed, so the pagination total
+    //    matches the rows that are actually shown ──
+    if (typeof rewardName === "string" && rewardName.trim()) {
+      query.rewardName = rewardName.trim();
+    }
+
+    // ── Search by household name or household ID ("HH-XXXXXXXX") ──
     const term = typeof search === "string" ? search.trim() : "";
     if (term) {
       const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

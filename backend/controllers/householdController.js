@@ -477,6 +477,9 @@ const getHouseholdActivity = async (req, res) => {
         amount: "1 reward",
         date: log.createdAt,
         points: -log.pointsSpent,
+        claimed: !!log.redeemed || !!log.receiptNumber,
+        receiptNumber: log.receiptNumber ?? undefined,
+        claimedAt: log.redeemedAt ?? undefined,
       })),
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -634,13 +637,16 @@ const penalizeHousehold = async (req, res) => {
 
 
 // GET /api/households/:id/violations  — violation history
+// Cleared (settled) violations are hidden by default (admin web).
+// Pass ?includeCleared=true to get them too (user mobile app shows them as "Settled").
 const getViolationLogs = async (req, res) => {
   try {
     const { page = 1, limit = 10, from, to } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    const includeCleared = req.query.includeCleared === "true";
 
-    // Cleared (settled) violations are hidden from the log
-    const query = { household: req.params.id, cleared: { $ne: true } };
+    const query = { household: req.params.id };
+    if (!includeCleared) query.cleared = { $ne: true };
     if (from || to) {
       query.createdAt = {};
       if (from) {
@@ -681,8 +687,9 @@ const getViolationLogs = async (req, res) => {
 
 // PATCH /api/households/:id/violations/:violationId/clear
 // body: { receiptNumber }
-// Marks one violation as settled (receipt as proof) and subtracts it from
-// the household's violation count.
+// Settles the household's violations (receipt as proof): the chosen violation
+// and every other open violation on the record are marked cleared, and the
+// household's violation count is reset to 0.
 const clearViolation = async (req, res) => {
   try {
     const { id, violationId } = req.params;
@@ -695,20 +702,33 @@ const clearViolation = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid receipt number." });
     }
 
+    const settledFields = {
+      cleared: true,
+      receiptNumber,
+      clearedAt: new Date(),
+      clearedBy: req.user?.name ?? "Admin",
+    };
+
     // Mark it cleared, only if it belongs to this household and isn't cleared yet
     const log = await ViolationLog.findOneAndUpdate(
       { _id: violationId, household: id, cleared: { $ne: true } },
-      { $set: { cleared: true, receiptNumber, clearedAt: new Date(), clearedBy: req.user?.name ?? "Admin" } },
+      { $set: settledFields },
       { new: true }
     );
     if (!log) {
       return res.status(409).json({ success: false, message: "Violation not found or already cleared." });
     }
 
-    // Subtract it from the household's count (never below 0)
+    // Settle every other open violation on this household's record too
+    await ViolationLog.updateMany(
+      { household: id, cleared: { $ne: true } },
+      { $set: settledFields }
+    );
+
+    // Nothing left outstanding — reset the household's violation count
     const household = await Household.findOneAndUpdate(
-      { _id: id, violation: { $gt: 0 } },
-      { $inc: { violation: -1 } },
+      { _id: id },
+      { $set: { violation: 0 } },
       { new: true }
     );
 

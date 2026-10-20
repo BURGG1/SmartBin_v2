@@ -26,6 +26,11 @@ type ActivityItem = {
     date: string;
     points: number;
     amount?: string;
+    claimed?: boolean;        // NEW
+    receiptNumber?: string;   // NEW
+    claimedAt?: string;       // NEW
+    redeemed?: boolean;       // backend RewardLog field set by admin redeem
+    redeemedAt?: string;      // backend RewardLog field set by admin redeem
 };
 
 const REWARDS_PER_PAGE = 4;
@@ -36,6 +41,30 @@ const REDEEMED_PER_PAGE = 7;
 const FAB_SIZE = 58;
 const FAB_EDGE_MARGIN = 16;
 const DRAG_THRESHOLD = 6; // px of movement before a press is treated as a drag
+
+// The admin side stores `redeemed` / `receiptNumber` / `redeemedAt` on the
+// RewardLog. Map them onto the `claimed` / `claimedAt` fields this screen reads.
+const normalizeActivityItem = (a: ActivityItem): ActivityItem => ({
+    ...a,
+    claimed: a.claimed ?? (!!a.redeemed || !!a.receiptNumber),
+    claimedAt: a.claimedAt ?? a.redeemedAt,
+});
+
+const ClaimBadge = ({ claimed }: { claimed?: boolean }) => (
+    <View
+        className={`self-start flex-row items-center gap-1 px-2 py-0.5 rounded-full mt-1 ${claimed ? "bg-green-100" : "bg-amber-100"
+            }`}
+    >
+        <Feather
+            name={claimed ? "check-circle" : "clock"}
+            size={12}
+            color={claimed ? "#15803D" : "#B45309"}
+        />
+        <Text className={`text-sm font-semibold ${claimed ? "text-green-800" : "text-amber-800"}`}>
+            {claimed ? "Claimed" : "To claim at barangay"}
+        </Text>
+    </View>
+);
 
 export default function Rewards() {
     const household = useHousehold();
@@ -167,7 +196,7 @@ export default function Rewards() {
         try {
             setActivityLoading(true);
             const data = await getHouseholdActivity(householdId, ACTIVITY_FETCH_LIMIT);
-            setActivity(data);
+            setActivity(Array.isArray(data) ? data.map(normalizeActivityItem) : data);
         } catch (err) {
             console.error("Failed to load activity:", err);
         } finally {
@@ -211,6 +240,10 @@ export default function Rewards() {
     );
     const totalRedeemedPoints = useMemo(
         () => redeemedHistory.reduce((s, a) => s + Math.abs(a.points), 0),
+        [redeemedHistory]
+    );
+    const claimedCount = useMemo(
+        () => redeemedHistory.filter((a) => a.claimed).length,
         [redeemedHistory]
     );
 
@@ -287,6 +320,7 @@ export default function Rewards() {
                         via: selectedReward.name,
                         date: new Date().toISOString(),
                         points: -selectedReward.points,
+                        claimed: false,   // NEW
                     },
                     ...prev,
                 ].slice(0, ACTIVITY_HISTORY_CAP)
@@ -349,7 +383,7 @@ export default function Rewards() {
                     {/* Header */}
                     <View>
                         <Text className="text-3xl font-extrabold text-gray-900 tracking-tight">Rewards & Achievements</Text>
-                        <Text className="text-base text-gray-600 mt-1 leading-6">Redeem your points for eco-friendly items</Text>
+                        <Text className="text-base text-gray-600 mt-1 leading-6">Redeem your points for barangay incentives</Text>
                     </View>
 
                     {/* Top Section */}
@@ -616,6 +650,7 @@ export default function Rewards() {
                                                 <Text className="text-xs text-gray-500 mt-0.5">
                                                     {new Date(a.date).toLocaleDateString()}
                                                 </Text>
+                                                {a.type === "Redeemed Reward" && <ClaimBadge claimed={a.claimed} />}
                                             </View>
                                         </View>
                                         <Text className={`text-base font-bold ${a.points > 0 ? "text-green-600" : "text-red-600"}`}>
@@ -771,7 +806,7 @@ export default function Rewards() {
                             </TouchableOpacity>
                         </View>
                         <Text className="text-gray-600 text-sm mb-4">
-                            {redeemedHistory.length} redemption{redeemedHistory.length === 1 ? "" : "s"} · {totalRedeemedPoints} points used
+                            {redeemedHistory.length} redemption{redeemedHistory.length === 1 ? "" : "s"} · {totalRedeemedPoints} points used · {claimedCount} claimed
                         </Text>
 
                         <ScrollView showsVerticalScrollIndicator={false}>
@@ -797,11 +832,25 @@ export default function Rewards() {
                                                         day: "numeric",
                                                     })}
                                                 </Text>
+
                                             </View>
                                         </View>
-                                        <Text className="text-base font-bold text-red-600">
-                                            {a.points}
-                                        </Text>
+                                        <View className="items-end">
+                                            {!a.claimed ? (
+                                                <Text className="text-base font-bold text-red-600">
+                                                    {a.points}
+                                                </Text>
+                                            ) : (
+                                                <>
+                                                    <ClaimBadge claimed={a.claimed} />
+                                                    {a.receiptNumber && (
+                                                        <Text className="text-sm text-gray-500 mt-0.5">
+                                                            Receipt: {a.receiptNumber}
+                                                        </Text>
+                                                    )}
+                                                </>
+                                            )}
+                                        </View>
                                     </View>
                                 ))}
 

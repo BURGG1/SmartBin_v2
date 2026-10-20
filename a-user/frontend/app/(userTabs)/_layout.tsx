@@ -44,7 +44,7 @@ export default function TabLayout() {
             <Tabs.Screen
                 name="rules"
                 options={{
-                    title: "Rule",
+                    title: "Activities",
                     tabBarIcon: ({ color, size }) => (
                         <Feather name="book" size={size} color={color} />
                     ),

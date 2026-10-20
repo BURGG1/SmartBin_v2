@@ -259,7 +259,8 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                             )}
                         </div>
 
-                        {!loading && !error && (
+                        {/* Only show pagination once the results exceed a single page */}
+                        {!loading && !error && total > REWARD_LIMIT && (
                             <Pagination
                                 currentPage={page}
                                 totalItems={total}

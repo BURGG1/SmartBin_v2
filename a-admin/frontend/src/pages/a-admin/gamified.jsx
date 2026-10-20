@@ -337,7 +337,7 @@ export default function Gamified() {
                     <NavigationShell />
                     <div className="py-2 md:hidden">
                         <h1 className="text-lg sm:text-3xl font-bold text-gray-900">
-                            Reward and Rules Management
+                            Rewards and Activities Management
                         </h1>
                         <p className="text-gray-500 text-xs sm:text-lg ">
                             Process reward and pointing system
@@ -349,7 +349,7 @@ export default function Gamified() {
 
                     <div className="hidden md:block">
                         <h1 className="text-lg sm:text-3xl font-bold text-gray-900">
-                            Reward and Rules Management
+                            Rewards and Activities Management
                         </h1>
                         <p className="text-gray-500 text-xs sm:text-lg ">
                             Process reward and pointing system
@@ -359,8 +359,8 @@ export default function Gamified() {
                     {/* Tabs */}
                     <div className="w-full flex overflow-x-auto bg-gray-100 rounded-full justify-center md:w-fit justify-evenly text-[#4A3B47] mb-6 p-1 space-x-2">
                         {[
-                            { id: "rewards", label: "Reward", icon: <Star size={15} /> },
-                            { id: "rules", label: "Rules", icon: <BookCheck size={15} /> },
+                            { id: "rewards", label: "Rewards", icon: <Star size={15} /> },
+                            { id: "rules", label: "Activities", icon: <BookCheck size={15} /> },
                         ].map((tab) => (
                             <button
                                 key={tab.id}
@@ -687,7 +687,7 @@ export default function Gamified() {
                                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                                             <input
                                                 type="text"
-                                                placeholder="Search rule"
+                                                placeholder="Search Activity"
                                                 value={search}
                                                 onChange={(e) => setSearch(e.target.value)}
                                                 className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl w-full sm:w-64 focus:ring-2 focus:ring-green-500 focus:border-transparent transition"
@@ -695,7 +695,7 @@ export default function Gamified() {
                                         </div>
 
                                         <button
-                                            title="Add new rule"
+                                            title="Add new activity"
                                             onClick={() => {
                                                 setRuleEditing(false);
                                                 setEditRuleData(null);
@@ -704,7 +704,7 @@ export default function Gamified() {
                                             className="cursor-pointer inline-flex items-center justify-center gap-1.5 bg-green-600 text-white font-medium px-4 py-2 rounded-xl hover:bg-green-700 transition whitespace-nowrap"
                                         >
                                             <Plus size={18} />
-                                            Add new rule
+                                            Add new activity
                                         </button>
                                     </div>
                                 </div>
@@ -810,7 +810,7 @@ export default function Gamified() {
                                                     <div className="flex justify-between items-start gap-2">
                                                         <h3 className="font-semibold text-gray-900 leading-snug">
                                                             <span className="text-gray-400 font-medium">
-                                                                Rule {ruleNumbers.get(r._id)}
+                                                                Activity {ruleNumbers.get(r._id)}
                                                             </span>{" "}
                                                             - {r.name}
                                                         </h3>

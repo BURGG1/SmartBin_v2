@@ -1,19 +1,21 @@
 import { X, Pin, Search } from "lucide-react";
 import { useState, useEffect } from "react";
 import BASE_URL from "../config";
+import ConfirmationModal from "./confirmationModal"; // adjust path if needed
 
 export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
 
-    const [households, setHouseholds]       = useState([]);
-    const [loadingHH, setLoadingHH]         = useState(true);
-    const [selectedId, setSelectedId]       = useState(null);  
-    const [selectedHH, setSelectedHH]       = useState(null);  
-    const [search, setSearch]               = useState("");
-    const [location, setLocation]           = useState("all");
-    const [quantity, setQuantity]           = useState(1);
-    const [awarding, setAwarding]           = useState(false);
-    const [error, setError]                 = useState("");
-    const [success, setSuccess]             = useState("");
+    const [households, setHouseholds] = useState([]);
+    const [loadingHH, setLoadingHH] = useState(true);
+    const [selectedId, setSelectedId] = useState(null);
+    const [selectedHH, setSelectedHH] = useState(null);
+    const [search, setSearch] = useState("");
+    const [location, setLocation] = useState("all");
+    const [quantity, setQuantity] = useState(1);
+    const [awarding, setAwarding] = useState(false);
+    const [error, setError] = useState("");
+    const [success, setSuccess] = useState("");
+    const [showConfirm, setShowConfirm] = useState(false);
 
     // ── Fetch all active households ───────────────────────────────────────────
     useEffect(() => {
@@ -25,11 +27,12 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
         setQuantity(1);
         setError("");
         setSuccess("");
+        setShowConfirm(false);
 
         const fetchHouseholds = async () => {
             setLoadingHH(true);
             try {
-                const res  = await fetch(`${BASE_URL}/api/households?limit=500`);
+                const res = await fetch(`${BASE_URL}/api/households?limit=500`);
                 const data = await res.json();
                 if (data.success) setHouseholds(data.data);
             } catch (err) {
@@ -46,11 +49,11 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
     if (!isOpen || !rule) return null;
 
     // ── Points calculation ────────────────────────────────────────────────────
-    const rulePoints   = parseInt(rule.points) || 0;
+    const rulePoints = parseInt(rule.points) || 0;
     const awardedPoints = rulePoints * quantity;
-    const currentTotal  = selectedHH?.points?.total ?? 0;
-    const newTotal      = currentTotal + awardedPoints;
-    const calculation   = `${rulePoints} × ${quantity} = ${awardedPoints}`;
+    const currentTotal = selectedHH?.points?.total ?? 0;
+    const newTotal = currentTotal + awardedPoints;
+    const calculation = `${rulePoints} × ${quantity} = ${awardedPoints}`;
 
     // ── Filtered households ───────────────────────────────────────────────────
     const filteredHouseholds = households.filter((h) => {
@@ -73,6 +76,27 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
         setSelectedHH(hh);
         setError("");
         setSuccess("");
+    };
+
+    // ── Step 1: validate, then open confirmation modal ────────────────────────
+    const handleAwardClick = () => {
+        if (!selectedId) {
+            setError("Please select a household first.");
+            return;
+        }
+        if (quantity < 1) {
+            setError("Quantity must be at least 1.");
+            return;
+        }
+        setError("");
+        setSuccess("");
+        setShowConfirm(true);
+    };
+
+    // ── Step 2: user confirmed, close confirmation and award ──────────────────
+    const handleConfirmAward = () => {
+        setShowConfirm(false);
+        handleAward();
     };
 
     // ── Award points ──────────────────────────────────────────────────────────
@@ -113,7 +137,7 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
             }
 
             setSuccess(
-                `✅ ${awardedPoints} points awarded to ${selectedHH.fullname}! New total: ${data.data.totalPoints}`
+                ` ${awardedPoints} points awarded to ${selectedHH.fullname}! New total: ${data.data.totalPoints}`
             );
 
             // Update local state so total reflects new value immediately
@@ -219,9 +243,8 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                                         <tr
                                             key={hh._id}
                                             onClick={() => handleSelect(hh)}
-                                            className={`cursor-pointer hover:bg-gray-50 ${
-                                                selectedId === hh._id ? "bg-green-50" : ""
-                                            }`}
+                                            className={`cursor-pointer hover:bg-gray-50 ${selectedId === hh._id ? "bg-green-50" : ""
+                                                }`}
                                         >
                                             <td className="px-4 py-3 font-mono text-xs text-center">
                                                 {hh._id.slice(-8).toUpperCase()}
@@ -270,18 +293,18 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                             </div>
                         </div>
 
-                        <div className="flex justify-between">
+                        <div className="flex justify-between items-center">
                             <div>
                                 <p className="text-sm text-gray-500">Points to Award</p>
                                 <p className="text-green-600 font-bold text-2xl">+{awardedPoints}</p>
                             </div>
-                            <div className="text-right">
+                            {/* <div className="text-right">
                                 <p className="text-sm text-gray-500">New Total</p>
                                 <p className="text-green-600 font-bold text-2xl">{newTotal}</p>
-                            </div>
+                            </div> */}
+                            <p className="text-xs text-gray-500 mt-2">Calculation: {calculation}</p>
                         </div>
 
-                        <p className="text-xs text-gray-400 mt-2">Calculation: {calculation}</p>
                     </div>
 
                     {/* Quantity + Submit */}
@@ -304,16 +327,24 @@ export default function AwardModal({ isOpen, onClose, rule, onAwarded }) {
                         {success && <p className="text-green-600 text-sm">{success}</p>}
 
                         <button
-                            onClick={handleAward}
+                            onClick={handleAwardClick}
                             disabled={awarding || !selectedId}
                             className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {awarding ? "Awarding..." : "Assign Points"}
+                            {awarding ? "Awarding..." : "Award Points"}
                         </button>
                     </div>
                 </div>
 
             </div>
+
+            {/* CONFIRMATION MODAL */}
+            <ConfirmationModal
+                isOpen={showConfirm}
+                onClose={() => setShowConfirm(false)}
+                onConfirm={handleConfirmAward}
+                message={`Award ${awardedPoints} points to ${selectedHH?.fullname}?`}
+            />
         </div>
     );
 }

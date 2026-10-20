@@ -356,11 +356,11 @@ const confirmCollectionByAdmin = async (binId) => {
     };
   }
 
-  if (Number(bin.fill) !== 0) {
+  if (Number(bin.fill) >= 5) {
     return {
       ok: false,
       code: 409,
-      message: "The bin's fill level is not 0% yet.",
+      message: "The bin's fill level is not less than 5% yet.",
     };
   }
 

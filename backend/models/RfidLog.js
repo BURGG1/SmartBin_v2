@@ -5,6 +5,7 @@ const rfidLogSchema = new mongoose.Schema(
     rfid: { type: String, required: true, trim: true },
     household: { type: mongoose.Schema.Types.ObjectId, ref: "Household", default: null },
     binId: { type: String, default: null, trim: true },
+    binType: { type: String, enum: ["Biodegradable", "Non-biodegradable", "Recyclable"], default: null },
     action: { type: String, enum: ["scan", "assign", "unassign", "dispose"], required: true },
     disposalOrder: { type: Number, default: null }, // global order per bin
     flagged: { type: Boolean, default: false }, 

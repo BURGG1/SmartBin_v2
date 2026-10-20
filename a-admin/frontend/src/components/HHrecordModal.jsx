@@ -544,8 +544,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                                     const time = scannedAt.toLocaleTimeString("en-US", {
                                                         hour: "2-digit", minute: "2-digit", second: "2-digit",
                                                     });
-                                                    const binTypeMatch = log.note?.match(/\((.+)\)/);
-                                                    const binType = binTypeMatch ? binTypeMatch[1] : "—";
+                                                    const binType = log.currentBinType ?? log.binType ?? "—";
                                                     return (
                                                         <tr key={log._id}>
                                                             <td className="py-3 font-medium">#{log.binId ?? "—"}</td>

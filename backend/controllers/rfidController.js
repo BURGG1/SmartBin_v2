@@ -30,6 +30,49 @@ async function logScan({
     });
 }
 
+/**
+ * Attach the current bin type to RFID logs.
+ *
+ * binType        = historical type stored in the log
+ * currentBinType = latest type from the Bin collection
+ *
+ * This does not modify the stored historical records.
+ */
+async function attachCurrentBinType(logs) {
+    if (!logs.length) return [];
+
+    const binIds = [
+        ...new Set(
+            logs
+                .map((log) => log.binId)
+                .filter(Boolean)
+        ),
+    ];
+
+    const bins = await Bin.find({
+        binId: { $in: binIds },
+    })
+        .select("binId type")
+        .lean();
+
+    const currentTypes = new Map(
+        bins.map((bin) => [bin.binId, bin.type])
+    );
+
+    return logs.map((log) => {
+        const record =
+            typeof log.toObject === "function"
+                ? log.toObject()
+                : { ...log };
+
+        return {
+            ...record,
+            currentBinType:
+                currentTypes.get(record.binId) ?? null,
+        };
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. BIN SCAN
 // POST /api/rfid/bin-scan
@@ -42,107 +85,273 @@ const binScan = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.body.rfid);
         const { binId, lat, lng } = req.body;
-        if (!rfid) return res.status(400).json({ success: false, message: "rfid is required." });
-        if (!binId) return res.status(400).json({ success: false, message: "binId is required." });
+
+        if (!rfid) {
+            return res.status(400).json({
+                success: false,
+                message: "rfid is required.",
+            });
+        }
+
+        if (!binId) {
+            return res.status(400).json({
+                success: false,
+                message: "binId is required.",
+            });
+        }
 
         const bin = await Bin.findOne({ binId }).lean();
-        if (!bin) return res.status(404).json({ success: false, message: `Bin ${binId} not found.` });
 
-        const household = await Household.findOne({ rfid, isActive: true });
+        if (!bin) {
+            return res.status(404).json({
+                success: false,
+                message: `Bin ${binId} not found.`,
+            });
+        }
+
+        const household = await Household.findOne({
+            rfid,
+            isActive: true,
+        });
+
         if (!household) {
-            await logScan({ rfid, binId, action: "scan", note: `Unregistered or inactive RFID scanned at ${binId} — access denied` });
-            return res.status(404).json({ success: false, message: "RFID not registered or inactive.", rfid });
+            await logScan({
+                rfid,
+                binId,
+                action: "scan",
+                note: `Unregistered or inactive RFID scanned at ${binId} — access denied`,
+            });
+
+            return res.status(404).json({
+                success: false,
+                message: "RFID not registered or inactive.",
+                rfid,
+            });
         }
 
-        if (lat !== undefined && lat !== null && lng !== undefined && lng !== null) {
-            await Bin.findOneAndUpdate({ binId }, { $set: { lat, lng } });
+        if (
+            lat !== undefined &&
+            lat !== null &&
+            lng !== undefined &&
+            lng !== null
+        ) {
+            await Bin.findOneAndUpdate(
+                { binId },
+                { $set: { lat, lng } }
+            );
         }
 
-        // IMPORTANT: an RFID tap is authorization only. It must not create a dispose log
-        // or advance the disposal order. The completed stamping cycle does that separately.
-        await logScan({ rfid, householdId: household._id, binId, action: "scan", note: `${household.fullname} authorized bin access at ${binId} (${bin.type})` });
+        // An RFID tap authorizes access only.
+        // It must not create a disposal log or advance disposal order.
+        await logScan({
+            rfid,
+            householdId: household._id,
+            binId,
+            action: "scan",
+            note: `${household.fullname} authorized bin access at ${binId} (${bin.type})`,
+        });
+
         return res.json({
             success: true,
             message: "Access granted. Bin opening.",
-            data: { household: household.fullname, binId, binType: bin.type, scannedAt: new Date() },
+            data: {
+                household: household.fullname,
+                binId,
+                binType: bin.type,
+                scannedAt: new Date(),
+            },
         });
     } catch (error) {
         console.error("[binScan]", error);
-        return res.status(500).json({ success: false, message: error.message });
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPLETE DISPOSAL
 // POST /api/rfid/complete-disposal
-// Idempotent: retrying the same cycleId returns the already-created disposal record.
+// Idempotent: retrying the same cycleId returns the existing disposal record.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const completeDisposal = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.body.rfid);
         const { binId, cycleId } = req.body;
-        if (!rfid || !binId || !cycleId || typeof cycleId !== "string") {
-            return res.status(400).json({ success: false, message: "rfid, binId and cycleId are required." });
+
+        if (
+            !rfid ||
+            !binId ||
+            !cycleId ||
+            typeof cycleId !== "string"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "rfid, binId and cycleId are required.",
+            });
         }
-        if (cycleId.length > 64) return res.status(400).json({ success: false, message: "cycleId is too long." });
+
+        if (cycleId.length > 64) {
+            return res.status(400).json({
+                success: false,
+                message: "cycleId is too long.",
+            });
+        }
 
         const bin = await Bin.findOne({ binId }).lean();
-        if (!bin) return res.status(404).json({ success: false, message: `Bin ${binId} not found.` });
-        const household = await Household.findOne({ rfid, isActive: true });
-        if (!household) return res.status(404).json({ success: false, message: "RFID not registered or inactive." });
 
-        const existing = await RfidLog.findOne({ binId, cycleId }).lean();
-        if (existing) {
-            return res.json({ success: true, duplicate: true, message: "Disposal already recorded.", data: { cycleId, disposalOrder: existing.disposalOrder, logId: existing._id } });
+        if (!bin) {
+            return res.status(404).json({
+                success: false,
+                message: `Bin ${binId} not found.`,
+            });
         }
 
-        // Use a dedicated atomic per-bin counter rather than countDocuments()+1.
-        // The sequence may have gaps if simultaneous duplicate requests race, but orders
-        // cannot be assigned the same value by this allocator.
+        const household = await Household.findOne({
+            rfid,
+            isActive: true,
+        });
+
+        if (!household) {
+            return res.status(404).json({
+                success: false,
+                message: "RFID not registered or inactive.",
+            });
+        }
+
+        const existing = await RfidLog.findOne({
+            binId,
+            cycleId,
+        }).lean();
+
+        if (existing) {
+            return res.json({
+                success: true,
+                duplicate: true,
+                message: "Disposal already recorded.",
+                data: {
+                    cycleId,
+                    disposalOrder: existing.disposalOrder,
+                    logId: existing._id,
+                },
+            });
+        }
+
+        // Use the dedicated atomic per-bin disposal counter.
         const DisposalSequence = require("../models/DisposalSequence");
-        // Bootstrap the sequence from historical dispose logs the first time this
-        // bin uses the new allocator, so deployment does not restart numbering at 1.
-        const sequenceExists = await DisposalSequence.findOne({ binId }).lean();
+
+        // Initialize the counter from existing historical disposal logs.
+        const sequenceExists = await DisposalSequence.findOne({
+            binId,
+        }).lean();
+
         if (!sequenceExists) {
-            const latestExisting = await RfidLog.findOne({ binId, action: "dispose" })
+            const latestExisting = await RfidLog.findOne({
+                binId,
+                action: "dispose",
+            })
                 .sort({ disposalOrder: -1 })
                 .select("disposalOrder")
                 .lean();
-            const startingValue = latestExisting && Number.isFinite(latestExisting.disposalOrder)
-                ? latestExisting.disposalOrder
-                : 0;
+
+            const startingValue =
+                latestExisting &&
+                Number.isFinite(latestExisting.disposalOrder)
+                    ? latestExisting.disposalOrder
+                    : 0;
+
             try {
                 await DisposalSequence.updateOne(
                     { binId },
-                    { $setOnInsert: { binId, value: startingValue } },
+                    {
+                        $setOnInsert: {
+                            binId,
+                            value: startingValue,
+                        },
+                    },
                     { upsert: true }
                 );
             } catch (bootstrapError) {
-                // Another completion request may have initialized the same bin.
-                if (!bootstrapError || bootstrapError.code !== 11000) throw bootstrapError;
+                // Another request may have initialized the sequence.
+                if (
+                    !bootstrapError ||
+                    bootstrapError.code !== 11000
+                ) {
+                    throw bootstrapError;
+                }
             }
         }
+
         const sequence = await DisposalSequence.findOneAndUpdate(
             { binId },
             { $inc: { value: 1 } },
             { new: true }
         );
+
+        if (!sequence) {
+            throw new Error(
+                `Could not allocate disposal sequence for ${binId}.`
+            );
+        }
+
         const disposalOrder = sequence.value;
+
         try {
             const log = await RfidLog.create({
-                rfid, household: household._id, binId, action: "dispose", disposalOrder,
+                rfid,
+                household: household._id,
+                binId,
+                binType: bin.type,
+                action: "dispose",
+                disposalOrder,
                 cycleId,
                 note: `${household.fullname} completed stamping cycle ${cycleId} at ${binId}`,
             });
-            return res.status(201).json({ success: true, duplicate: false, message: "Completed disposal recorded.", data: { cycleId, disposalOrder, logId: log._id } });
+
+            return res.status(201).json({
+                success: true,
+                duplicate: false,
+                message: "Completed disposal recorded.",
+                data: {
+                    cycleId,
+                    disposalOrder,
+                    logId: log._id,
+                },
+            });
         } catch (createError) {
-            // A concurrent retry may have won the unique cycleId index.
+            // A concurrent retry may have created this cycle already.
             if (createError && createError.code === 11000) {
-                const duplicate = await RfidLog.findOne({ binId, cycleId }).lean();
-                if (duplicate) return res.json({ success: true, duplicate: true, message: "Disposal already recorded.", data: { cycleId, disposalOrder: duplicate.disposalOrder, logId: duplicate._id } });
+                const duplicate = await RfidLog.findOne({
+                    binId,
+                    cycleId,
+                }).lean();
+
+                if (duplicate) {
+                    return res.json({
+                        success: true,
+                        duplicate: true,
+                        message: "Disposal already recorded.",
+                        data: {
+                            cycleId,
+                            disposalOrder: duplicate.disposalOrder,
+                            logId: duplicate._id,
+                        },
+                    });
+                }
             }
+
             throw createError;
         }
     } catch (error) {
         console.error("[completeDisposal]", error);
-        return res.status(500).json({ success: false, message: error.message });
+
+        return res.status(500).json({
+            success: false,
+            message: error.message,
+        });
     }
 };
 
@@ -309,8 +518,16 @@ const getRfidLogs = async (req, res) => {
         if (action) query.action = action;
         if (binId) query.binId = binId;
 
-        const parsedPage = Math.max(1, parseInt(page, 10) || 1);
-        const parsedLimit = Math.max(1, parseInt(limit, 10) || 20);
+        const parsedPage = Math.max(
+            1,
+            parseInt(page, 10) || 1
+        );
+
+        const parsedLimit = Math.min(
+            100,
+            Math.max(1, parseInt(limit, 10) || 20)
+        );
+
         const skip = (parsedPage - 1) * parsedLimit;
 
         const [logs, total] = await Promise.all([
@@ -319,16 +536,19 @@ const getRfidLogs = async (req, res) => {
                     "household",
                     "fullname address contactNumber email violation"
                 )
-                .sort({ scannedAt: -1 })
+                .sort({ scannedAt: -1, _id: -1 })
                 .skip(skip)
-                .limit(parsedLimit),
+                .limit(parsedLimit)
+                .lean(),
 
             RfidLog.countDocuments(query),
         ]);
 
+        const data = await attachCurrentBinType(logs);
+
         return res.json({
             success: true,
-            data: logs,
+            data,
             pagination: {
                 total,
                 page: parsedPage,
@@ -341,7 +561,7 @@ const getRfidLogs = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: error.message,
+            message: "Failed to retrieve RFID logs.",
         });
     }
 };
@@ -355,23 +575,33 @@ const getRfidHistory = async (req, res) => {
     try {
         const rfid = normalizeRfid(req.params.rfid);
 
+        if (!rfid) {
+            return res.status(400).json({
+                success: false,
+                message: "A valid RFID is required.",
+            });
+        }
+
         const logs = await RfidLog.find({ rfid })
             .populate(
                 "household",
                 "fullname address contactNumber email violation"
             )
-            .sort({ scannedAt: -1 });
+            .sort({ scannedAt: -1, _id: -1 })
+            .lean();
+
+        const data = await attachCurrentBinType(logs);
 
         return res.json({
             success: true,
-            data: logs,
+            data,
         });
     } catch (error) {
         console.error("[getRfidHistory]", error);
 
         return res.status(500).json({
             success: false,
-            message: error.message,
+            message: "Failed to retrieve RFID history.",
         });
     }
 };
@@ -498,7 +728,9 @@ async function findBag(binId, orders) {
         };
     }
 
-    if (new Set(logs.map((log) => log.disposalOrder)).size > 1) {
+    if (
+        new Set(logs.map((log) => log.disposalOrder)).size > 1
+    ) {
         return {
             status: 422,
             message:
@@ -531,7 +763,10 @@ const prepareBag = async (req, res, next) => {
             });
         }
 
-        const denied = await assertAssignedBin(req.user.id, binId);
+        const denied = await assertAssignedBin(
+            req.user.id,
+            binId
+        );
 
         if (denied) {
             return res.status(denied.status).json({
@@ -601,7 +836,10 @@ const scanStampImage = async (req, res) => {
             });
         }
 
-        const denied = await assertAssignedBin(req.user.id, binId);
+        const denied = await assertAssignedBin(
+            req.user.id,
+            binId
+        );
 
         if (denied) {
             return res.status(denied.status).json({
@@ -610,7 +848,9 @@ const scanStampImage = async (req, res) => {
             });
         }
 
-        const candidates = await extractStampCandidates(req.file.buffer);
+        const candidates = await extractStampCandidates(
+            req.file.buffer
+        );
 
         if (candidates.length === 0) {
             return res.status(422).json({
@@ -689,7 +929,9 @@ const flagBagByStamp = async (req, res) => {
         const household = updated.household;
 
         const householdId = String(
-            household?.householdId ?? household?._id ?? "Unknown"
+            household?.householdId ??
+            household?._id ??
+            "Unknown"
         );
 
         await createNotification({

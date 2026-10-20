@@ -3,23 +3,25 @@ import {
     Play
 } from "lucide-react";
 
-import recyc1 from "../resources/recyc1.jpg";
-import recycVid from "../resources/smartbinC.mp4";
+import maintenanceTN from "../resources/maintenanceTN.png";
+import HowToUseTN from "../resources/HowToUseTN.png";
+import howtouse from "../resources/howtouse.mp4";
+import smartbinMaintenance from "../resources/SmartBin_maintenance.mp4";
 
 const videos = [
     {
         id: 0,
         title: "System Demonstration",
         desc: "Watch how residents interact with SmartBin using QR technology.",
-        bg: recyc1,
-        video: recycVid,
+        bg: HowToUseTN,
+        video: howtouse,
     },
     {
         id: 1,
         title: "Maintenance & Operations",
         desc: "Learn how barangay personnel manage and maintain the SmartBin system.",
-        bg: recyc1,
-        video: recycVid,
+        bg: maintenanceTN,
+        video: smartbinMaintenance,
     },
 ];
 

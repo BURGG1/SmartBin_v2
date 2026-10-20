@@ -1,7 +1,7 @@
 import { QrCode, Recycle, Trophy, Leaf, ArrowRight } from "lucide-react";
 
 import recyc1 from "../resources/recyc1.jpg";
-import recycVid from "../resources/smartbinVid.mp4";
+import landingVid from "../resources/binVid1.mp4";
 
 export default function Hero({ learnMore }) {
     return (
@@ -43,7 +43,7 @@ export default function Hero({ learnMore }) {
                         {/* RIGHT */}
                         <div className="relative h-[90vh]">
                             <video
-                                src={recycVid}
+                                src={landingVid}
                                 poster={recyc1}
                                 autoPlay
                                 muted

@@ -5,7 +5,7 @@ import {
 
 import maintenanceTN from "../resources/maintenanceTN.png";
 import HowToUseTN from "../resources/HowToUseTN.png";
-import howtouse from "../resources/howtouse.mp4";
+import howtouse from "../resources/HowToUse.mp4";
 import smartbinMaintenance from "../resources/SmartBin_maintenance.mp4";
 
 const videos = [

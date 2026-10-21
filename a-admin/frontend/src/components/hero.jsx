@@ -1,7 +1,7 @@
 import { QrCode, Recycle, Trophy, Leaf, ArrowRight } from "lucide-react";
 
 import recyc1 from "../resources/recyc1.jpg";
-import landingVid from "../resources/binVid1.mp4";
+import landingVid from "../resources/binVID1.mp4";
 
 export default function Hero({ learnMore }) {
     return (

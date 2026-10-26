@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { X, Camera, Asterisk, Gift } from "lucide-react";
 import { createReward, updateReward } from "../api/rewardAPI";
@@ -88,7 +87,8 @@ export default function RewardFormModal({
             setSaving(true);
 
             const payload = {
-                name: name.trim(),
+                // The name is locked when editing: always send the original one
+                name: edit ? rewardData.name : name.trim(),
                 points: parsedPoints,
                 stocks: parsedStocks,
                 claimLimit: parsedClaimLimit,
@@ -126,10 +126,22 @@ export default function RewardFormModal({
             <div className="bg-white w-full max-w-lg rounded-2xl shadow-lg overflow-hidden">
                 {/* HEADER */}
                 <div className="flex justify-between items-center px-6 py-4 border-b">
-                    <h3 className="text-md font-semibold flex items-center gap-2">
-                        <Gift className="text-green-600" size={18} />
-                        {edit ? "Update Reward" : "Add New Reward"}
-                    </h3>
+                    <div>
+                        <h3 className="text-md font-semibold flex items-center gap-2">
+                            <Gift className="text-green-600" size={18} />
+                            {edit ? "Update Reward" : "Add New Reward"}
+                        </h3>
+
+                        {/* Name can't be edited, so it's shown as plain text instead of a field */}
+                        {edit && rewardData?.name && (
+                            <p className="text-sm text-gray-500 mt-1">
+                                Editing:{" "}
+                                <span className="font-medium text-gray-700">
+                                    {rewardData.name}
+                                </span>
+                            </p>
+                        )}
+                    </div>
 
                     <button
                         type="button"
@@ -167,28 +179,30 @@ export default function RewardFormModal({
                         )}
                     </div>
 
-                    {/* REWARD NAME */}
-                    <div>
-                        <div className="flex items-center gap-1 mb-1">
-                            <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
-                            <label
-                                htmlFor="reward-name"
-                                className="text-sm font-medium text-gray-700"
-                            >
-                                Name
-                            </label>
-                        </div>
+                    {/* REWARD NAME — only when adding; removed when editing */}
+                    {!edit && (
+                        <div>
+                            <div className="flex items-center gap-1 mb-1">
+                                <Asterisk className="text-red-500 w-4 h-4 shrink-0" />
+                                <label
+                                    htmlFor="reward-name"
+                                    className="text-sm font-medium text-gray-700"
+                                >
+                                    Name
+                                </label>
+                            </div>
 
-                        <input
-                            id="reward-name"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className={inputClass}
-                            placeholder="Name"
-                            maxLength={150}
-                            disabled={saving}
-                        />
-                    </div>
+                            <input
+                                id="reward-name"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                className={inputClass}
+                                placeholder="Name"
+                                maxLength={150}
+                                disabled={saving}
+                            />
+                        </div>
+                    )}
 
                     {/* POINTS AND STOCK */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

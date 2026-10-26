@@ -64,6 +64,14 @@ const statusColors = {
     iconColor: "text-red-600",
   },
 };
+// Human-friendly labels shown next to the status indicator icon.
+// Internal status key "good" is displayed as "Normal" (matches the
+// Status Indicators legend and the Normal stat card).
+const statusLabels = {
+  good: "Normal",
+  warning: "Warning",
+  critical: "Critical",
+};
 const typeColors = {
   Biodegradable: "bg-green-600",
   "Non-biodegradable": "bg-orange-600",
@@ -350,7 +358,7 @@ function ScheduleModal({ bin, eligible, collectorsReady, onClose, onSubmit }) {
               Set Collection Schedule
             </h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              {bin.id} - {bin.name} · <span className="capitalize">{status}</span> ({bin.fill}%)
+              {bin.id} - {bin.name} · <span>{statusLabels[status]}</span> ({bin.fill}%)
             </p>
           </div>
           <button
@@ -557,7 +565,7 @@ function ReassignCollectorModal({
             <span
               className={`inline-flex items-center gap-1 mt-2 px-2 py-0.5 text-xs font-medium rounded-full border ${fillChip}`}
             >
-              <span className="capitalize">{fillStatus}</span> · {bin.fill ?? 0}% full
+              <span>{statusLabels[fillStatus]}</span> · {bin.fill ?? 0}% full
             </span>
           </div>
           <button
@@ -1322,7 +1330,13 @@ export default function BinMonitoring() {
                             {bin.location}
                           </p>
                         </div>
-                        <StatusIcon className={style.iconColor} />
+                        {/* Status badge: indicator icon + label (Normal / Warning / Critical) */}
+                        <span
+                          className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full ${style.badge}`}
+                        >
+                          <StatusIcon size={14} />
+                          {statusLabels[status]}
+                        </span>
                       </div>
                       <span className={`mt-3 self-start px-3 py-1 text-xs text-white rounded-full ${typeColors[bin.type]}`}>
                         {bin.type}
@@ -1342,16 +1356,12 @@ export default function BinMonitoring() {
                       <div className="mt-4 text-sm space-y-1">
                         <p>Capacity: <strong>{bin.capacity}</strong></p>
                         <p>
-                          Last Emptied:{" "}
+                          Last Collected:{" "}
                           <strong>
                             {bin.lastEmptied ? bin.lastEmptied.toLocaleString() : "-"}
                           </strong>
                         </p>
                       </div>
-                      <span className={`mt-4 self-start inline-flex items-center gap-1 px-3 py-1 text-sm rounded-full ${style.badge}`}>
-                        <StatusIcon size={14} />
-                        Status: {status}
-                      </span>
                       {/* Set Schedule — hidden once scheduled, or when fill is under the minimum */}
                       {!bin.schedule && bin.fill >= MIN_FILL_TO_SCHEDULE && (
                         <button
@@ -1452,9 +1462,6 @@ export default function BinMonitoring() {
                       <p>&nbsp;</p>
                       <p>&nbsp;</p>
                     </div>
-                    <span className="mt-4 inline-flex items-center gap-1 px-3 py-1 text-sm rounded-full">
-                      &nbsp;
-                    </span>
                     <div className="mt-4 h-10" />
                     <div className="pt-4 h-24" />
                   </div>

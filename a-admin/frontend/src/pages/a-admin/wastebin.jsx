@@ -93,9 +93,11 @@ export default function WasteBin() {
     const [filter, setFilter] = useState("all");
 
     // Inline edit
-    const inputRef = useRef(null);
-    const [editingId, setEditingId] = useState(null);
+    const nameInputRef = useRef(null);
+    const [editingBin, setEditingBin] = useState(null); // bin currently open in the edit modal
+    const [editedName, setEditedName] = useState("");
     const [editedLocation, setEditedLocation] = useState("");
+    const [editError, setEditError] = useState("");
     const [saving, setSaving] = useState(false);
 
     // ── Pagination (server-side) ──
@@ -247,23 +249,47 @@ export default function WasteBin() {
         setPendingBin(null);
     }
 
-    async function handleSave(item) {
-        if (!editedLocation.trim()) return;
+    function openEditModal(item) {
+        setEditingBin(item);
+        setEditedName(item.name);
+        setEditedLocation(item.location);
+        setEditError("");
+    }
+
+    function closeEditModal() {
+        if (saving) return;
+        setEditingBin(null);
+        setEditError("");
+    }
+
+    async function handleSave() {
+        if (!editingBin) return;
+        if (!editedName.trim() || !editedLocation.trim()) {
+            setEditError("Bin name and location are required.");
+            return;
+        }
         setSaving(true);
+        setEditError("");
         try {
-            const res = await fetch(`${API}/${item._id}`, {
+            const res = await fetch(`${API}/${editingBin._id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ location: editedLocation }),
+                body: JSON.stringify({
+                    name: editedName.trim(),
+                    location: editedLocation.trim(),
+                }),
             });
             const data = await res.json();
 
             if (data.success) {
-                setEditingId(null);
+                setEditingBin(null);
                 fetchBins(); // reflect the server's actual saved value
+            } else {
+                setEditError(data.message || "Failed to save changes.");
             }
         } catch (err) {
             console.error("Save failed:", err);
+            setEditError("Network error. Please try again.");
         } finally {
             setSaving(false);
         }
@@ -283,8 +309,8 @@ export default function WasteBin() {
     }
 
     useEffect(() => {
-        if (editingId && inputRef.current) inputRef.current.focus();
-    }, [editingId]);
+        if (editingBin && nameInputRef.current) nameInputRef.current.focus();
+    }, [editingBin]);
 
     // Only pad the table out to a fixed number of rows once there's more
     // than one page — on a single page, let the table hug its real content.
@@ -383,58 +409,35 @@ export default function WasteBin() {
                                 <p className="text-center text-gray-400 py-8">No bins found.</p>
                             ) : (
                                 <table className="w-full min-w-[800px]">
-                                    <thead className="bg-gray-50 text-left">
+                                    <thead className="bg-gray-50 text-center">
                                         <tr>
                                             <th className="px-4 py-3 text-sm font-semibold">Bin ID</th>
                                             <th className="px-4 py-3 text-sm font-semibold">Bin Name</th>
                                             <th className="px-4 py-3 text-sm font-semibold">Bin Type</th>
                                             <th className="px-4 py-3 text-sm font-semibold">Capacity</th>
                                             <th className="px-4 py-3 text-sm font-semibold">Location</th>
-                                            <th className="px-4 py-3 text-sm font-semibold">Action</th>
+                                            <th className="px-6 py-3 text-sm font-semibold">Action</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {binsData.map((item) => (
-                                            <tr key={item._id} className="hover:bg-gray-50 text-sm md:text-[16px]">
+                                            <tr key={item._id} className="text-center hover:bg-gray-50 text-sm md:text-[16px]">
                                                 <td className="px-4 py-3">{item.id}</td>
+
                                                 <td className="px-4 py-3 font-medium">{item.name}</td>
                                                 <td className="px-4 py-3 font-medium">{item.type}</td>
                                                 <td className="px-4 py-3 text-gray-600">{item.capacity}</td>
 
-                                                <td className="px-4 py-3 w-30">
-                                                    <input
-                                                        className="outline-none pl-2 border-b border-transparent focus:border-gray-300 rounded"
-                                                        type="text"
-                                                        ref={editingId === item._id ? inputRef : null}
-                                                        value={editingId === item._id ? editedLocation : item.location}
-                                                        disabled={editingId !== item._id}
-                                                        onChange={(e) => setEditedLocation(e.target.value)}
-                                                    />
-                                                </td>
+                                                <td className="px-4 py-3">{item.location}</td>
 
-                                                <td className="px-4 py-3">
-                                                    <div className="flex flex-row gap-2">
-                                                        {editingId === item._id ? (
-                                                            <button
-                                                                className="bg-blue-600 cursor-pointer text-white px-3 py-1 rounded-lg disabled:opacity-50"
-                                                                disabled={saving}
-                                                                onClick={() => handleSave(item)}
-                                                            >
-                                                                {saving ? "Saving..." : "Save"}
-                                                            </button>
-                                                        ) : (
-                                                            <button
-                                                                className="flex justify-center items-center gap-1 bg-green-600 text-white cursor-pointer px-3 py-1 rounded-lg"
-                                                                onClick={() => {
-                                                                    setEditingId(item._id);
-                                                                    setEditedLocation(item.location);
-                                                                }}
-                                                            >
-                                                                <Pencil size={14} />
-                                                                Edit
-                                                            </button>
-                                                        )}
-                                                    </div>
+                                                <td className="flex justify-center px-3 py-3">
+                                                    <button
+                                                        className="flex justify-center items-center gap-1 bg-green-600 text-white cursor-pointer px-3 py-1 rounded-lg hover:bg-green-700 transition"
+                                                        onClick={() => openEditModal(item)}
+                                                    >
+                                                        <Pencil size={14} />
+                                                        Edit
+                                                    </button>
                                                 </td>
                                             </tr>
                                         ))}
@@ -654,6 +657,79 @@ export default function WasteBin() {
                             >
                                 <Plus size={16} />
                                 {adding ? "Adding..." : "Add"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Edit Bin Modal ────────────────────────────────────────── */}
+            {editingBin && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-md rounded-2xl shadow-lg overflow-hidden max-h-[90vh] flex flex-col">
+
+                        {/* HEADER */}
+                        <div className="flex justify-between items-center px-6 py-4 border-b">
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                <Pencil size={18} className="text-green-600" />
+                                Edit {editingBin.id}
+                            </h3>
+                            <button onClick={closeEditModal} disabled={saving}>
+                                <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
+                            </button>
+                        </div>
+
+                        {/* BODY */}
+                        <div className="p-6 overflow-y-auto space-y-4">
+                            {editError && (
+                                <p className="text-sm text-red-600">{editError}</p>
+                            )}
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Bin Name
+                                </label>
+                                <input
+                                    ref={nameInputRef}
+                                    type="text"
+                                    value={editedName}
+                                    onChange={(e) => setEditedName(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                                    className="px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    placeholder="Bin Name.."
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Location
+                                </label>
+                                <input
+                                    type="text"
+                                    value={editedLocation}
+                                    onChange={(e) => setEditedLocation(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                                    className="px-3 py-2 rounded-lg border w-full focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    placeholder="Bin Location.."
+                                />
+                            </div>
+                        </div>
+
+                        {/* FOOTER */}
+                        <div className="flex justify-end gap-2 px-6 py-4 border-t">
+                            <button
+                                onClick={closeEditModal}
+                                disabled={saving}
+                                className="cursor-pointer bg-gray-600 text-white px-5 py-2 rounded-lg hover:bg-gray-700 transition disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSave}
+                                disabled={saving}
+                                className="cursor-pointer bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                            >
+                                {saving ? "Saving..." : "Save"}
                             </button>
                         </div>
                     </div>

@@ -38,6 +38,9 @@ const FETCH_ALL_LIMIT = 1000; // load everything, then filter/paginate client-si
 
 const toList = (res) => (Array.isArray(res) ? res : res?.data ?? []);
 
+// How many household redemptions of this reward are not yet confirmed (sent by the server)
+const pendingOf = (r) => Number(r?.pendingRedemptions) || 0;
+
 // Every search term must appear somewhere in the item's searchable text
 const matchesSearch = (parts, query) => {
     const q = query.trim().toLowerCase();
@@ -105,6 +108,10 @@ export default function Gamified() {
     const [openMenuId, setOpenMenuId] = useState(null);
     const [removeTarget, setRemoveTarget] = useState(null); // { type: "reward" | "rule", item }
     const [removing, setRemoving] = useState(false);
+    const [removeError, setRemoveError] = useState("");       // reason a removal is blocked
+    const [checkingRemove, setCheckingRemove] = useState(false); // asking server about pending redemptions
+    const [removeInfo, setRemoveInfo] = useState(null);          // { pending, households } when removal is blocked
+    const removeRequestRef = useRef(0);                          // ignores answers that arrive after the modal closed
     const menuRef = useRef(null);
 
     // Local filtering is instant, so no debounce is needed
@@ -284,6 +291,61 @@ export default function Gamified() {
         setSearch("");
     }, [activeTab]);
 
+    // Safe lookup of pending redemptions. Returns { pending, households },
+    // or null if the server couldn't be reached / answered badly.
+    const fetchPendingInfo = async (rewardId) => {
+        try {
+            const res = await fetch(`${BASE_URL}/api/rewards/${rewardId}/pending`);
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (!data?.success) return null;
+            return {
+                pending: Number(data.pending) || 0,
+                households: Array.isArray(data.households) ? data.households : [],
+            };
+        } catch (err) {
+            console.error(err);
+            return null;
+        }
+    };
+
+    // Close the remove modal and clear everything inside it
+    const closeRemoveModal = () => {
+        removeRequestRef.current += 1; // ignore any answer still on its way
+        setRemoveTarget(null);
+        setRemoveError("");
+        setRemoveInfo(null);
+        setCheckingRemove(false);
+    };
+
+    // Open the remove modal. For rewards, check pending redemptions first.
+    // If any household has not redeemed yet, the modal explains why and
+    // the Confirm button is not shown.
+    const openRemove = async (type, item) => {
+        setOpenMenuId(null);
+        setRemoveError("");
+        setRemoveInfo(null);
+        setRemoveTarget({ type, item });
+
+        if (type !== "reward") return; // activities don't need this check
+
+        const requestId = ++removeRequestRef.current;
+
+        // The list already told us it's blocked -> show the reason right away
+        if (pendingOf(item) > 0) {
+            setRemoveInfo({ pending: pendingOf(item), households: [] });
+        }
+
+        setCheckingRemove(true);
+        const info = await fetchPendingInfo(item._id);
+        if (requestId !== removeRequestRef.current) return; // modal was closed meanwhile
+
+        // Trust the fresh answer from the server. If the check failed (null),
+        // keep what we knew; the server still refuses the delete anyway.
+        if (info) setRemoveInfo(info.pending > 0 ? info : null);
+        setCheckingRemove(false);
+    };
+
     // Remove a reward or a rule (whichever is in removeTarget)
     const handleConfirmRemove = async () => {
         if (!removeTarget) return;
@@ -291,19 +353,33 @@ export default function Gamified() {
 
         try {
             setRemoving(true);
+            setRemoveError("");
 
             if (type === "reward") {
                 await deleteReward(item._id);
-                setRemoveTarget(null);
+                closeRemoveModal();
                 await fetchRewards();
             } else {
                 await deleteRule(item._id);
-                setRemoveTarget(null);
+                closeRemoveModal();
                 await fetchRules();
             }
         } catch (err) {
             console.error(err);
-            alert(err.message || `Failed to remove ${type}`);
+
+            if (type === "reward") {
+                // Maybe the server refused because of pending redemptions.
+                // Ask it again so the modal can show the exact reason.
+                const info = await fetchPendingInfo(item._id);
+                if (info && info.pending > 0) {
+                    setRemoveInfo(info);
+                    fetchRewards(); // refresh the counts on the cards
+                    return;
+                }
+            }
+
+            // Anything else: friendly message (the technical details are in the console)
+            setRemoveError(`Something went wrong while removing this ${type}. Please try again.`);
         } finally {
             setRemoving(false);
         }
@@ -326,6 +402,10 @@ export default function Gamified() {
     const logEmptyRows = logTotalPages > 1
         ? Math.max(0, LOGS_PER_PAGE - rewardLogs.length)
         : 0;
+
+    // Removal is blocked when households still have unredeemed rewards
+    const blockedPending = removeInfo?.pending ?? 0;
+    const isBlocked = blockedPending > 0;
 
     return (
         <div className="flex-1">
@@ -492,16 +572,27 @@ export default function Gamified() {
                                                             </button>
 
                                                             {openMenuId === item._id && (
-                                                                <div className="absolute right-0 top-6 mt-1 w-28 bg-white border border-gray-100 rounded-lg shadow-lg overflow-hidden">
+                                                                <div className="absolute right-0 top-6 mt-1 bg-white w-max border border-gray-100 rounded-lg shadow-lg overflow-hidden">
                                                                     <button
-                                                                        onClick={() => {
-                                                                            setRemoveTarget({ type: "reward", item });
-                                                                            setOpenMenuId(null);
-                                                                        }}
-                                                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition"
+                                                                        onClick={() => openRemove("reward", item)}
+                                                                        title={
+                                                                            pendingOf(item) > 0
+                                                                                ? `Can't remove: ${pendingOf(item)} redemption(s) not yet redeemed`
+                                                                                : "Remove reward"
+                                                                        }
+                                                                        aria-disabled={pendingOf(item) > 0}
+                                                                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition ${pendingOf(item) > 0
+                                                                            ? "text-gray-400 bg-gray-50 cursor-not-allowed"
+                                                                            : "text-red-600 hover:bg-red-50 cursor-pointer"
+                                                                            }`}
                                                                     >
                                                                         <Trash2 size={14} />
                                                                         Remove
+                                                                        {pendingOf(item) > 0 && (
+                                                                            <span className="ml-auto text-[9px] font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                                                                                {pendingOf(item)} reward has not yet redeemed
+                                                                            </span>
+                                                                        )}
                                                                     </button>
                                                                 </div>
                                                             )}
@@ -792,10 +883,7 @@ export default function Gamified() {
                                                         {openMenuId === r._id && (
                                                             <div className="absolute right-0 top-6 mt-1 w-28 bg-white border border-gray-100 rounded-lg shadow-lg overflow-hidden">
                                                                 <button
-                                                                    onClick={() => {
-                                                                        setRemoveTarget({ type: "rule", item: r });
-                                                                        setOpenMenuId(null);
-                                                                    }}
+                                                                    onClick={() => openRemove("rule", r)}
                                                                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition"
                                                                 >
                                                                     <Trash2 size={14} />
@@ -947,7 +1035,7 @@ export default function Gamified() {
                             <div className="flex justify-between items-center px-6 py-4 border-b">
                                 <h3 className="text-md">Confirmation Modal</h3>
                                 <button
-                                    onClick={() => setRemoveTarget(null)}
+                                    onClick={closeRemoveModal}
                                     disabled={removing}
                                 >
                                     <X className="text-gray-500 cursor-pointer hover:text-gray-800" />
@@ -956,26 +1044,96 @@ export default function Gamified() {
 
                             <main className="flex flex-col justify-center gap-5 p-5 items-center">
 
-                                <h1 className="text-lg font-bold text-center">
-                                    Are you sure to remove{" "}
-                                    <span className="text-red-600">{removeTarget.item.name}</span>?
-                                </h1>
-                                <p className="text-sm text-gray-500 text-center -mt-3">
-                                    This {removeTarget.type} will be permanently removed. This can't be undone.
-                                </p>
+                                {isBlocked ? (
+                                    /* ── Blocked: households have not redeemed yet ── */
+                                    <div className="flex flex-col gap-4 max-w-md w-full">
+                                        <h1 className="text-lg font-bold text-center">
+                                            Can't remove{" "}
+                                            <span className="text-red-600">{removeTarget.item.name}</span>
+                                        </h1>
+
+                                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900 space-y-2">
+                                            <p>
+                                                <span className="font-semibold">{blockedPending}</span>{" "}
+                                                {blockedPending === 1 ? "household has" : "households have"} not yet
+                                                redeemed this reward. Removing it now would lose track of
+                                                rewards that residents already paid points for.
+                                            </p>
+
+                                            {removeInfo.households.length > 0 && (
+                                                <ul className="space-y-1 pt-1">
+                                                    {removeInfo.households.map((h) => (
+                                                        <li key={h.logId} className="flex justify-between gap-3 text-xs">
+                                                            <span className="font-medium">{h.name}</span>
+                                                            <span className="text-amber-700">
+                                                                {h.householdId} · {new Date(h.date).toLocaleDateString("en-CA")}
+                                                            </span>
+                                                        </li>
+                                                    ))}
+                                                    {blockedPending > removeInfo.households.length && (
+                                                        <li className="text-xs text-amber-700">
+                                                            …and {blockedPending - removeInfo.households.length} more
+                                                        </li>
+                                                    )}
+                                                </ul>
+                                            )}
+                                        </div>
+
+                                        <p className="text-sm text-gray-500 text-center">
+                                            Open the reward's history and press <b>Redeem reward</b> for each
+                                            household. Once every one is redeemed, you can remove it.
+                                        </p>
+                                    </div>
+                                ) : checkingRemove ? (
+                                    <p className="text-sm text-gray-500 py-4">Checking redemptions...</p>
+                                ) : (
+                                    <>
+                                        <h1 className="text-lg font-bold text-center">
+                                            Are you sure to remove{" "}
+                                            <span className="text-red-600">{removeTarget.item.name}</span>?
+                                        </h1>
+
+                                        {removeError ? (
+                                            <p className="text-sm text-red-600 text-center -mt-3 max-w-sm">
+                                                {removeError}
+                                            </p>
+                                        ) : (
+                                            <p className="text-sm text-gray-500 text-center -mt-3">
+                                                This {removeTarget.type} will be permanently removed. This can't be undone.
+                                            </p>
+                                        )}
+                                    </>
+                                )}
 
                                 <div className="flex gap-3 items-center">
+                                    {isBlocked && (
+                                        <button
+                                            onClick={() => {
+                                                const name = removeTarget.item.name;
+                                                closeRemoveModal();
+                                                setClickReward(name);
+                                                setOpenRewardModal(true);
+                                            }}
+                                            className="bg-gray-900 cursor-pointer text-white p-2 px-5 rounded-lg">
+                                            View redemptions
+                                        </button>
+                                    )}
+
+                                    {/* Confirm only shows when nothing is blocking the removal */}
+                                    {!isBlocked && !checkingRemove && (
+                                        <button
+                                            onClick={handleConfirmRemove}
+                                            disabled={removing}
+                                            className="bg-green-600 cursor-pointer text-white p-2 px-5 rounded-lg disabled:opacity-50">
+                                            {removing ? "Removing..." : removeError ? "Try again" : "Confirm"}
+                                        </button>
+                                    )}
+
                                     <button
-                                        onClick={handleConfirmRemove}
-                                        disabled={removing}
-                                        className="bg-green-600 cursor-pointer text-white p-2 px-5 rounded-lg disabled:opacity-50">
-                                        {removing ? "Removing..." : "Confirm"}
-                                    </button>
-                                    <button
-                                        onClick={() => setRemoveTarget(null)}
+                                        onClick={closeRemoveModal}
                                         disabled={removing}
                                         className="bg-gray-600 cursor-pointer text-white p-2 px-5 rounded-lg disabled:opacity-50">
-                                        Cancel
+                                        {isBlocked ? "Close" : "Cancel"}
                                     </button>
                                 </div>
                             </main>

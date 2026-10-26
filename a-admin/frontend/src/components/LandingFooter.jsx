@@ -1,14 +1,29 @@
-import { Trash2, MapPin, Phone, Mail, Facebook, Twitter, Instagram, MailIcon } from "lucide-react";
+import { Trash2, MapPin, Mail, Facebook, Twitter, Instagram } from "lucide-react";
 
-const footerLinks = {
-  Company: ["About", "Features", "Contact"],
-  Resources: ["Documentation", "User Guide", "Support"],
-};
+const EMAIL = "smartbin2000@gmail.com";
+const GMAIL_COMPOSE = `https://mail.google.com/mail/?view=cm&fs=1&to=${EMAIL}`;
 
 const socialLinks = [
-  { name: "Facebook",  icon: <Facebook  className="w-4 h-4 text-gray-300" /> },
-  { name: "Twitter",   icon: <Twitter   className="w-4 h-4 text-gray-300" /> },
-  { name: "Instagram", icon: <Instagram className="w-4 h-4 text-gray-300" /> },
+  {
+    name: "Facebook",
+    href: "https://www.facebook.com",
+    icon: <Facebook className="w-4 h-4 text-gray-300" />,
+  },
+  {
+    name: "Twitter",
+    href: "https://twitter.com",
+    icon: <Twitter className="w-4 h-4 text-gray-300" />,
+  },
+  {
+    name: "Instagram",
+    href: "https://www.instagram.com",
+    icon: <Instagram className="w-4 h-4 text-gray-300" />,
+  },
+  {
+    name: "Gmail",
+    href: GMAIL_COMPOSE,
+    icon: <Mail className="w-4 h-4 text-gray-300" />,
+  },
 ];
 
 export default function LandingFooter() {
@@ -36,21 +51,30 @@ export default function LandingFooter() {
                 Bulacan State University<br />Hagonoy Campus
               </span>
             </div>
-          
+
+            <div className="flex items-start gap-2">
+              <Mail className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-500" />
+              <a
+                href={`mailto:${EMAIL}`}
+                className="hover:text-green-400 transition-colors"
+              >
+                {EMAIL}
+              </a>
+            </div>
           </div>
         </div>
-
-        
 
         {/* Social */}
         <div>
           <h4 className="text-white font-semibold mb-4">Contact</h4>
           <div className="flex gap-3 flex-wrap">
-            {socialLinks.map(({ name, icon }) => (
+            {socialLinks.map(({ name, icon, href, external = true }) => (
               <a
                 key={name}
-                href="#"
+                href={href}
                 aria-label={name}
+                title={name}
+                {...(external && { target: "_blank", rel: "noopener noreferrer" })}
                 className="w-9 h-9 rounded-lg bg-gray-800 hover:bg-green-600 transition-colors flex items-center justify-center"
               >
                 {icon}
@@ -64,10 +88,6 @@ export default function LandingFooter() {
       <div className="border-t border-gray-800">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-gray-500">
           <span>© 2026 Bulacan State University – Hagonoy Campus. All rights reserved.</span>
-          {/* <div className="flex gap-5">
-            <a href="#" className="hover:text-gray-300 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-gray-300 transition-colors">Terms of Service</a>
-          </div> */}
         </div>
       </div>
     </footer>

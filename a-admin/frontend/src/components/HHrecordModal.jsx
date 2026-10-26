@@ -1,6 +1,5 @@
-import { X, Calendar, Clipboard, Trash2, Award } from "lucide-react";
+import { X, Clipboard, Trash2, Award, ShieldAlert } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ShieldAlert } from "lucide-react";
 import AssignPointsModal from "./AssignPointsModal";
 import ClearViolationModal from "./ClearViolation";
 import Pagination from "./Pagination";
@@ -28,10 +27,30 @@ function formatDate(dateStr) {
     });
 }
 
-// YYYY-MM-DD for a given date value, used both to build the `from`/`to`
-// query params and to read a record's own date field for comparison.
+// Local YYYY-MM-DD for a given date value. Uses the local timezone (not UTC)
+// so it matches what the tables display and what <input type="date"> returns.
+// Used both to build the `from`/`to` query params and to read a record's own
+// date field for comparison.
 function toDateStr(d) {
-    return new Date(d).toISOString().split("T")[0];
+    return new Date(d).toLocaleDateString("en-CA");
+}
+
+
+// True when a record's local date falls inside the selected from/to range.
+// Safety net: even if a backend route ignores `from`/`to`, records from other
+// days are never shown, so a day with no records shows the empty message.
+function inRange(dateValue, from, to) {
+    if (!from && !to) return true;
+    if (!dateValue) return false;
+    const day = toDateStr(dateValue);
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    return true;
+}
+
+// Empty-state message that mentions the selected date when a filter is set.
+function emptyMessage(fromDate, fallback) {
+    return fromDate ? `No records found on ${formatDate(`${fromDate}T00:00:00`)}` : fallback;
 }
 
 export default function HouseholdRecordModal({ isOpen, onClose, household: householdProp }) {
@@ -150,8 +169,10 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
 
             if (data.success) {
                 // Safety net in case the backend ever returns mixed actions
-                const filtered = data.data.filter((log) => log.action === "dispose");
-                const serverTotal = data.pagination?.total ?? filtered.length;
+                const filtered = data.data.filter(
+                    (log) => log.action === "dispose" && inRange(log.scannedAt, effectiveFrom, effectiveTo)
+                );
+                const serverTotal = filtered.length === 0 ? 0 : (data.pagination?.total ?? filtered.length);
 
                 if (filtered.length > DISPOSAL_LIMIT) {
                     // The backend handed back more than one page's worth —
@@ -227,8 +248,8 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
             const data = await res.json();
 
             if (data.success) {
-                setActivityLogs(data.data);
-                setActivityTotal(data.pagination?.total ?? 0);
+                setActivityLogs(data.data.filter((a) => inRange(a.date, effectiveFrom, effectiveTo)));
+                setActivityTotal(data.data.some((a) => inRange(a.date, effectiveFrom, effectiveTo)) ? (data.pagination?.total ?? 0) : 0);
                 setActivityPage(pageArg);
             } else {
                 setActivityError("Failed to load activity logs.");
@@ -244,12 +265,8 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
     // Request-limited the same way as disposal/activity: an in-flight
     // request is aborted before starting a new one, so a slow older
     // response can't land after a newer one and overwrite it with stale
-    // violation data.
-    //
-    // FIX: this previously never sent from/to at all, so the date filter
-    // had no effect on this tab. It now respects the filter, and — same
-    // as the other two tabs — defaults to the latest day's records when
-    // no filter is set.
+    // violation data. Respects the date filter and defaults to the latest
+    // day's records when no filter is set.
     const fetchViolationLogs = useCallback(async (pageArg = 1) => {
         if (!householdProp?._id) return;
 
@@ -298,8 +315,8 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
             });
             const data = await res.json();
             if (data.success) {
-                setViolationLogs(data.data);
-                setViolationTotal(data.pagination?.total ?? 0);
+                setViolationLogs(data.data.filter((v) => inRange(v.createdAt, effectiveFrom, effectiveTo)));
+                setViolationTotal(data.data.some((v) => inRange(v.createdAt, effectiveFrom, effectiveTo)) ? (data.pagination?.total ?? 0) : 0);
                 setViolationPage(pageArg);
             } else {
                 setViolationError("Failed to load violation logs.");
@@ -333,7 +350,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
         if (!isOpen) return;
         if (activeTab === "reward") fetchActivityLogs(1);
         if (activeTab === "disposal") fetchDisposalLogs(1);
-        if (activeTab === "violations") fetchViolationLogs(1); //remove nalang if not needed
+        if (activeTab === "violations") fetchViolationLogs(1);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fromDate, toDate]);
 
@@ -414,35 +431,41 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                 <div className="bg-white w-full max-h-[90vh] overflow-y-auto max-w-5xl rounded-2xl shadow-lg overflow-hidden">
 
                     {/* HEADER */}
-                    <div className="flex justify-between items-center px-5 py-1 border-b">
-                        <h3 className="text-gray-600 text-sm">{fullname}'s Record</h3>
-                        <button onClick={onClose}>
+                    <div className="relative flex justify-center items-center px-10 py-2 border-b">
+                        <h3 className="text-gray-800 text-lg md:text-xl font-bold text-center">
+                            {fullname}'s Record
+                        </h3>
+                        <button
+                            onClick={onClose}
+                            className="absolute right-4 top-1/2 -translate-y-1/2"
+                            aria-label="Close"
+                        >
                             <X className="w-5 h-5 text-gray-500 hover:text-red-400 cursor-pointer" />
                         </button>
                     </div>
 
                     {/* INFO */}
                     <div className="w-full flex flex-col">
-                        <div className="w-full flex flex-col md:flex-row justify-between px-6 py-4 border-b">
+                        <div className="w-full flex flex-col md:flex-row justify-between gap-x-4 px-4 py-2 border-b">
                             <div className="flex-1 text-left space-y-0.5">
-                                <p className="text-sm">ID: <span className="font-semibold">{householdId}</span></p>
-                                <p className="text-sm">Name: <span className="font-semibold">{fullname}</span></p>
-                                <p className="text-sm">Address: <span className="font-semibold">{address}</span></p>
-                                <p className="text-sm">Age: <span className="font-semibold">{age !== null ? `${age} yrs old` : "—"}</span></p>
-                                <p className="text-sm">Members: <span className="font-semibold">{familyMembers}</span></p>
-                                <p className="text-sm">Registered: <span className="font-semibold">{registeredSince}</span></p>
+                                <p className="text-base">ID: <span className="font-semibold">{householdId}</span></p>
+                                <p className="text-base">Name: <span className="font-semibold">{fullname}</span></p>
+                                <p className="text-base">Address: <span className="font-semibold">{address}</span></p>
+                                <p className="text-base">Age: <span className="font-semibold">{age !== null ? `${age} yrs old` : "—"}</span></p>
+                                <p className="text-base">Members: <span className="font-semibold">{familyMembers}</span></p>
+                                <p className="text-base">Registered: <span className="font-semibold">{registeredSince}</span></p>
                             </div>
                             <div className="flex-1 text-left space-y-0.5">
-                                <p className="text-sm">Contact: <span className="font-semibold">{contact}</span></p>
-                                <p className="text-sm">Email: <span className="font-semibold">{email}</span></p>
-                                <p className="text-sm">RFID: <span className="font-semibold font-mono">{rfid}</span></p>
-                                <p className="text-sm">
+                                <p className="text-base">Contact: <span className="font-semibold">{contact}</span></p>
+                                <p className="text-base">Email: <span className="font-semibold">{email}</span></p>
+                                <p className="text-base">RFID: <span className="font-semibold font-mono">{rfid}</span></p>
+                                <p className="text-base">
                                     Points:{" "}
                                     <span className="font-semibold text-green-600 transition-all duration-300">
                                         {points}
                                     </span>
                                 </p>
-                                <p className="text-sm">
+                                <p className="text-base">
                                     Violations:{" "}
                                     {violation === 0 ? (
                                         <span className="font-semibold">No violation</span>
@@ -456,10 +479,9 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                         </div>
 
                         {/* Date filter + Add Points */}
-                        <div className="w-full flex flex-col gap-2 md:flex-row px-6 py-2 border-b">
+                        <div className="w-full flex flex-col gap-2 md:flex-row px-4 py-2 border-b">
                             <div className="flex-1 flex items-center gap-2 w-auto">
-                                <Calendar size={16} />
-                                <p className="text-sm">Date:</p>
+                                <p className="text-base">Date:</p>
                                 <input
                                     type="date"
                                     value={fromDate}
@@ -469,7 +491,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                         setFromDate(val);
                                         setToDate(val);
                                     }}
-                                    className="border rounded-lg px-3 py-2 text-sm w-50"
+                                    className="border rounded-lg px-3 py-1.5 text-sm w-50"
                                 />
                             </div>
                             <div className="flex-1 flex justify-center lg:justify-end gap-2">
@@ -485,7 +507,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                     </div>
 
                     {/* TABS */}
-                    <div className="w-full flex overflow-x-auto bg-gray-200 rounded-tr-3xl rounded-tl-3xl mt-3 ml-1 px-1 justify-center md:w-fit justify-evenly text-[#4A3B47] pt-1 space-x-2">
+                    <div className="w-full flex overflow-x-auto bg-gray-200 rounded-tr-3xl rounded-tl-3xl mt-2 ml-2 px-1 justify-center md:w-fit justify-evenly text-[#4A3B47] pt-1 space-x-2">
                         {[
                             { id: "disposal", label: "Disposal Log", icon: <Trash2 size={15} /> },
                             { id: "reward", label: "Activity Log", icon: <Clipboard size={15} /> },
@@ -534,7 +556,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                             {disposalLogs.length === 0 ? (
                                                 <tr>
                                                     <td colSpan="5" className="text-center py-6 text-gray-500">
-                                                        No records found for selected dates
+                                                        {emptyMessage(fromDate, "No records found for selected dates")}
                                                     </td>
                                                 </tr>
                                             ) : (
@@ -608,7 +630,7 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                             {activityLogs.length === 0 ? (
                                                 <tr>
                                                     <td colSpan="5" className="text-center py-6 text-gray-500">
-                                                        No records found
+                                                        {emptyMessage(fromDate, "No records found")}
                                                     </td>
                                                 </tr>
                                             ) : (
@@ -651,7 +673,6 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                         </div>
                     )}
 
-                    {/* remove nalang if not needed */}
                     {/* VIOLATION LOG */}
                     {activeTab === "violations" && (
                         <div className="px-2">
@@ -678,11 +699,13 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                         <tbody className="text-center">
                                             {violationLogs.length === 0 ? (
                                                 <tr>
-                                                    <td colSpan="8" className="py-6 text-gray-500">No violations on record</td>
+                                                    <td colSpan="8" className="py-6 text-gray-500">
+                                                        {emptyMessage(fromDate, "No violations on record")}
+                                                    </td>
                                                 </tr>
                                             ) : (
                                                 violationLogs.map((log) => {
-                                                    // Disabled unless the household has 2+ violations,
+                                                    // Disabled when the household has no violations,
                                                     // and permanently disabled for a violation that
                                                     // has already been cleared.
                                                     const alreadyCleared = clearedIds.has(log._id);

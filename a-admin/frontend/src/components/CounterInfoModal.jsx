@@ -195,7 +195,6 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                         )}
                     </div>
                     <div className="flex items-center gap-2 w-auto">
-                        <Calendar className="w-4 h-4 md:w-5 md:h-5" />
                         <p>Date Collected:</p>
                         <input
                             type="date"

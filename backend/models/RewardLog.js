@@ -19,4 +19,7 @@ const rewardLogSchema = new mongoose.Schema(
 rewardLogSchema.index({ household: 1, createdAt: -1 });
 rewardLogSchema.index({ household: 1, reward: 1, createdAt: -1 });
 
+// Speeds up "how many logs of this reward are not redeemed yet?" (used before deleting a reward)
+rewardLogSchema.index({ reward: 1, redeemed: 1 });
+
 module.exports = mongoose.model("RewardLog", rewardLogSchema);

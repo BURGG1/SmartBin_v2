@@ -1,11 +1,32 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Recycle, Menu, X, Trash2 } from "lucide-react";
+import { Menu, X, Trash2, ArrowLeft } from "lucide-react";
 
-export default function Header({ onAboutClick, onMaintenanceClick, onCTAClick }) {
+// Change this to your actual dashboard route.
+const DASHBOARD_PATH = "/dashboard";
+
+// Same keys the Navbar uses (set at login, cleared on logout).
+const isLoggedIn = () => {
+  const token = sessionStorage.getItem("token");
+  if (!token) return false;
+
+  // Treat an expired JWT as logged out.
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    if (payload.exp && payload.exp * 1000 < Date.now()) return false;
+  } catch {
+    // Not a decodable JWT; fall back to "token exists".
+  }
+
+  return true;
+};
+
+export default function Header({ onAboutClick, onMaintenanceClick }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
-  
+
+  const loggedIn = isLoggedIn();
+
   const navLinks = [
     { label: "Home", onClick: () => window.scrollTo({ top: 0, behavior: "smooth" }) },
     { label: "About", onClick: onAboutClick },
@@ -15,6 +36,16 @@ export default function Header({ onAboutClick, onMaintenanceClick, onCTAClick })
   const handleNavClick = (onClick) => {
     onClick?.();
     setMenuOpen(false);
+  };
+
+  const goToDashboard = () => {
+    setMenuOpen(false);
+    navigate(DASHBOARD_PATH);
+  };
+
+  const goToSignIn = () => {
+    setMenuOpen(false);
+    navigate("/");
   };
 
   return (
@@ -41,12 +72,23 @@ export default function Header({ onAboutClick, onMaintenanceClick, onCTAClick })
               {link.label}
             </button>
           ))}
-          <button
-            onClick={() => navigate("/")}
-            className="rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600"
-          >
-            Sign In
-          </button>
+
+          {loggedIn ? (
+            <button
+              onClick={goToDashboard}
+              className="inline-flex items-center gap-2 rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Dashboard
+            </button>
+          ) : (
+            <button
+              onClick={goToSignIn}
+              className="rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600"
+            >
+              Sign In
+            </button>
+          )}
         </nav>
 
         {/* Mobile menu toggle */}
@@ -75,12 +117,23 @@ export default function Header({ onAboutClick, onMaintenanceClick, onCTAClick })
               {link.label}
             </button>
           ))}
-          <button
-            onClick={() => handleNavClick(onCTAClick)}
-            className="mt-2 rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white hover:bg-green-600"
-          >
-            Get Started
-          </button>
+
+          {loggedIn ? (
+            <button
+              onClick={goToDashboard}
+              className="mt-2 inline-flex items-center justify-center gap-2 rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white hover:bg-green-600"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Dashboard
+            </button>
+          ) : (
+            <button
+              onClick={goToSignIn}
+              className="mt-2 rounded-full bg-green-500 px-5 py-2 text-sm font-semibold text-white hover:bg-green-600"
+            >
+              Sign In
+            </button>
+          )}
         </div>
       )}
     </header>

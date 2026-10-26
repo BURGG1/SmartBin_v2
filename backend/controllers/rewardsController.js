@@ -91,13 +91,129 @@ async function countHouseholdRewardClaims({
   return RewardLog.countDocuments(filter).session(session);
 }
 
+/**
+ * Counts how many logs of this reward are NOT yet confirmed (redeemed).
+ * `$ne: true` also catches old logs where `redeemed` is missing or null.
+ */
+const countPendingRedemptions = (rewardId) =>
+  RewardLog.countDocuments({
+    reward: rewardId,
+    redeemed: { $ne: true },
+  });
+
 // GET /api/rewards
+// Each reward also carries `pendingRedemptions` = how many household
+// redemptions of it are not yet confirmed. The page uses it to disable "Remove".
 const getAllRewards = async (req, res) => {
   try {
-    const rewards = await Reward.find().sort({ createdAt: -1 });
-    res.json({ success: true, data: rewards });
+    const [rewards, pendingCounts] = await Promise.all([
+      Reward.find().sort({ createdAt: -1 }).lean(),
+      RewardLog.aggregate([
+        { $match: { redeemed: { $ne: true } } },
+        { $group: { _id: "$reward", count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const pendingByReward = new Map(
+      pendingCounts.map((p) => [String(p._id), p.count])
+    );
+
+    const data = rewards.map((r) => ({
+      ...r,
+      pendingRedemptions: pendingByReward.get(String(r._id)) ?? 0,
+    }));
+
+    res.json({ success: true, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("getAllRewards:", error);
+    res.status(500).json({ success: false, message: "Failed to load rewards." });
+  }
+};
+
+// GET /api/rewards/:id/pending
+// Tells the page WHY a reward can't be removed: how many redemptions are
+// pending and which households (first 5) still have to redeem.
+const getPendingRedemptions = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid reward id." });
+    }
+
+    const [pending, logs] = await Promise.all([
+      countPendingRedemptions(id),
+      RewardLog.find({ reward: id, redeemed: { $ne: true } })
+        .populate("household", "fullname")
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+    ]);
+
+    res.json({
+      success: true,
+      pending,
+      households: logs.map((log) => ({
+        logId: log._id,
+        householdId: log.household?._id
+          ? `HH-${log.household._id.toString().slice(-8).toUpperCase()}`
+          : "—",
+        name: log.household?.fullname ?? "—",
+        date: log.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error("getPendingRedemptions:", error);
+    res.status(500).json({ success: false, message: "Could not check pending redemptions." });
+  }
+};
+
+// DELETE /api/rewards/:id
+// Blocked while any redemption of this reward is not yet confirmed.
+// If the check itself fails, nothing is deleted (it fails closed).
+// NOTE: if your old deleteReward did extra things (like deleting the image
+// from Cloudinary), put that code right after the findByIdAndDelete below.
+const deleteReward = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid reward id." });
+    }
+
+    const pending = await countPendingRedemptions(id);
+    if (pending > 0) {
+      return res.status(409).json({
+        success: false,
+        code: "REWARD_HAS_PENDING_REDEMPTIONS",
+        pending,
+        message: `Can't remove this reward. ${pending} redemption(s) are not yet fully redeemed.`,
+      });
+    }
+
+    // The model also guards this (see models/Reward.js), so it's double protected.
+    const deleted = await Reward.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "Reward not found." });
+    }
+
+    res.json({ success: true, message: "Reward removed." });
+  } catch (error) {
+    // Raised by the model guard if a redemption slipped in at the last moment
+    if (error.code === "REWARD_HAS_PENDING_REDEMPTIONS") {
+      return res.status(409).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+      });
+    }
+
+    // Anything else: log the real error on the server, send a safe message to the browser
+    console.error("deleteReward:", error);
+    res.status(500).json({
+      success: false,
+      message: "Something went wrong while removing the reward.",
+    });
   }
 };
 
@@ -334,4 +450,11 @@ const redeemRewardLog = async (req, res) => {
   }
 };
 
-module.exports = { getAllRewards, redeemReward, getRewardLogs, redeemRewardLog };
+module.exports = {
+  getAllRewards,
+  redeemReward,
+  getRewardLogs,
+  redeemRewardLog,
+  getPendingRedemptions,
+  deleteReward,
+};

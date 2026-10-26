@@ -1,10 +1,40 @@
-import { X, Calendar, Search } from "lucide-react";
+import { X, Search } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Pagination from "./Pagination";
 import RedeemRewardModal from "./RedeemReward";
 import BASE_URL from "../config";
 
 const REWARD_LIMIT = 7;
+
+// Local YYYY-MM-DD for a given date value. Uses the local timezone (not UTC)
+// so it matches what the table displays and what <input type="date"> returns.
+function toDateStr(d) {
+    return new Date(d).toLocaleDateString("en-CA");
+}
+
+// True when a record's local date falls inside the selected from/to range.
+// Safety net: even if the backend ignores `from`/`to`, records from other
+// days are never shown.
+function inRange(dateValue, from, to) {
+    if (!from && !to) return true;
+    if (!dateValue) return false;
+    const day = toDateStr(dateValue);
+    if (from && day < from) return false;
+    if (to && day > to) return false;
+    return true;
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return "—";
+    return new Date(dateStr).toLocaleDateString("en-US", {
+        year: "numeric", month: "long", day: "numeric",
+    });
+}
+
+// Empty-state message that mentions the selected date when a filter is set.
+function emptyMessage(fromDate, fallback) {
+    return fromDate ? `No reward found on ${formatDate(`${fromDate}T00:00:00`)}` : fallback;
+}
 
 export function ViewRewardModal({ isOpen, onClose, rName }) {
     const [fromDate, setFromDate] = useState("");
@@ -27,6 +57,9 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
     const abortRef = useRef(null);
 
     // ── Fetch a single page of reward redemption logs from the server ────────
+    // DATE FILTER: when no date is picked, we peek at the newest claim and
+    // scope the fetch to just that day. Assumes the backend returns results
+    // sorted newest-first (getRewardLogs sorts by createdAt desc).
     const fetchLogs = useCallback(async (pageArg = 1) => {
         abortRef.current?.abort();
         const controller = new AbortController();
@@ -35,38 +68,71 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
         setLoading(true);
         setError("");
         try {
-            const params = new URLSearchParams({
-                page: pageArg,
-                limit: REWARD_LIMIT,
+            const baseParams = {
+                // Lets the backend compute "a day" in the user's local timezone
+                // (Philippines = -480).
+                tzOffset: new Date().getTimezoneOffset(),
                 ...(rName && { rewardName: rName }),
                 ...(search.trim() && { search: search.trim() }),
-                ...(fromDate && { from: fromDate }),
-                ...(toDate && { to: toDate }),
+            };
+
+            let effectiveFrom = fromDate;
+            let effectiveTo = toDate;
+
+            // No date picked: find the newest claim and scope to that day
+            if (!fromDate && !toDate) {
+                const peekParams = new URLSearchParams({ ...baseParams, page: 1, limit: 1 });
+                const peekRes = await fetch(`${BASE_URL}/api/rewards/logs?${peekParams}`, {
+                    signal: controller.signal,
+                });
+                const peekData = await peekRes.json();
+                const latest = peekData?.success && peekData.data?.length > 0 ? peekData.data[0] : null;
+
+                if (!latest) {
+                    setLogs([]);
+                    setTotal(0);
+                    setPage(1);
+                    return;
+                }
+
+                const latestDate = toDateStr(latest.date);
+                effectiveFrom = latestDate;
+                effectiveTo = latestDate;
+            }
+
+            const params = new URLSearchParams({
+                ...baseParams,
+                page: pageArg,
+                limit: REWARD_LIMIT,
+                ...(effectiveFrom && { from: effectiveFrom }),
+                ...(effectiveTo && { to: effectiveTo }),
             });
 
-            // NOTE: adjust this endpoint path to match your actual backend route
             const res = await fetch(`${BASE_URL}/api/rewards/logs?${params}`, { signal: controller.signal });
             const data = await res.json();
 
             if (data.success) {
                 // Only keep logs that belong to the reward being viewed
-                let onlyThisReward = rName
+                let rows = rName
                     ? data.data.filter((l) => l.rewardName === rName)
                     : data.data;
 
                 // Safety net: if the backend ignores `search`, still narrow
-                // the page it returned by household name or ID. (Pagination
-                // totals are only exact once the backend applies `search`.)
+                // the page it returned by household name or ID.
                 const q = search.trim().toLowerCase();
                 if (q) {
-                    onlyThisReward = onlyThisReward.filter(
+                    rows = rows.filter(
                         (l) =>
                             String(l.householdName ?? "").toLowerCase().includes(q) ||
                             String(l.householdId ?? "").toLowerCase().includes(q)
                     );
                 }
-                setLogs(onlyThisReward);
-                setTotal(data.pagination?.total ?? onlyThisReward.length);
+
+                // Safety net: never show a record from another day
+                rows = rows.filter((l) => inRange(l.date, effectiveFrom, effectiveTo));
+
+                setLogs(rows);
+                setTotal(rows.length === 0 ? 0 : (data.pagination?.total ?? rows.length));
                 setPage(pageArg);
             } else {
                 setError("Failed to load reward history.");
@@ -78,13 +144,17 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
         }
     }, [rName, fromDate, toDate, search]);
 
-    // Clear the previous reward's rows when the modal closes
+    // Clear the previous reward's rows and filters when the modal closes
     useEffect(() => {
         if (isOpen) return;
         abortRef.current?.abort();
         setLogs([]);
         setTotal(0);
         setPage(1);
+        setFromDate("");
+        setToDate("");
+        setSearchInput("");
+        setSearch("");
         setRedeemTarget(null);
         setRedeemedIds(new Set());
     }, [isOpen]);
@@ -155,12 +225,16 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                     {/* FILTER */}
                     <div className="w-full flex flex-col sm:flex-row gap-4 px-6 py-4 border-b">
                         <div className=" flex items-center gap-2 w-auto sm:w-full">
-                            <Calendar size={16} />
                             <p>Date Collected:</p>
                             <input
                                 type="date"
                                 value={fromDate}
-                                onChange={(e) => setFromDate(e.target.value)}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    // A single date means a single day
+                                    setFromDate(val);
+                                    setToDate(val);
+                                }}
                                 className="border rounded-lg px-3 py-2 text-sm w-50"
                             />
                         </div>
@@ -211,7 +285,7 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                                         {logs.length === 0 ? (
                                             <tr>
                                                 <td colSpan="6" className="text-center py-6 text-gray-500">
-                                                    No records found for selected dates
+                                                    {emptyMessage(fromDate, "No reward found")}
                                                 </td>
                                             </tr>
                                         ) : (
@@ -265,7 +339,7 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                                 currentPage={page}
                                 totalItems={total}
                                 itemsPerPage={REWARD_LIMIT}
-                                onPageChange={fetchLogs}
+                                onPageChange={(p) => fetchLogs(p)}
                             />
                         )}
                     </div>

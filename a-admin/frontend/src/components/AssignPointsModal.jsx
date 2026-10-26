@@ -109,7 +109,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                 {/* HEADER */}
                 <div className="flex justify-between items-center px-4 sm:px-6 py-2 border-b">
                     <div>
-                        <h2 className="text-lg sm:text-xl font-bold">Assign Points</h2>
+                        <h2 className="text-lg sm:text-xl font-bold">Award Points</h2>
                         {household && (
                             <p className="text-sm text-gray-500">
                                 To: <span className="font-medium text-gray-700">{household.fullname}</span>
@@ -129,7 +129,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                         {/* Rule selector */}
                         <div className="flex flex-col">
                             <label className="font-semibold flex items-center gap-1 mb-1">
-                                Select Rule
+                                Select Activity
                                 <Asterisk className="text-red-500 w-3 h-3" />
                             </label>
 
@@ -150,7 +150,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                                 >
                                     {rules.map((rule, idx) => (
                                         <option key={rule._id} value={rule._id}>
-                                            Rule {idx + 1} — {rule.name} ({rule.points} pts / {rule.freq})
+                                            Activity {idx + 1} — {rule.name} ({rule.points} pts / {rule.freq})
                                         </option>
                                     ))}
                                 </select>
@@ -236,7 +236,7 @@ export default function AssignPointsModal({ isOpen, onClose, household, onAwarde
                             disabled={!selectedRule || awarding || rulesLoading}
                             className="mt-2 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                         >
-                            {awarding ? "Awarding..." : "Assign Points"}
+                            {awarding ? "Awarding..." : "Award Points"}
                         </button>
                     </div>
                 </div>

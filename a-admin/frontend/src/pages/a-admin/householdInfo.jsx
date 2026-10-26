@@ -396,7 +396,7 @@ export default function HouseholdInfo() {
                     <div className="w-full flex overflow-x-auto bg-gray-100 rounded-full justify-center md:w-fit justify-evenly text-[#4A3B47] mb-6 p-1 space-x-2">
                         {[
                             { id: "household", label: "Household Information", icon: <Home size={15} /> },
-                            { id: "request", label: "Registeration Request", icon: <MailPlus size={15} /> },
+                            { id: "request", label: "Registration Request", icon: <MailPlus size={15} /> },
                         ].map((tab) => (
                             <button
                                 key={tab.id}

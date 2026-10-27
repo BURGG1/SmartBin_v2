@@ -350,7 +350,7 @@ export default function AuthPage() {
           <View className="bg-white rounded-2xl shadow-lg p-6 space-y-6">
 
             <Text className="text-lg font-medium text-center">
-              Welcome Back!
+              Welcome!
             </Text>
 
             {/* EMAIL */}

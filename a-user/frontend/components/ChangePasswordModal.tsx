@@ -190,8 +190,10 @@ export default function ChangePassword({
       statusBarTranslucent
       onRequestClose={handleClose}
     >
+      {/* Android: "padding" lifts the sheet above the keyboard. The modal is
+          statusBarTranslucent, so the system's adjustResize doesn't apply here. */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior="padding"
         className="flex-1"
       >
         <View className="flex-1 justify-end">
@@ -228,7 +230,7 @@ export default function ChangePassword({
             <ScrollView
               style={{ flexShrink: 1 }}
               keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+              keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ padding: 20, paddingBottom: 12 }}
             >

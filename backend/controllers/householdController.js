@@ -5,6 +5,7 @@ const PointLog = require("../models/PointLog");
 const RewardLog = require("../models/RewardLog");
 const ViolationLog = require("../models/ViolationLog");
 const { sendPasswordEmail } = require("../config/mailer");
+const { sendInitialPasswordSms, } = require("../config/sms");
 const bcrypt = require("bcryptjs");
 
 // ── Penalty config — single source of truth ──────────────────────────────────
@@ -94,9 +95,25 @@ const getHouseholdById = async (req, res) => {
 // POST /api/households
 const createHousehold = async (req, res) => {
   try {
-    const { fullname, birthday, familyMember, address, contactNumber, email, rfid } = req.body;
+    const {
+      fullname,
+      birthday,
+      familyMember,
+      address,
+      contactNumber,
+      email,
+      rfid,
+    } = req.body;
+
+    if (!fullname || !rfid) {
+      return res.status(400).json({
+        success: false,
+        message: "Full name and RFID are required.",
+      });
+    }
 
     const existingRfid = await Household.findOne({ rfid });
+
     if (existingRfid) {
       return res.status(409).json({
         success: false,
@@ -104,14 +121,25 @@ const createHousehold = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email ? email.trim().toLowerCase() : null;
+    const normalizedEmail =
+      typeof email === "string" && email.trim()
+        ? email.trim().toLowerCase()
+        : null;
+
     const normalizedContact = normalizeContactNumber(contactNumber);
 
     if (normalizedEmail) {
       if (!EMAIL_REGEX.test(normalizedEmail)) {
-        return res.status(400).json({ success: false, message: "Invalid email format." });
+        return res.status(400).json({
+          success: false,
+          message: "Invalid email format.",
+        });
       }
-      const existingEmail = await Household.findOne({ email: normalizedEmail });
+
+      const existingEmail = await Household.findOne({
+        email: normalizedEmail,
+      });
+
       if (existingEmail) {
         return res.status(409).json({
           success: false,
@@ -122,9 +150,16 @@ const createHousehold = async (req, res) => {
 
     if (normalizedContact) {
       if (!PH_MOBILE_REGEX.test(normalizedContact)) {
-        return res.status(400).json({ success: false, message: "Invalid contact number format." });
+        return res.status(400).json({
+          success: false,
+          message: "Invalid contact number format.",
+        });
       }
-      const existingContact = await Household.findOne({ contactNumber: normalizedContact });
+
+      const existingContact = await Household.findOne({
+        contactNumber: normalizedContact,
+      });
+
       if (existingContact) {
         return res.status(409).json({
           success: false,
@@ -133,7 +168,7 @@ const createHousehold = async (req, res) => {
       }
     }
 
-    // Generate plain password then hash it
+    // Generate the initial password and hash it for database storage.
     const plainPassword = generatePassword();
     const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
@@ -148,9 +183,10 @@ const createHousehold = async (req, res) => {
       contactNumber: normalizedContact,
       email: normalizedEmail,
       rfid,
-      password: hashedPassword, // store hashed
+      password: hashedPassword,
     });
 
+    // Record the RFID assignment.
     await RfidLog.create({
       rfid,
       household: household._id,
@@ -158,37 +194,91 @@ const createHousehold = async (req, res) => {
       note: `Assigned to ${fullname} during registration`,
     });
 
-    // ── Respond immediately — don't make the client wait on email delivery ──
+    // Remove sensitive fields from the API response.
+    const householdData = household.toObject();
+    delete householdData.password;
+    delete householdData.resetPasswordCodeHash;
+    delete householdData.resetPasswordExpires;
+
+    // Respond once registration and RFID logging have succeeded.
     res.status(201).json({
       success: true,
-      message: normalizedEmail
-        ? "Household registered. Login credentials sent to email."
-        : "Household registered. No email — credentials not sent.",
-      data: household,
+      message: "Household registered. Credential delivery initiated.",
+      data: householdData,
     });
 
-    // ── Fire-and-forget: email sends in the background after the response
-    //    has already gone out. A slow/unreachable SMTP connection (e.g. the
-    //    IPv6 ENETUNREACH issue on some hosts) no longer blocks the request.
+    // Send the initial password through UniSMS without blocking
+    // the registration response.
+    if (normalizedContact) {
+      sendInitialPasswordSms({
+        to: normalizedContact,
+        fullname,
+        password: plainPassword,
+      }).catch((err) => {
+        console.error(
+          "[UniSMS] Failed to send initial password SMS:",
+          err.message
+        );
+      });
+    }
+
+    // Preserve email delivery as an additional delivery method.
     if (normalizedEmail) {
-      sendPasswordEmail({ to: normalizedEmail, fullname, password: plainPassword }).catch((err) => {
-        console.error(`[Mailer] Failed to send password email to ${normalizedEmail}:`, err.message);
+      sendPasswordEmail({
+        to: normalizedEmail,
+        fullname,
+        password: plainPassword,
+      }).catch((err) => {
+        console.error(
+          "[Mailer] Failed to send initial password email:",
+          err.message
+        );
       });
     }
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.rfid) {
+      return res.status(409).json({
+        success: false,
+        message: "This RFID is already assigned to another household.",
+      });
+    }
+
     if (error.code === 11000 && error.keyPattern?.email) {
-      return res.status(409).json({ success: false, message: "This email is already registered." });
+      return res.status(409).json({
+        success: false,
+        message: "This email is already registered.",
+      });
     }
+
     if (error.code === 11000 && error.keyPattern?.contactNumber) {
-      return res.status(409).json({ success: false, message: "This contact number is already registered." });
+      return res.status(409).json({
+        success: false,
+        message: "This contact number is already registered.",
+      });
     }
+
     if (error.name === "ValidationError") {
-      const messages = Object.values(error.errors).map((e) => e.message);
-      return res.status(400).json({ success: false, message: messages });
+      const messages = Object.values(error.errors).map(
+        (e) => e.message
+      );
+
+      return res.status(400).json({
+        success: false,
+        message: messages,
+      });
     }
-    res.status(500).json({ success: false, message: error.message });
+
+    console.error("[CREATE HOUSEHOLD] Error:", error);
+
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to register household.",
+      });
+    }
   }
 };
+
 
 // PUT /api/households/:id
 const updateHousehold = async (req, res) => {
@@ -574,83 +664,83 @@ const getLeaderboard = async (req, res) => {
 // POST /api/households/:id/penalize
 
 const penalizeHousehold = async (req, res) => {
-    try {
-        const { note, issuedBy } = req.body;
+  try {
+    const { note, issuedBy } = req.body;
 
-        const household = await Household.findById(req.params.id);
+    const household = await Household.findById(req.params.id);
 
-        if (!household) {
-            return res.status(404).json({
-                success: false,
-                message: "Household not found."
-            });
-        }
-
-        if (!household.isActive) {
-            return res.status(400).json({
-                success: false,
-                message: "Cannot penalize an inactive household."
-            });
-        }
-
-        // Keep the offense count capped at 3 permanently.
-        const prevViolation = household.violation ?? 0;
-        const newViolation = Math.min(prevViolation + 1, 3);
-        const penalty = PENALTY_CONFIG[newViolation];
-
-        // Apply point deduction for the 1st offense only.
-        if (penalty.pointsDeducted > 0) {
-            household.points.total = Math.max(
-                0,
-                (household.points.total ?? 0) - penalty.pointsDeducted
-            );
-
-            household.points.thisMonth = Math.max(
-                0,
-                (household.points.thisMonth ?? 0) - penalty.pointsDeducted
-            );
-        }
-
-        household.violation = newViolation;
-        await household.save();
-
-        const log = await ViolationLog.create({
-            household: household._id,
-            offenseNumber: newViolation,
-            penaltyType: penalty.type,
-            pointsDeducted: penalty.pointsDeducted,
-            fineAmount: penalty.fineAmount,
-            communityService: penalty.communityService,
-            note: note || null,
-            issuedBy: issuedBy || "Admin"
-        });
-
-        return res.status(201).json({
-            success: true,
-            message: `Penalty applied: ${penalty.type} (Offense #${newViolation})`,
-            data: {
-                household: {
-                    _id: household._id,
-                    fullname: household.fullname,
-                    violation: household.violation,
-                    points: household.points
-                },
-                penalty: {
-                    offenseNumber: newViolation,
-                    penaltyType: penalty.type,
-                    pointsDeducted: penalty.pointsDeducted,
-                    fineAmount: penalty.fineAmount,
-                    communityService: penalty.communityService
-                },
-                log
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: error.message
-        });
+    if (!household) {
+      return res.status(404).json({
+        success: false,
+        message: "Household not found."
+      });
     }
+
+    if (!household.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot penalize an inactive household."
+      });
+    }
+
+    // Keep the offense count capped at 3 permanently.
+    const prevViolation = household.violation ?? 0;
+    const newViolation = Math.min(prevViolation + 1, 3);
+    const penalty = PENALTY_CONFIG[newViolation];
+
+    // Apply point deduction for the 1st offense only.
+    if (penalty.pointsDeducted > 0) {
+      household.points.total = Math.max(
+        0,
+        (household.points.total ?? 0) - penalty.pointsDeducted
+      );
+
+      household.points.thisMonth = Math.max(
+        0,
+        (household.points.thisMonth ?? 0) - penalty.pointsDeducted
+      );
+    }
+
+    household.violation = newViolation;
+    await household.save();
+
+    const log = await ViolationLog.create({
+      household: household._id,
+      offenseNumber: newViolation,
+      penaltyType: penalty.type,
+      pointsDeducted: penalty.pointsDeducted,
+      fineAmount: penalty.fineAmount,
+      communityService: penalty.communityService,
+      note: note || null,
+      issuedBy: issuedBy || "Admin"
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: `Penalty applied: ${penalty.type} (Offense #${newViolation})`,
+      data: {
+        household: {
+          _id: household._id,
+          fullname: household.fullname,
+          violation: household.violation,
+          points: household.points
+        },
+        penalty: {
+          offenseNumber: newViolation,
+          penaltyType: penalty.type,
+          pointsDeducted: penalty.pointsDeducted,
+          fineAmount: penalty.fineAmount,
+          communityService: penalty.communityService
+        },
+        log
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
 };
 
 

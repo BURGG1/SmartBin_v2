@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
     View, Text, ScrollView,
-    TextInput, TouchableOpacity, Linking, ActivityIndicator, RefreshControl,
+    TextInput, TouchableOpacity, Linking, ActivityIndicator, RefreshControl, Modal,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -13,6 +13,7 @@ import { useHousehold, fetchHousehold } from "../store/householdStore";
 import { API_BASE } from "@/config";
 import Pagination from "../../components/UserPagination";
 import RuleDetails, { Rule, RuleCard, matchesRuleSearch } from "../../components/RuleDetails";
+import ChangePassword from "../../components/ChangePasswordModal"; // adjust path if needed
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type DisposalLog = {
@@ -60,6 +61,10 @@ const LOG_TABS: { id: LogTab; label: string; icon: keyof typeof Feather.glyphMap
     { id: "violations", label: "Violations", icon: "alert-triangle" },
 ];
 
+// Survives Home remounting (a useRef would reset to false each time), so the
+// first-login prompt can't pop up again before the store catches up.
+const promptHandledIds = new Set<string>();
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Home() {
     const household = useHousehold();
@@ -69,6 +74,14 @@ export default function Home() {
     const [myRank, setMyRank] = useState<number | null>(null);
     const [search, setSearch] = useState("");
     const [activeLogTab, setActiveLogTab] = useState<LogTab>("disposal");
+
+    // ── First-login password prompt ──────────────────────────────────────────
+    const [showPwPrompt, setShowPwPrompt] = useState(false);
+    const [showChangePw, setShowChangePw] = useState(false);
+    // Captured when the user taps "Yes" so the banner stays visible even after
+    // the server flag flips to false on the next household refresh
+    const [changePwFirstLogin, setChangePwFirstLogin] = useState(false);
+    const pwPromptHandledRef = useRef(false); // once answered, never re-open during this session
 
     // ── Rules ────────────────────────────────────────────────────────────────
     const [rules, setRules] = useState<Rule[]>([]);
@@ -288,6 +301,18 @@ export default function Home() {
         setActiveLogTab("disposal");
     }, [household?._id]);
 
+    // ── First-login prompt: show once when the server says it's the first login
+    useEffect(() => {
+        const id = household?._id;
+        const isFirst = (household as any)?.isFirstLogin === true;
+
+        if (isFirst && id && !pwPromptHandledRef.current && !promptHandledIds.has(id)) {
+            setShowPwPrompt(true);
+        } else if (!isFirst) {
+            setShowPwPrompt(false); // flag cleared on the server → make sure it's closed
+        }
+    }, [household?._id, (household as any)?.isFirstLogin]);
+
     // Refresh when tab regains focus — uses refs to stay on correct page
     useFocusEffect(
         useCallback(() => {
@@ -363,6 +388,47 @@ export default function Home() {
             setRefreshing(false);
         }
     }, [fetchRules, fetchDisposalLogs, fetchActivityLogs, fetchViolationLogs]);
+
+    // ── First-login prompt handlers ──────────────────────────────────────────
+    // Tells the server the prompt has been answered so it is never shown again
+    const markFirstLoginDone = useCallback(async () => {
+        if (!household?._id) return;
+        try {
+            const token = await AsyncStorage.getItem("token");
+            await fetch(`${API_BASE}/api/households/${household._id}/first-login-done`, {
+                method: "PATCH",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            });
+        } catch {
+            // Non-blocking: worst case the prompt shows once more
+        }
+    }, [household?._id]);
+
+    // Tell the server, then pull the fresh household (isFirstLogin=false) into the store
+    const refreshAfterFirstLogin = useCallback(async () => {
+        await markFirstLoginDone();
+        await fetchHousehold();
+    }, [markFirstLoginDone]);
+
+    // "Yes" → open the change-password modal.
+    // IMPORTANT: do NOT call markFirstLoginDone() here. The server must still
+    // see isFirstLogin === true when the password is submitted, otherwise it
+    // will demand the current password. The server clears the flag itself once
+    // the password is changed (and onSuccess also refreshes the household).
+    const handleChangePwYes = useCallback(() => {
+        pwPromptHandledRef.current = true;
+        if (household?._id) promptHandledIds.add(household._id);
+        setShowPwPrompt(false);
+        setChangePwFirstLogin(true);
+        setTimeout(() => setShowChangePw(true), 400);
+    }, [household?._id]);
+
+    const handleChangePwNo = useCallback(() => {
+        pwPromptHandledRef.current = true;
+        if (household?._id) promptHandledIds.add(household._id);
+        setShowPwPrompt(false);
+        refreshAfterFirstLogin(); // proceed to home, and refresh so the store isn't stale
+    }, [household?._id, refreshAfterFirstLogin]);
 
     // ── Loading screen ───────────────────────────────────────────────────────
     if (householdLoading) {
@@ -504,7 +570,7 @@ export default function Home() {
                     )}
                 </View>
 
-            
+
 
                 {/* RECENT ACTIVITY */}
                 <View className="bg-white rounded-2xl p-5 shadow mt-5 mb-5 border border-gray-100">
@@ -712,6 +778,58 @@ export default function Home() {
                 ruleNumber={selected?.number ?? 0}
                 onClose={() => setSelected(null)}
             />
+
+            {/* First-login password prompt (Yes / No) */}
+            <Modal
+                visible={showPwPrompt}
+                transparent
+                animationType="fade"
+                statusBarTranslucent
+                onRequestClose={handleChangePwNo}
+            >
+                <View className="flex-1 items-center justify-center bg-black/40 px-6">
+                    <View className="bg-white rounded-2xl p-6 w-full">
+                        <View className="w-12 h-12 rounded-full bg-green-50 items-center justify-center self-center mb-3">
+                            <Feather name="lock" size={22} color="#16A34A" />
+                        </View>
+                        <Text className="text-xl font-bold text-gray-900 text-center">
+                            Change your password?
+                        </Text>
+                        <Text className="text-base text-gray-600 text-center mt-2">
+                            Since this is your first time logging in, would you like to change your password now?
+                        </Text>
+
+                        <View className="flex-row gap-3 mt-6">
+                            <TouchableOpacity
+                                onPress={handleChangePwNo}
+                                activeOpacity={0.7}
+                                className="flex-1 py-3.5 rounded-xl border border-gray-300 items-center"
+                            >
+                                <Text className="text-gray-700 text-base font-semibold">No</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={handleChangePwYes}
+                                activeOpacity={0.85}
+                                className="flex-1 py-3.5 rounded-xl bg-green-600 items-center"
+                            >
+                                <Text className="text-white text-base font-semibold">Yes</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Change password modal */}
+            <ChangePassword
+                isOpen={showChangePw}
+                onClose={() => {
+                    setShowChangePw(false);
+                    setTimeout(() => setChangePwFirstLogin(false), 400);
+                }}
+                onSuccess={refreshAfterFirstLogin}
+                household={household}
+                isFirstLogin={changePwFirstLogin}
+            />
         </SafeAreaView>
     );
-}   
+}

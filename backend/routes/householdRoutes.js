@@ -15,6 +15,7 @@ const {
   penalizeHousehold,
   getViolationLogs,
   clearViolation,
+  completeFirstLogin,
 } = require("../controllers/householdController");
 const { protect, allowRoles } = require("../middleware/authMiddleware");
 
@@ -32,6 +33,8 @@ router.post("/:id/penalize",    penalizeHousehold);
 router.get("/:id/violations",   getViolationLogs);
 router.patch("/:id/violations/:violationId/clear", clearViolation);
 
+// Mobile app: user answered the first-login "change password?" prompt
+router.patch("/:id/first-login-done", completeFirstLogin);
 
 router.route("/:id")
 .get(getHouseholdById)

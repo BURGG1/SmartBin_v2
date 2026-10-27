@@ -49,6 +49,10 @@ const INITIAL_FORM: FormState = {
     contactNumber: "",
 };
 
+// Explicit placeholder color so Android release builds / dark mode
+// don't fall back to a white-ish system default (gray-400).
+const PLACEHOLDER_COLOR = "#9CA3AF";
+
 // ── Replace with your barangay's actual streets/puroks/sitios ──
 const STREET_OPTIONS = [
     "Purok 1",
@@ -449,12 +453,13 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 </View>
                                 <TextInput
                                     placeholder="ex. Janice S. Dela Cruz"
+                                    placeholderTextColor={PLACEHOLDER_COLOR}
                                     value={form.fullname}
                                     onChangeText={(v) => handleChange("fullname", formatFullnameInput(v))}
                                     autoCapitalize="words"
                                     maxLength={100}
                                     editable={!loading}
-                                    className={`border rounded-lg px-3 py-2 mt-1 ${errors.fullname ? "border-red-500" : "border-gray-300"
+                                    className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.fullname ? "border-red-500" : "border-gray-300"
                                         }`}
                                 />
                                 {errors.fullname && (
@@ -467,12 +472,13 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 <Text className="text-lg font-semibold">Birthday</Text>
                                 <TextInput
                                     placeholder="MM/DD/YYYY"
+                                    placeholderTextColor={PLACEHOLDER_COLOR}
                                     keyboardType="default"
                                     value={form.birthday}
                                     onChangeText={(v) => handleChange("birthday", formatBirthdayInput(v, form.birthday))}
                                     maxLength={10}
                                     editable={!loading}
-                                    className={`border rounded-lg px-3 py-2 mt-1 ${errors.birthday ? "border-red-500" : "border-gray-300"
+                                    className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.birthday ? "border-red-500" : "border-gray-300"
                                         }`}
                                 />
                                 {errors.birthday && (
@@ -485,12 +491,13 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 <Text className="text-lg font-semibold">Family Member</Text>
                                 <TextInput
                                     placeholder="ex. 5"
+                                    placeholderTextColor={PLACEHOLDER_COLOR}
                                     keyboardType="numeric"
                                     value={form.familyMember}
                                     onChangeText={(v) => handleChange("familyMember", v.replace(/[^0-9]/g, ""))}
                                     maxLength={2}
                                     editable={!loading}
-                                    className={`border rounded-lg px-3 py-2 mt-1 ${errors.familyMember ? "border-red-500" : "border-gray-300"
+                                    className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.familyMember ? "border-red-500" : "border-gray-300"
                                         }`}
                                 />
                                 {errors.familyMember && (
@@ -513,11 +520,12 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                         </View>
                                         <TextInput
                                             placeholder="ex. 0123"
+                                            placeholderTextColor={PLACEHOLDER_COLOR}
                                             value={form.houseNo}
                                             onChangeText={(v) => handleChange("houseNo", formatHouseNoInput(v))}
                                             maxLength={20}
                                             editable={!loading}
-                                            className={`border rounded-lg px-3 py-2 mt-1 ${errors.houseNo ? "border-red-500" : "border-gray-300"
+                                            className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.houseNo ? "border-red-500" : "border-gray-300"
                                                 }`}
                                         />
                                         {errors.houseNo && (
@@ -557,6 +565,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 </View>
                                 <TextInput
                                     placeholder="ex. janicedelacruz@gmail.com"
+                                    placeholderTextColor={PLACEHOLDER_COLOR}
                                     keyboardType="email-address"
                                     autoCapitalize="none"
                                     autoCorrect={false}
@@ -564,7 +573,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     onChangeText={(v) => handleChange("email", formatEmailInput(v))}
                                     maxLength={100}
                                     editable={!loading}
-                                    className={`border rounded-lg px-3 py-2 mt-1 ${errors.email ? "border-red-500" : "border-gray-300"
+                                    className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.email ? "border-red-500" : "border-gray-300"
                                         }`}
                                 />
                                 {errors.email && (
@@ -590,11 +599,12 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                         and a hard limit would truncate pasted numbers. */}
                                     <TextInput
                                         placeholder="912-345-6789"
+                                        placeholderTextColor={PLACEHOLDER_COLOR}
                                         keyboardType="phone-pad"
                                         value={formatContactDisplay(form.contactNumber)}
                                         onChangeText={(v) => handleChange("contactNumber", extractContactDigits(v))}
                                         editable={!loading}
-                                        className="flex-1 px-3 py-2"
+                                        className="flex-1 px-3 py-2 text-black"
                                     />
                                 </View>
                                 {errors.contactNumber && (

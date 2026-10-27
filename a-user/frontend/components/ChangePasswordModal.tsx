@@ -20,13 +20,21 @@ interface ChangePasswordProps {
   isOpen: boolean;
   onClose: () => void;
   household: any;
+  isFirstLogin?: boolean; // first login: current password field is hidden and not sent
+  onSuccess?: () => void; // called after the password was changed successfully
 }
 
 type PwKey = "currentPassword" | "newPassword" | "confirmPassword";
 
 const EMPTY = { currentPassword: "", newPassword: "", confirmPassword: "" };
 
-export default function ChangePassword({ isOpen, onClose, household }: ChangePasswordProps) {
+export default function ChangePassword({
+  isOpen,
+  onClose,
+  household,
+  isFirstLogin = false,
+  onSuccess,
+}: ChangePasswordProps) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<Record<PwKey, string>>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<PwKey, string>>>({});
@@ -57,17 +65,22 @@ export default function ChangePassword({ isOpen, onClose, household }: ChangePas
   };
 
   const canSubmit =
-    !!form.currentPassword && !!form.newPassword && !!form.confirmPassword && !saving;
+    (isFirstLogin || !!form.currentPassword) &&
+    !!form.newPassword &&
+    !!form.confirmPassword &&
+    !saving;
 
   const handleSubmit = async () => {
     const next: Partial<Record<PwKey, string>> = {};
 
-    if (!form.currentPassword) next.currentPassword = "Enter your current password.";
+    if (!isFirstLogin && !form.currentPassword) {
+      next.currentPassword = "Enter your current password.";
+    }
     if (!form.newPassword) {
       next.newPassword = "Enter a new password.";
     } else if (form.newPassword.length < 6) {
       next.newPassword = "Password must be at least 6 characters.";
-    } else if (form.newPassword === form.currentPassword) {
+    } else if (!isFirstLogin && form.newPassword === form.currentPassword) {
       next.newPassword = "New password must be different from the current one.";
     }
     if (form.newPassword && form.confirmPassword !== form.newPassword) {
@@ -96,7 +109,9 @@ export default function ChangePassword({ isOpen, onClose, household }: ChangePas
         },
         familyMember: household?.familyMember ?? null,
         email: household?.email || null,
-        currentPassword: form.currentPassword,
+        // First login: the server skips the current-password check
+        // (it only does so while the household's isFirstLogin is still true).
+        ...(isFirstLogin ? {} : { currentPassword: form.currentPassword }),
         newPassword: form.newPassword,
       };
 
@@ -116,6 +131,7 @@ export default function ChangePassword({ isOpen, onClose, household }: ChangePas
         return;
       }
 
+      onSuccess?.();
       onClose();
       Alert.alert("Success", "Your password has been changed.");
     } catch {
@@ -217,6 +233,20 @@ export default function ChangePassword({ isOpen, onClose, household }: ChangePas
               contentContainerStyle={{ padding: 20, paddingBottom: 12 }}
             >
               <View className="gap-4">
+                {isFirstLogin && (
+                  <View className="flex-row items-start gap-2 rounded-xl bg-green-50 border border-green-200 p-3">
+                    <Feather name="info" size={18} color="#15803D" />
+                    <View className="flex-1">
+                      <Text className="text-lg font-semibold text-green-800">
+                        Welcome! This is your first login.
+                      </Text>
+                      <Text className="text-md text-green-700 mt-0.5">
+                        For your account's security, please change the password you were given to one only you know.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
                 {!!serverError && (
                   <View className="flex-row items-start gap-2 rounded-xl bg-red-50 border border-red-200 p-3">
                     <Feather name="alert-circle" size={18} color="#B91C1C" />
@@ -224,11 +254,13 @@ export default function ChangePassword({ isOpen, onClose, household }: ChangePas
                   </View>
                 )}
 
-                {renderPasswordInput({
-                  label: "Current Password",
-                  key: "currentPassword",
-                  placeholder: "Enter current password",
-                })}
+                {/* Hidden on first login: only new + confirm are shown */}
+                {!isFirstLogin &&
+                  renderPasswordInput({
+                    label: "Current Password",
+                    key: "currentPassword",
+                    placeholder: "Enter current password",
+                  })}
                 {renderPasswordInput({
                   label: "New Password",
                   key: "newPassword",

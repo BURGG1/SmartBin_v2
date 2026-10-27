@@ -22,6 +22,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
       "package": "com.machaki.SmartBin"
@@ -63,6 +65,12 @@
       "eas": {
         "projectId": "8f4b36f4-ee99-4979-9538-50d246116287"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8f4b36f4-ee99-4979-9538-50d246116287"
     }
   }
 }

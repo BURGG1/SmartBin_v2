@@ -21,6 +21,7 @@ const householdSchema = new mongoose.Schema(
     rfid: { type: String, required: [true, "RFID is required"], unique: true, trim: true },
     password: { type: String, default: null },
     isActive: { type: Boolean, default: true },
+    isFirstLogin: { type: Boolean, default: true }, // cleared when the user answers the first-login password prompt
 
     points: {
       total: { type: Number, default: 0 },
@@ -31,7 +32,7 @@ const householdSchema = new mongoose.Schema(
       currentStreak: { type: Number, default: 0 },
       awardedStreaks: { type: [Number], default: [] },
       lastDisposalDate: { type: Date, default: null },
-      lastDailyAward: { type: Date, default: null },   // ← add this
+      lastDailyAward: { type: Date, default: null },
       lastWeeklyAward: { type: Date, default: null },
       lastMonthlyAward: { type: Date, default: null },
     },

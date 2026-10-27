@@ -80,9 +80,12 @@ const getAllHouseholds = async (req, res) => {
   }
 };
 // GET /api/households/:id
+// Returns isFirstLogin so the mobile app knows whether to show the
+// first-login "change password?" prompt. Password hash is never returned.
 const getHouseholdById = async (req, res) => {
   try {
-    const household = await Household.findById(req.params.id);
+    const household = await Household.findById(req.params.id)
+      .select("-password -resetPasswordCodeHash -resetPasswordExpires");
     if (!household)
       return res.status(404).json({ success: false, message: "Household not found" });
 
@@ -184,6 +187,7 @@ const createHousehold = async (req, res) => {
       email: normalizedEmail,
       rfid,
       password: hashedPassword,
+      isFirstLogin: true, // system-generated password → ask to change on first login
     });
 
     // Record the RFID assignment.
@@ -290,12 +294,25 @@ const updateHousehold = async (req, res) => {
       return res.status(404).json({ success: false, message: "Household not found" });
 
     // Handle password change if requested
-    if (currentPassword && newPassword) {
-      const isMatch = await bcrypt.compare(currentPassword, household.password);
-      if (!isMatch) {
-        return res.status(401).json({ success: false, message: "Current password is incorrect." });
+    if (newPassword) {
+      if (typeof newPassword !== "string" || newPassword.length < 6) {
+        return res.status(400).json({ success: false, message: "Password must be at least 6 characters." });
       }
+
+      // First-login users (isFirstLogin still true) can set a new password
+      // WITHOUT the current one. Everyone else must provide the correct current password.
+      if (household.isFirstLogin !== true) {
+        if (!currentPassword) {
+          return res.status(400).json({ success: false, message: "Current password is required." });
+        }
+        const isMatch = await bcrypt.compare(currentPassword, household.password);
+        if (!isMatch) {
+          return res.status(401).json({ success: false, message: "Current password is incorrect." });
+        }
+      }
+
       household.password = await bcrypt.hash(newPassword, 10);
+      household.isFirstLogin = false; // password changed → first-login prompt is done
     }
 
     // RFID reassignment check
@@ -364,7 +381,13 @@ const updateHousehold = async (req, res) => {
 
     await household.save();
 
-    res.json({ success: true, message: "Household updated successfully", data: household });
+    // Never send the password hash back to the client
+    const householdData = household.toObject();
+    delete householdData.password;
+    delete householdData.resetPasswordCodeHash;
+    delete householdData.resetPasswordExpires;
+
+    res.json({ success: true, message: "Household updated successfully", data: householdData });
   } catch (error) {
     if (error.code === 11000 && error.keyPattern?.email) {
       return res.status(409).json({ success: false, message: "This email is already registered." });
@@ -376,6 +399,31 @@ const updateHousehold = async (req, res) => {
       const messages = Object.values(error.errors).map((e) => e.message);
       return res.status(400).json({ success: false, message: messages });
     }
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// PATCH /api/households/:id/first-login-done
+// Called by the mobile app after the user answers the first-login prompt
+// (Yes or No). Clears the flag so the prompt never appears again.
+const completeFirstLogin = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid id." });
+    }
+
+    const household = await Household.findByIdAndUpdate(
+      req.params.id,
+      { $set: { isFirstLogin: false } },
+      { new: true }
+    ).select("_id isFirstLogin");
+
+    if (!household) {
+      return res.status(404).json({ success: false, message: "Household not found" });
+    }
+
+    res.json({ success: true, data: household });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -861,4 +909,5 @@ module.exports = {
   checkContactExists,
   awardPoints,
   getHouseholdActivity,
+  completeFirstLogin,
 };

@@ -7,6 +7,7 @@ const { cloudinary } = require("../middleware/upload");
 const { createNotification } = require("./notificationController");
 const { normalizeRfid } = require("../utils/normalize");
 const { extractStampCandidates } = require("../utils/stampOCR");
+const { checkAndAwardPoints, } = require("../services/streakService");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -259,7 +260,7 @@ const completeDisposal = async (req, res) => {
 
             const startingValue =
                 latestExisting &&
-                Number.isFinite(latestExisting.disposalOrder)
+                    Number.isFinite(latestExisting.disposalOrder)
                     ? latestExisting.disposalOrder
                     : 0;
 
@@ -311,6 +312,25 @@ const completeDisposal = async (req, res) => {
                 note: `${household.fullname} completed stamping cycle ${cycleId} at ${binId}`,
             });
 
+            let rewardResult = null;
+
+            try {
+                rewardResult = await checkAndAwardPoints(household._id, {
+                    disposalId: log._id,
+                });
+
+                console.log("[AUTO-REWARDS]", {
+                    householdId: household._id.toString(),
+                    disposalId: log._id.toString(),
+                    result: rewardResult,
+                });
+            } catch (rewardError) {
+                console.error(
+                    "[AUTO-REWARDS] Failed to award points:",
+                    rewardError
+                );
+            }
+
             return res.status(201).json({
                 success: true,
                 duplicate: false,
@@ -319,6 +339,7 @@ const completeDisposal = async (req, res) => {
                     cycleId,
                     disposalOrder,
                     logId: log._id,
+                    rewards: rewardResult,
                 },
             });
         } catch (createError) {

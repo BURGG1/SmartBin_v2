@@ -493,6 +493,19 @@ export default function HouseholdRecordModal({ isOpen, onClose, household: house
                                     }}
                                     className="border rounded-lg px-3 py-1.5 text-sm w-50"
                                 />
+                                {(fromDate || toDate) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFromDate("");
+                                            setToDate("");
+                                        }}
+                                        className="flex cursor-pointer items-center gap-1 px-2 py-1.5 rounded-lg bg-gray-200 text-gray-700 text-xs hover:bg-gray-300"
+                                    >
+                                        <X size={14} />
+                                        Clear Selection
+                                    </button>
+                                )}
                             </div>
                             <div className="flex-1 flex justify-center lg:justify-end gap-2">
                                 <button

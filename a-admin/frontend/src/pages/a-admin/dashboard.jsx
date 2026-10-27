@@ -47,6 +47,10 @@ const getFillColor = (fill) => {
 // Change this number if you want the card to show more or fewer.
 const MAX_VISIBLE_BINS = 5;
 
+// How many point-log rows each leaderboard hover card shows (highest points first).
+// The backend caps this at 20.
+const POINT_LOGS_PER_HOUSEHOLD = 5;
+
 // ── Custom tooltip for the compliance bar chart ──────────────────────────────
 // Shows "62% (31 out of 50)" instead of just "62%".
 // It reads compliantCount / nonCompliantCount / total from each month's data.
@@ -79,7 +83,7 @@ const ComplianceTooltip = ({ active, payload, label }) => {
             {/* Header: month + total households */}
             <div className="flex items-center justify-between gap-6 pb-3 mb-3 border-b border-gray-100">
                 <p className="text-sm font-semibold text-gray-900">{label}</p>
-                
+
             </div>
 
             {/* Mini split bar: shows the green/red share at a glance */}
@@ -116,6 +120,86 @@ const ComplianceTooltip = ({ active, payload, label }) => {
         </div>
     );
 };
+
+// ── Hover card for leaderboard entries ───────────────────────────────────────
+// Wrap any leaderboard card with this. Shows the household's point history
+// (highest points first) on hover, keyboard focus, or tap on touch devices.
+// It is CSS-only (Tailwind group-hover), so the 5-second data refresh won't make it flicker.
+//
+// Each log row:   reason ........ points ........ quantity
+//                 10 days streak     50              5x
+const HouseholdHoverCard = ({ item, children, className = "" }) => (
+    <div className={`relative group outline-none ${className}`} tabIndex={0}>
+        {children}
+
+        <div
+            className="
+                pointer-events-none absolute z-30 w-80 max-w-[90vw] rounded-xl border border-gray-100 bg-white
+                p-4 text-left shadow-xl opacity-0 invisible transition-opacity duration-200
+                group-hover:opacity-100 group-hover:visible
+                group-focus:opacity-100 group-focus:visible
+                top-full left-1/2 mt-3 -translate-x-1/2
+                lg:top-1/2 lg:left-auto lg:right-full lg:mt-0 lg:mr-3 lg:translate-x-0 lg:-translate-y-1/2
+            "
+        >
+            {/* little arrow pointing to the card (up on mobile, right on desktop) */}
+            <span
+                className="
+                    absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45 bg-white border-l border-t border-gray-100
+                    lg:top-1/2 lg:left-auto lg:-right-1.5 lg:translate-x-0 lg:-translate-y-1/2 lg:border-l-0 lg:border-r
+                "
+            />
+
+            {/* Header: name, ID, rank + tier, total points */}
+            <div className="flex items-start justify-between gap-3 pb-3 mb-3 border-b border-gray-100">
+                <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">{item.family}</p>
+                    <p className="text-[11px] text-gray-400">{item.householdId}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                    <p className="text-lg font-bold text-green-600 leading-none">{item.points}</p>
+                    <p className="text-[11px] text-gray-400 mt-1">
+                        {item.tier ? `#${item.rank} · ${item.tier}` : `#${item.rank}`}
+                    </p>
+                </div>
+            </div>
+
+            {/* Point history, highest points first */}
+            <p className="text-[11px] font-semibold text-gray-500 mb-2">Top point earnings</p>
+
+            {item.pointLogs.length === 0 ? (
+                <p className="text-xs text-gray-400 py-2">No point history yet.</p>
+            ) : (
+                <ul className="divide-y divide-gray-100">
+                    {item.pointLogs.map((log) => (
+                        <li
+                            key={log._id}
+                            className="grid grid-cols-[1fr_auto_2.5rem] items-center gap-3 py-1.5 text-xs"
+                        >
+                            <span className="text-gray-900 truncate" title={log.reason}>
+                                {log.reason}
+                            </span>
+                            <span className="font-semibold text-green-600 text-right">{log.points}</span>
+                            <span className="text-gray-400 text-right">{log.quantity}x</span>
+                        </li>
+                    ))}
+                </ul>
+            )}
+
+            {/* Contact details for the admin */}
+            <dl className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-[11px]">
+                <div className="flex justify-between gap-4">
+                    <dt className="text-gray-500 shrink-0">Location</dt>
+                    <dd className="text-gray-900 font-medium text-right break-words">{item.location}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                    <dt className="text-gray-500 shrink-0">Contact</dt>
+                    <dd className="text-gray-900 font-medium text-right">{item.contact}</dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+);
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -193,26 +277,30 @@ export default function ComplianceDashboard() {
         };
 
         // ── Leaderboard fetch ─────────────────────────────────────────────────
+        // Uses the dedicated leaderboard endpoint: it already returns households
+        // ranked by points, with each household's top point logs attached.
         const fetchLeaderboard = async () => {
             try {
-                const res = await fetch(`${BASE_URL}/api/households?limit=10&isActive=true`);
+                const res = await fetch(
+                    `${BASE_URL}/api/households/leaderboard?limit=10&logLimit=${POINT_LOGS_PER_HOUSEHOLD}`
+                );
                 const data = await res.json();
 
                 if (!data.success) throw new Error("Failed to fetch leaderboard");
 
-                const ranked = [...(data.data ?? [])]
-                    .sort((a, b) => (b.points?.total ?? 0) - (a.points?.total ?? 0))
-                    .slice(0, 10)
-                    .map((hh, index) => ({
-                        family: hh.fullname,
-                        address: [hh.address?.houseNo, hh.address?.street].filter(Boolean).join(", ") || "—",
-                        householdId: `HH-${hh._id.slice(-8).toUpperCase()}`,
-                        points: hh.points?.total ?? 0,
-                        disposals: 0,
-                        trend: "up",
-                        rank: index + 1,
-                        tier: getTierByRank(index + 1),
-                    }));
+                const ranked = (data.data ?? []).map((hh, index) => ({
+                    family: hh.fullname,
+                    address: hh.address || "—",
+                    // Shown in the hover card
+                    location: hh.address || "—",
+                    contact: hh.contactNumber || "—",
+                    householdId: `HH-${String(hh._id).slice(-8).toUpperCase()}`,
+                    points: hh.points ?? 0,
+                    // Already sorted highest → lowest by the backend
+                    pointLogs: hh.pointLogs ?? [],
+                    rank: index + 1,
+                    tier: getTierByRank(index + 1),
+                }));
 
                 setLeaderboard(ranked);
                 setLeaderboardError(false);
@@ -440,17 +528,19 @@ export default function ComplianceDashboard() {
                                         const item = podiumData.find((i) => i.rank === pos);
                                         if (!item) return null;
                                         return (
-                                            <div key={item.rank} className="bg-white rounded-xl shadow p-4 flex items-center gap-4">
-                                                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center font-bold">
-                                                    #{item.rank}
+                                            <HouseholdHoverCard key={item.rank} item={item}>
+                                                <div className="bg-white rounded-xl shadow p-4 flex items-center gap-4 cursor-pointer">
+                                                    <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center font-bold">
+                                                        #{item.rank}
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <h3 className="font-semibold">{item.family}</h3>
+                                                        <p className="text-xs text-gray-400">{item.address}</p>
+                                                        <p className="text-sm text-green-600 font-bold">{item.points} pts</p>
+                                                    </div>
+                                                    {item.rank === 1 && <Trophy className="text-yellow-500" />}
                                                 </div>
-                                                <div className="flex-1">
-                                                    <h3 className="font-semibold">{item.family}</h3>
-                                                    <p className="text-xs text-gray-400">{item.address}</p>
-                                                    <p className="text-sm text-green-600 font-bold">{item.points} pts</p>
-                                                </div>
-                                                {item.rank === 1 && <Trophy className="text-yellow-500" />}
-                                            </div>
+                                            </HouseholdHoverCard>
                                         );
                                     })}
                                 </div>
@@ -462,10 +552,16 @@ export default function ComplianceDashboard() {
                                         if (!item) return null;
                                         const style = medalStyles[item.tier];
                                         return (
-                                            <div key={item.rank} className={`flex flex-col items-center ${item.rank === 1 ? "-mt-6" : ""}`}>
+                                            <HouseholdHoverCard
+                                                key={item.rank}
+                                                item={item}
+                                                className={`flex flex-col items-center cursor-pointer ${item.rank === 1 ? "-mt-6" : ""}`}
+                                            >
+                                                {/* medal / trophy */}
                                                 <div className={`w-20 h-20 rounded-full border-4 flex items-center justify-center mb-3 ${style.ring}`}>
                                                     {item.rank === 1 ? <Trophy /> : <Medal />}
                                                 </div>
+                                                {/* info card */}
                                                 <div className="bg-white rounded-xl shadow px-6 py-4 text-center min-w-[180px]">
                                                     <p className="text-2xl font-bold">
                                                         {item.rank === 1 ? "1st" : item.rank === 2 ? "2nd" : "3rd"}
@@ -474,11 +570,12 @@ export default function ComplianceDashboard() {
                                                     <p className="text-green-600 font-bold mt-1">{item.points} pts</p>
                                                     <p className="text-xs text-gray-400">{item.address}</p>
                                                 </div>
+                                                {/* podium block */}
                                                 <div
                                                     className={`w-full mt-4 rounded-t-xl ${style.podium}`}
                                                     style={{ height: item.rank === 1 ? "120px" : item.rank === 2 ? "90px" : "70px" }}
                                                 />
-                                            </div>
+                                            </HouseholdHoverCard>
                                         );
                                     })}
                                 </div>

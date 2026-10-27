@@ -501,34 +501,45 @@ const getHouseholdActivity = async (req, res) => {
   }
 };
 
-// GET /api/households/leaderboard
+// GET /api/households/leaderboard?limit=10&logLimit=5
 const getLeaderboard = async (req, res) => {
   try {
-    const { limit = 50 } = req.query;
+    const limit = Math.max(1, parseInt(req.query.limit) || 50);
+    const logLimit = Math.min(20, Math.max(1, parseInt(req.query.logLimit) || 5));
 
     const households = await Household.find({ isActive: true })
-      .select("fullname address points streak")
-      .sort({ "points.total": -1 })
-      .limit(parseInt(limit))
+      .select("fullname address contactNumber points streak")
+      .sort({ "points.total": -1, _id: 1 }) // _id keeps ties in a stable order
+      .limit(limit)
       .lean();
-
-    const RfidLog = require("../models/RfidLog");
 
     const householdIds = households.map((h) => h._id);
 
-    const disposalCounts = await RfidLog.aggregate([
-      {
-        $match: {
-          household: { $in: householdIds },
-          action: "dispose",
+    const [disposalCounts, logGroups] = await Promise.all([
+      RfidLog.aggregate([
+        { $match: { household: { $in: householdIds }, action: "dispose" } },
+        { $group: { _id: "$household", count: { $sum: 1 } } },
+      ]),
+      // Highest points first, then keep only the top `logLimit` per household
+      PointLog.aggregate([
+        { $match: { household: { $in: householdIds } } },
+        { $sort: { points: -1, awardedAt: -1 } },
+        {
+          $group: {
+            _id: "$household",
+            logs: {
+              $push: {
+                _id: "$_id",
+                reason: "$reason",
+                points: "$points",
+                quantity: "$quantity",
+                awardedAt: "$awardedAt",
+              },
+            },
+          },
         },
-      },
-      {
-        $group: {
-          _id: "$household",
-          count: { $sum: 1 },
-        },
-      },
+        { $project: { logs: { $slice: ["$logs", logLimit] } } },
+      ]),
     ]);
 
     const countMap = {};
@@ -536,14 +547,21 @@ const getLeaderboard = async (req, res) => {
       countMap[d._id.toString()] = d.count;
     });
 
+    const logMap = {};
+    logGroups.forEach((g) => {
+      logMap[g._id.toString()] = g.logs;
+    });
+
     const ranked = households.map((hh, index) => ({
       _id: hh._id,
       fullname: hh.fullname,
       address: [hh.address?.houseNo, hh.address?.street].filter(Boolean).join(", ") || "—",
+      contactNumber: hh.contactNumber ?? null,
       points: hh.points?.total ?? 0,
       thisMonth: hh.points?.thisMonth ?? 0,
       disposals: countMap[hh._id.toString()] ?? 0,
       streak: hh.streak?.currentStreak ?? 0,
+      pointLogs: logMap[hh._id.toString()] ?? [],
       rank: index + 1,
     }));
 

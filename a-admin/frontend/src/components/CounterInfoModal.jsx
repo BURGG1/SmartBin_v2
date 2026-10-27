@@ -169,44 +169,57 @@ export default function CounterInfoModal({ isOpen, onClose, bin }) {
                         </h2>
                     </div>
                     <div className="flex flex-col sm:flex-row items-center gap-3 w-auto">
-                    <div className="relative">
-                        <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                        <input
-                            type="text"
-                            value={search}
-                            onChange={(e) => {
-                                setSearch(e.target.value);
-                                setPage(1);
-                            }}
-                            placeholder="Search household, resident, contact, email..."
-                            className="border rounded-lg pl-9 pr-8 py-2 text-sm w-72"
-                        />
-                        {search && (
-                            <button
-                                onClick={() => {
-                                    setSearch("");
+                        <div className="relative">
+                            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                                type="text"
+                                value={search}
+                                onChange={(e) => {
+                                    setSearch(e.target.value);
                                     setPage(1);
                                 }}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 cursor-pointer"
-                                aria-label="Clear search"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-2 w-auto">
-                        <p>Date Collected:</p>
-                        <input
-                            type="date"
-                            value={fromDate}
-                            max={toLocalDateString()}
-                            onChange={(e) => {
-                                setFromDate(e.target.value || toLocalDateString());
-                                setPage(1);
-                            }}
-                            className="border rounded-lg px-3 py-2 text-sm w-50"
-                        />
-                    </div>
+                                placeholder="Search household, resident, contact, email..."
+                                className="border rounded-lg pl-9 pr-8 py-2 text-sm w-72"
+                            />
+                            {search && (
+                                <button
+                                    onClick={() => {
+                                        setSearch("");
+                                        setPage(1);
+                                    }}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 cursor-pointer"
+                                    aria-label="Clear search"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2 w-auto">
+                            <p>Date Collected:</p>
+                            <input
+                                type="date"
+                                value={fromDate}
+                                max={toLocalDateString()}
+                                onChange={(e) => {
+                                    setFromDate(e.target.value || toLocalDateString());
+                                    setPage(1);
+                                }}
+                                className="border rounded-lg px-3 py-2 text-sm w-50"
+                            />
+                            {!isToday && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFromDate(toLocalDateString());
+                                        setPage(1);
+                                    }}
+                                    className="flex cursor-pointer items-center gap-1 px-2 py-1.5 rounded-lg bg-gray-200 text-gray-700 text-xs hover:bg-gray-300 whitespace-nowrap"
+                                >
+                                    <X size={14} />
+                                    Clear Selection
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
 

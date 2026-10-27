@@ -4,12 +4,8 @@ import {
     Text,
     ScrollView,
     TouchableOpacity,
-    TextInput,
     Alert,
     ActivityIndicator,
-    Modal,
-    KeyboardAvoidingView,
-    Platform,
     RefreshControl,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
@@ -18,32 +14,8 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { API_BASE } from "@/config";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
-const PH_MOBILE_REGEX = /^09\d{9}$/;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// Mirrors the backend's normalizeContactNumber so this screen agrees with
-// the admin panel / registration forms / server on a single canonical
-// "09XXXXXXXXX" format before validating, checking, or submitting.
-const normalizeContactNumber = (input) => {
-    if (!input || typeof input !== "string") return null;
-
-    let digits = input.replace(/\D/g, "");
-
-    if (digits.startsWith("63") && digits.length === 12) {
-        digits = "0" + digits.slice(2);
-    } else if (digits.length === 10 && digits.startsWith("9")) {
-        digits = "0" + digits;
-    }
-
-    return digits;
-};
-
-// Strips the leading "0" so the number can be shown next to a fixed "+63" prefix
-const toLocalDisplay = (contactNumber) => {
-    if (!contactNumber) return "";
-    return contactNumber.startsWith("0") ? contactNumber.slice(1) : contactNumber;
-};
+import EditHousehold from "@/components/EditHouseholdModal";
+import ChangePassword from "@/components/ChangePasswordModal";
 
 const getInitials = (name = "") => {
     const trimmed = (name || "").trim();
@@ -71,27 +43,7 @@ export default function Profile() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [updating, setUpdating] = useState(false);
-    const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-    const [showNewPassword, setShowNewPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-    const [form, setForm] = useState({
-        fullname: "",
-        contactNumber: "", // local part only, no leading 0 (paired with fixed +63 prefix)
-        houseNo: "",
-        street: "",
-        familyMember: "",
-        email: "",
-    });
-
-    const [formErrors, setFormErrors] = useState({});
-
-    const [passwordForm, setPasswordForm] = useState({
-        currentPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-    });
+    const [isPasswordOpen, setIsPasswordOpen] = useState(false);
 
     // Total violations on record. limit=1 keeps the request tiny; we only need pagination.total.
     const fetchViolationCount = async (userId, token) => {
@@ -126,14 +78,6 @@ export default function Profile() {
             const data = await res.json();
             if (data.success) {
                 setHousehold(data.data);
-                setForm({
-                    fullname: data.data.fullname || "",
-                    contactNumber: toLocalDisplay(data.data.contactNumber),
-                    houseNo: data.data.address?.houseNo || "",
-                    street: data.data.address?.street || "",
-                    familyMember: data.data.familyMember?.toString() || "",
-                    email: data.data.email || "",
-                });
             }
             await violationPromise;
         } catch (err) {
@@ -154,161 +98,6 @@ export default function Profile() {
         setRefreshing(true);
         await fetchHousehold();
         setRefreshing(false);
-    };
-
-    // ── Availability checks (same pattern as registration forms) ──
-    const isEmailTaken = async (email) => {
-        try {
-            const res = await fetch(
-                `${API_BASE}/api/households/check-email?email=${encodeURIComponent(email)}`
-            );
-            const data = await res.json();
-            if (!data?.success) return false; // fail open, server still enforces uniqueness
-            return !!data.exists;
-        } catch (err) {
-            console.error("Email check failed:", err);
-            return false;
-        }
-    };
-
-    const isContactTaken = async (contactNumber) => {
-        try {
-            const res = await fetch(
-                `${API_BASE}/api/households/check-contact?contactNumber=${encodeURIComponent(contactNumber)}`
-            );
-            const data = await res.json();
-            if (!data?.success) return false;
-            return !!data.exists;
-        } catch (err) {
-            console.error("Contact check failed:", err);
-            return false;
-        }
-    };
-
-    const resetModalState = () => {
-        setIsModalOpen(false);
-        setFormErrors({});
-        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-        setShowCurrentPassword(false);
-        setShowNewPassword(false);
-        setShowConfirmPassword(false);
-    };
-
-    const handleUpdate = async () => {
-        const nextErrors = {};
-
-        if (!form.fullname.trim()) {
-            nextErrors.fullname = "Fullname is required.";
-        }
-
-        const normalizedContact = normalizeContactNumber(form.contactNumber.trim());
-        if (!form.contactNumber.trim()) {
-            nextErrors.contactNumber = "Contact number is required.";
-        } else if (!normalizedContact || !PH_MOBILE_REGEX.test(normalizedContact)) {
-            nextErrors.contactNumber = "Enter a valid contact number, e.g. 912-345-6789.";
-        }
-
-        const normalizedEmail = form.email.trim() ? form.email.trim().toLowerCase() : "";
-        if (normalizedEmail && !EMAIL_REGEX.test(normalizedEmail)) {
-            nextErrors.email = "Enter a valid email address.";
-        }
-
-        setFormErrors(nextErrors);
-        if (Object.keys(nextErrors).length > 0) return;
-
-        // Only re-check availability if the value actually changed
-        const contactChanged = normalizedContact !== household?.contactNumber;
-        const emailChanged = normalizedEmail !== (household?.email || "");
-
-        setUpdating(true);
-        try {
-            const [contactTaken, emailTaken] = await Promise.all([
-                contactChanged ? isContactTaken(normalizedContact) : Promise.resolve(false),
-                emailChanged && normalizedEmail ? isEmailTaken(normalizedEmail) : Promise.resolve(false),
-            ]);
-
-            const conflictErrors = {};
-            if (contactTaken) conflictErrors.contactNumber = "This contact number is already registered.";
-            if (emailTaken) conflictErrors.email = "This email is already registered.";
-
-            if (Object.keys(conflictErrors).length > 0) {
-                setFormErrors((prev) => ({ ...prev, ...conflictErrors }));
-                return;
-            }
-        } catch (err) {
-            Alert.alert("Error", "Could not verify contact/email availability. Please try again.");
-            return;
-        } finally {
-            setUpdating(false);
-        }
-
-        // Validate password fields if any are filled
-        if (passwordForm.currentPassword || passwordForm.newPassword || passwordForm.confirmPassword) {
-            if (!passwordForm.currentPassword) {
-                Alert.alert("Error", "Please enter your current password.");
-                return;
-            }
-            if (!passwordForm.newPassword) {
-                Alert.alert("Error", "Please enter a new password.");
-                return;
-            }
-            if (passwordForm.newPassword.length < 6) {
-                Alert.alert("Error", "New password must be at least 6 characters.");
-                return;
-            }
-            if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-                Alert.alert("Error", "New passwords do not match.");
-                return;
-            }
-        }
-
-        setUpdating(true);
-        try {
-            const token = await AsyncStorage.getItem("token");
-            const userStr = await AsyncStorage.getItem("user");
-            const user = userStr ? JSON.parse(userStr) : null;
-
-            const body = {
-                fullname: form.fullname.trim(),
-                contactNumber: normalizedContact,
-                address: {
-                    houseNo: form.houseNo.trim(),
-                    street: form.street.trim(),
-                },
-                familyMember: form.familyMember ? parseInt(form.familyMember, 10) : null,
-                email: normalizedEmail || null,
-            };
-
-            if (passwordForm.currentPassword && passwordForm.newPassword) {
-                body.currentPassword = passwordForm.currentPassword;
-                body.newPassword = passwordForm.newPassword;
-            }
-
-            const res = await fetch(`${API_BASE}/api/households/${user.id}`, {
-                method: "PUT",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify(body),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok || !data.success) {
-                const message = Array.isArray(data.message) ? data.message.join("\n") : data.message;
-                Alert.alert("Error", message || "Failed to update.");
-                return;
-            }
-
-            Alert.alert("Success", "Profile updated successfully!");
-            resetModalState();
-            fetchHousehold();
-        } catch (err) {
-            Alert.alert("Error", "Cannot connect to server.");
-        } finally {
-            setUpdating(false);
-        }
     };
 
     const handleLogout = () => {
@@ -362,66 +151,6 @@ export default function Profile() {
             danger: hasViolations,
         },
     ];
-
-    // ── Form helpers (plain render functions, not components, so inputs keep focus) ──
-    const clearError = (key) => {
-        if (formErrors[key]) setFormErrors((prev) => ({ ...prev, [key]: undefined }));
-    };
-
-    const renderInput = ({ label, key, placeholder, required, keyboard, icon }) => (
-        <View key={key}>
-            <Text className="text-sm font-semibold mb-1.5 text-gray-700">
-                {label}
-                {required && <Text className="text-red-500"> *</Text>}
-            </Text>
-            <View
-                className={`flex-row items-center border rounded-xl px-3.5 bg-gray-50 ${formErrors[key] ? "border-red-500" : "border-gray-300"
-                    }`}
-            >
-                {icon && <Feather name={icon} size={18} color="#9CA3AF" />}
-                <TextInput
-                    editable={!updating}
-                    value={form[key]}
-                    onChangeText={(v) => {
-                        setForm((prev) => ({ ...prev, [key]: v }));
-                        clearError(key);
-                    }}
-                    placeholder={placeholder}
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType={keyboard || "default"}
-                    autoCapitalize={key === "email" ? "none" : "sentences"}
-                    className="flex-1 py-3 ml-2.5 text-base text-gray-900"
-                />
-            </View>
-            {formErrors[key] && <Text className="text-red-600 text-sm mt-1">{formErrors[key]}</Text>}
-        </View>
-    );
-
-    const renderPasswordInput = ({ label, value, onChange, placeholder, show, setShow }) => (
-        <View>
-            <Text className="text-sm font-semibold mb-1.5 text-gray-700">{label}</Text>
-            <View className="flex-row items-center border rounded-xl px-3.5 border-gray-300 bg-gray-50">
-                <Feather name="lock" size={18} color="#9CA3AF" />
-                <TextInput
-                    editable={!updating}
-                    value={value}
-                    onChangeText={onChange}
-                    placeholder={placeholder}
-                    placeholderTextColor="#9CA3AF"
-                    secureTextEntry={!show}
-                    autoCapitalize="none"
-                    className="flex-1 py-3 ml-2.5 text-base text-gray-900"
-                />
-                <TouchableOpacity onPress={() => setShow(!show)} hitSlop={8}>
-                    <Feather name={show ? "eye-off" : "eye"} size={20} color="#6B7280" />
-                </TouchableOpacity>
-            </View>
-        </View>
-    );
-
-    const renderSectionTitle = (title) => (
-        <Text className="text-xs font-bold text-green-700 tracking-widest mb-3">{title}</Text>
-    );
 
     return (
         <SafeAreaView className="flex-1 bg-gray-50">
@@ -517,7 +246,7 @@ export default function Profile() {
                 {/* Household details */}
                 <View className="mx-5 mt-6 mb-2 flex-row items-center justify-between">
                     <Text className="text-sm font-bold text-gray-600 tracking-wide">HOUSEHOLD DETAILS</Text>
-                    <TouchableOpacity
+                    {/* <TouchableOpacity
                         onPress={() => setIsModalOpen(true)}
                         accessibilityRole="button"
                         accessibilityLabel="Edit household information"
@@ -526,8 +255,9 @@ export default function Profile() {
                     >
                         <Feather name="edit-2" size={14} color="#15803d" />
                         <Text className="text-green-700 text-sm font-semibold ml-1">Edit</Text>
-                    </TouchableOpacity>
+                    </TouchableOpacity> */}
                 </View>
+                
                 <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                     {detailItems.map((item, idx) => (
                         <View
@@ -545,20 +275,26 @@ export default function Profile() {
                         </View>
                     ))}
                 </View>
-
+{/* Security */}
+                <Text className="mx-5 mt-6 mb-2 text-sm font-bold text-gray-600 tracking-wide">SECURITY</Text>
+                <TouchableOpacity
+                    onPress={() => setIsPasswordOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change password"
+                    activeOpacity={0.7}
+                    className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm flex-row items-center gap-3 px-4 py-4"
+                >
+                    <View className="w-11 h-11 rounded-full items-center justify-center bg-green-50">
+                        <Feather name="lock" size={20} color="#16A34A" />
+                    </View>
+                    <View className="ml-1 flex-1">
+                        <Text className="text-base font-semibold text-gray-900">Change password</Text>
+                        <Text className="text-sm text-gray-600 mt-0.5">Update the password you use to log in</Text>
+                    </View>
+                    <Feather name="chevron-right" size={20} color="#9CA3AF" />
+                </TouchableOpacity>
                 {/* Actions */}
                 <View className="mx-4 mt-5 gap-3">
-                    {/* <TouchableOpacity
-                        onPress={() => setIsModalOpen(true)}
-                        accessibilityRole="button"
-                        activeOpacity={0.85}
-                        className="w-full py-4 rounded-xl bg-green-600 flex-row items-center justify-center"
-                    >
-                        <Feather name="edit-2" size={18} color="white" />
-                        <Text className="text-white text-base font-semibold ml-2">Update information</Text>
-                    </TouchableOpacity> */}
-
-                    {/* Re-open the Terms & Conditions in read-only mode */}
                     <TouchableOpacity
                         onPress={() => router.push("/terms_condition")}
                         accessibilityRole="button"
@@ -581,175 +317,17 @@ export default function Profile() {
                     </TouchableOpacity>
                 </View>
             </ScrollView>
-
-            {/* Edit modal: bottom sheet with sticky header and footer */}
-            <Modal
-                visible={isModalOpen}
-                animationType="slide"
-                transparent
-                onRequestClose={() => !updating && resetModalState()}
-            >
-                <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} className="flex-1">
-                    <View className="flex-1 bg-black/40 justify-end">
-                        <View className="bg-white rounded-t-3xl" style={{ maxHeight: "92%" }}>
-                            {/* Header */}
-                            <View className="px-5 pt-5 pb-4 border-b border-gray-100 flex-row items-center justify-between">
-                                <View className="flex-1 pr-3">
-                                    <Text className="text-xl font-bold text-gray-900">Update Information</Text>
-                                    <Text className="text-sm text-gray-500 mt-0.5">Fields marked * are required</Text>
-                                </View>
-                                <TouchableOpacity
-                                    onPress={() => !updating && resetModalState()}
-                                    accessibilityLabel="Close"
-                                    className="w-9 h-9 rounded-full bg-gray-100 items-center justify-center"
-                                >
-                                    <Feather name="x" size={20} color="#4B5563" />
-                                </TouchableOpacity>
-                            </View>
-
-                            {/* Body */}
-                            <ScrollView
-                                keyboardShouldPersistTaps="handled"
-                                showsVerticalScrollIndicator={false}
-                                contentContainerStyle={{ padding: 20, paddingBottom: 12 }}
-                            >
-                                {/* Personal */}
-                                <View className="mb-6 gap-4">
-                                    {renderSectionTitle("PERSONAL")}
-                                    {renderInput({
-                                        label: "Fullname",
-                                        key: "fullname",
-                                        placeholder: "ex. Joel Dela Cruz",
-                                        required: true,
-                                        icon: "user",
-                                    })}
-                                    {renderInput({
-                                        label: "Family Members",
-                                        key: "familyMember",
-                                        placeholder: "ex. 5",
-                                        keyboard: "numeric",
-                                        icon: "users",
-                                    })}
-                                </View>
-
-                                {/* Address */}
-                                <View className="mb-6 gap-4">
-                                    {renderSectionTitle("ADDRESS")}
-                                    {renderInput({ label: "House No.", key: "houseNo", placeholder: "ex. 0123", icon: "home" })}
-                                    {renderInput({ label: "Street / Block", key: "street", placeholder: "ex. Rizal St.", icon: "map-pin" })}
-                                </View>
-
-                                {/* Contact */}
-                                <View className="mb-6 gap-4">
-                                    {renderSectionTitle("CONTACT")}
-                                    <View>
-                                        <Text className="text-sm font-semibold mb-1.5 text-gray-700">
-                                            Contact Number
-                                            <Text className="text-red-500"> *</Text>
-                                        </Text>
-                                        <View
-                                            className={`flex-row items-center border rounded-xl overflow-hidden bg-gray-50 ${formErrors.contactNumber ? "border-red-500" : "border-gray-300"
-                                                }`}
-                                        >
-                                            <View className="bg-gray-100 px-3.5 py-3 border-r border-gray-200">
-                                                <Text className="text-gray-800 text-base font-medium">🇵🇭 +63</Text>
-                                            </View>
-                                            <TextInput
-                                                editable={!updating}
-                                                value={form.contactNumber}
-                                                onChangeText={(v) => {
-                                                    // digits and dashes only
-                                                    const cleaned = v.replace(/[^\d-]/g, "");
-                                                    setForm((prev) => ({ ...prev, contactNumber: cleaned }));
-                                                    clearError("contactNumber");
-                                                }}
-                                                placeholder="912-345-6789"
-                                                placeholderTextColor="#9CA3AF"
-                                                keyboardType="phone-pad"
-                                                maxLength={10}
-                                                className="flex-1 px-4 py-3 text-base text-gray-900"
-                                            />
-                                        </View>
-                                        {formErrors.contactNumber && (
-                                            <Text className="text-red-600 text-sm mt-1">{formErrors.contactNumber}</Text>
-                                        )}
-                                    </View>
-                                    {renderInput({
-                                        label: "Email",
-                                        key: "email",
-                                        placeholder: "ex. joel@email.com",
-                                        keyboard: "email-address",
-                                        icon: "mail",
-                                    })}
-                                </View>
-
-                                {/* Password */}
-                                <View className="gap-4 rounded-2xl bg-gray-50 border border-gray-100 p-4">
-                                    <View>
-                                        {renderSectionTitle("CHANGE PASSWORD")}
-                                        <Text className="text-sm text-gray-500 -mt-1.5">
-                                            Leave blank if you don't want to change your password.
-                                        </Text>
-                                    </View>
-                                    {renderPasswordInput({
-                                        label: "Current Password",
-                                        value: passwordForm.currentPassword,
-                                        onChange: (v) => setPasswordForm((prev) => ({ ...prev, currentPassword: v })),
-                                        placeholder: "Enter current password",
-                                        show: showCurrentPassword,
-                                        setShow: setShowCurrentPassword,
-                                    })}
-                                    {renderPasswordInput({
-                                        label: "New Password",
-                                        value: passwordForm.newPassword,
-                                        onChange: (v) => setPasswordForm((prev) => ({ ...prev, newPassword: v })),
-                                        placeholder: "At least 6 characters",
-                                        show: showNewPassword,
-                                        setShow: setShowNewPassword,
-                                    })}
-                                    {renderPasswordInput({
-                                        label: "Confirm New Password",
-                                        value: passwordForm.confirmPassword,
-                                        onChange: (v) => setPasswordForm((prev) => ({ ...prev, confirmPassword: v })),
-                                        placeholder: "Re-enter new password",
-                                        show: showConfirmPassword,
-                                        setShow: setShowConfirmPassword,
-                                    })}
-                                </View>
-                            </ScrollView>
-
-                            {/* Footer */}
-                            <View className="px-5 pt-3 pb-6 border-t border-gray-100 flex-row gap-3">
-                                <TouchableOpacity
-                                    onPress={() => !updating && resetModalState()}
-                                    disabled={updating}
-                                    activeOpacity={0.7}
-                                    className="flex-1 py-4 rounded-xl border border-gray-300 items-center justify-center"
-                                    style={{ opacity: updating ? 0.5 : 1 }}
-                                >
-                                    <Text className="text-gray-700 text-base font-semibold">Cancel</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    onPress={handleUpdate}
-                                    disabled={updating}
-                                    activeOpacity={0.85}
-                                    className="flex-1 bg-green-600 py-4 rounded-xl items-center justify-center"
-                                    style={{ opacity: updating ? 0.6 : 1 }}
-                                >
-                                    {updating ? (
-                                        <View className="flex-row items-center">
-                                            <ActivityIndicator size="small" color="#fff" />
-                                            <Text className="text-white text-base font-semibold ml-2">Saving...</Text>
-                                        </View>
-                                    ) : (
-                                        <Text className="text-white text-base font-semibold">Save Changes</Text>
-                                    )}
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    </View>
-                </KeyboardAvoidingView>
-            </Modal>
+            <ChangePassword
+                isOpen={isPasswordOpen}
+                onClose={() => setIsPasswordOpen(false)}
+                household={household}
+            />
+            <EditHousehold
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                household={household}
+                onSaved={fetchHousehold}
+            />
         </SafeAreaView>
     );
 }

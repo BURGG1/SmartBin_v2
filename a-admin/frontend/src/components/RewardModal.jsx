@@ -225,7 +225,7 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                     {/* FILTER */}
                     <div className="w-full flex flex-col sm:flex-row gap-4 px-6 py-4 border-b">
                         <div className=" flex items-center gap-2 w-auto sm:w-full">
-                            <p>Date Collected:</p>
+                            <p>Date :</p>
                             <input
                                 type="date"
                                 value={fromDate}
@@ -237,6 +237,19 @@ export function ViewRewardModal({ isOpen, onClose, rName }) {
                                 }}
                                 className="border rounded-lg px-3 py-2 text-sm w-50"
                             />
+                            {(fromDate || toDate) && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFromDate("");
+                                        setToDate("");
+                                    }}
+                                    className="flex cursor-pointer items-center gap-1 px-2 py-1.5 rounded-lg bg-gray-200 text-gray-700 text-xs hover:bg-gray-300 whitespace-nowrap"
+                                >
+                                    <X size={14} />
+                                    Clear Selection
+                                </button>
+                            )}
                         </div>
                         <div className="flex items-center gap-2 w-auto sm:w-full">
                             <Search size={16} />

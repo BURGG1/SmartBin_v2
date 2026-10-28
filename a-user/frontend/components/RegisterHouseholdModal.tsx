@@ -218,6 +218,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     const [form, setForm] = useState<FormState>(INITIAL_FORM);
     const [errors, setErrors] = useState<FormErrors>({});
     const [streetPickerOpen, setStreetPickerOpen] = useState(false);
+    const [privacyOpen, setPrivacyOpen] = useState(false);
     const [consent, setConsent] = useState(false);
     const submittingRef = useRef(false);
 
@@ -232,6 +233,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
         setForm(INITIAL_FORM);
         setErrors({});
         setConsent(false);
+        setPrivacyOpen(false);
     };
 
     const isEmailTaken = async (email: string): Promise<boolean> => {
@@ -297,8 +299,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
             next.contactNumber = "Enter a valid number, e.g. 912-345-6789.";
         }
 
-        if (!email) next.email = "Email is required.";
-        else if (email && !EMAIL_REGEX.test(email)) {
+        // Email is optional — but if provided, it must be valid
+        if (email && !EMAIL_REGEX.test(email)) {
             next.email = "Enter a valid email address.";
         }
 
@@ -321,6 +323,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
         submittingRef.current = true;
         setLoading(true);
 
+        const hasEmail = !!form.email.trim();
+
         try {
             const response = await fetch(`${API_BASE}/api/requests`, {
                 method: "POST",
@@ -335,7 +339,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                         houseNo: form.houseNo.trim(),
                         street: form.street.trim(),
                     },
-                    email: form.email.trim() ? form.email.trim().toLowerCase() : null,
+                    email: hasEmail ? form.email.trim().toLowerCase() : null,
                     contactNumber: normalizedContact,
                 }),
             });
@@ -355,7 +359,9 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
 
             Alert.alert(
                 "Request Submitted!",
-                "Your registration is pending admin approval. You will receive your credentials via email once approved.",
+                hasEmail
+                    ? "Your registration is pending admin approval. You will receive your credentials via email once approved."
+                    : "Your registration is pending admin approval. You will be contacted once it is approved.",
                 [
                     {
                         text: "OK",
@@ -389,8 +395,11 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
 
         // normalizedContact is guaranteed valid past this point; birthdayIso may be
         // null if the user left birthday blank (it's optional, like on the web form)
+        const emailValue = form.email.trim().toLowerCase();
+
         const [emailTaken, contactTaken] = await Promise.all([
-            isEmailTaken(form.email.trim().toLowerCase()),
+            // Email is optional: skip the duplicate lookup when it's empty
+            emailValue ? isEmailTaken(emailValue) : Promise.resolve(false),
             isContactTaken(normalizedContact as string),
         ]);
 
@@ -416,6 +425,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
         );
     };
 
+    // Only the X button calls this. Tapping outside the card or pressing the
+    // Android back button no longer closes the modal.
     const handleClose = () => {
         if (loading) return;
         resetForm();
@@ -428,16 +439,13 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
             className="bg-white"
             animationType="fade"
             statusBarTranslucent
-            onRequestClose={handleClose}
+            onRequestClose={() => {}} // Android back button does nothing; use the X button
         >
             <KeyboardAvoidingView
                 behavior={Platform.OS === "ios" ? "padding" : undefined}
                 className="flex-1"
             >
                 <View className="flex-1 bg-black/40 justify-center items-center p-4">
-                    {/* Backdrop: tap outside to close */}
-                    <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
-
                     {/* Card (plain View so it doesn't intercept scroll gestures) */}
                     <View className="bg-white w-full max-w-lg max-h-[90%] rounded-2xl overflow-hidden">
                         {/* HEADER */}
@@ -567,11 +575,10 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 </View>
                             </View>
 
-                            {/* Email */}
+                            {/* Email (optional) */}
                             <View className="mb-3">
                                 <View className="flex-row items-center">
                                     <Text className="text-lg font-semibold">Email</Text>
-                                    {/* <Text className="text-red-500 ml-1">*</Text> */}
                                 </View>
                                 <TextInput
                                     placeholder="ex. janicedelacruz@gmail.com"
@@ -622,26 +629,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 )}
                             </View>
 
-                            {/* Data Privacy Notice (RA 10173) */}
-                            <View className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                                <View className="flex-row items-center mb-1">
-                                    <Ionicons name="shield-checkmark-outline" size={16} color="#16a34a" />
-                                    <Text className="ml-1 text-md font-bold text-gray-800">Data Privacy Notice</Text>
-                                </View>
-                                <Text className="text-sm text-gray-600 leading-4">
-                                    In compliance with Republic Act No. 10173, or the Data Privacy Act of 2012, the
-                                    Barangay collects your full name, birthday, number of family members, address,
-                                    email, and contact number solely to register your household, verify your identity,
-                                    send your account credentials, and deliver barangay services. Your information will
-                                    be kept confidential, stored securely, accessed only by authorized barangay
-                                    personnel, and will not be shared with third parties without your consent, except
-                                    as required by law. You have the right to be informed, to access, correct, object
-                                    to, or request erasure of your personal data, and to file a complaint with the
-                                    National Privacy Commission. For concerns, contact the Barangay Data Protection
-                                    Officer.
-                                </Text>
-                            </View>
-
+                            {/* Consent (RA 10173). The notice itself opens in a modal when the
+                                bold "Data Privacy Notice" text is tapped. */}
                             <TouchableOpacity
                                 onPress={() => {
                                     if (loading) return;
@@ -650,7 +639,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 }}
                                 disabled={loading}
                                 activeOpacity={0.7}
-                                className="flex-row items-start mt-3"
+                                className="flex-row items-start mt-4"
                                 accessibilityRole="checkbox"
                                 accessibilityState={{ checked: consent }}
                             >
@@ -659,13 +648,21 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     size={22}
                                     color={errors.consent ? "#ef4444" : consent ? "#16a34a" : "#6B7280"}
                                 />
-                                <Text className="flex-1 ml-2 text-sm text-gray-700 leading-4">
-                                    I have read and understood the <Text className="font-bold">Data Privacy Notice</Text>, and I voluntarily consent to the
-                                    collection and processing of my personal information in accordance with RA 10173.
+                                <Text className="flex-1 ml-2 text-md text-gray-700 leading-5">
+                                    I have read and understood the{" "}
+                                    <Text
+                                        className="font-bold text-md text-green-700 underline"
+                                        onPress={() => setPrivacyOpen(true)}
+                                        accessibilityRole="link"
+                                    >
+                                        Data Privacy Notice
+                                    </Text>
+                                    , and I voluntarily consent to the collection and processing of my
+                                    personal information in accordance with RA 10173.
                                 </Text>
                             </TouchableOpacity>
                             {errors.consent && (
-                                <Text className="text-red-500 text-xs mt-1">{errors.consent}</Text>
+                                <Text className="text-red-500 text-sm mt-1">{errors.consent}</Text>
                             )}
 
                             {/* Button */}
@@ -731,6 +728,68 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     </TouchableOpacity>
                                 )}
                             />
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* ── Data Privacy Notice modal (RA 10173) ── */}
+                <Modal
+                    visible={privacyOpen}
+                    animationType="fade"
+                    transparent
+                    statusBarTranslucent
+                    onRequestClose={() => setPrivacyOpen(false)}
+                >
+                    <View className="flex-1 bg-black/40 justify-center items-center p-4">
+                        <Pressable
+                            style={StyleSheet.absoluteFill}
+                            onPress={() => setPrivacyOpen(false)}
+                        />
+                        <View className="w-full max-w-lg max-h-[80%] bg-white rounded-2xl overflow-hidden">
+                            <View className="flex-row justify-between items-center px-5 py-4 border-b border-gray-200">
+                                <View className="flex-row items-center">
+                                    <Ionicons name="shield-checkmark-outline" size={20} color="#16a34a" />
+                                    <Text className="ml-2 text-lg font-bold text-gray-800">
+                                        Data Privacy Notice
+                                    </Text>
+                                </View>
+                                <TouchableOpacity onPress={() => setPrivacyOpen(false)} hitSlop={8}>
+                                    <Ionicons name="close" size={22} color="gray" />
+                                </TouchableOpacity>
+                            </View>
+
+                            <ScrollView
+                                showsVerticalScrollIndicator={false}
+                                overScrollMode="never"
+                                contentContainerStyle={{ padding: 20 }}
+                            >
+                                <Text className="text-md text-gray-700 leading-5">
+                                    In compliance with Republic Act No. 10173, or the Data Privacy Act of 2012, the
+                                    Barangay collects your full name, birthday, number of family members, address,
+                                    email, and contact number solely to register your household, verify your identity,
+                                    send your account credentials, and deliver barangay services.
+                                </Text>
+                                <Text className="text-md text-gray-700 leading-5 mt-3">
+                                    Your information will be kept confidential, stored securely, accessed only by
+                                    authorized barangay personnel, and will not be shared with third parties without
+                                    your consent, except as required by law.
+                                </Text>
+                                <Text className="text-md text-gray-700 leading-5 mt-3">
+                                    You have the right to be informed, to access, correct, object to, or request
+                                    erasure of your personal data, and to file a complaint with the National Privacy
+                                    Commission. For concerns, contact the Barangay Data Protection Officer.
+                                </Text>
+                            </ScrollView>
+
+                            <View className="px-5 py-4 border-t border-gray-200">
+                                <TouchableOpacity
+                                    onPress={() => setPrivacyOpen(false)}
+                                    activeOpacity={0.8}
+                                    className="bg-green-600 rounded-lg p-3 items-center"
+                                >
+                                    <Text className="text-white font-semibold">Close</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     </View>
                 </Modal>

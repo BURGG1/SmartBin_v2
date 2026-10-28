@@ -308,15 +308,15 @@ export default function Home() {
         setActiveLogTab("disposal");
     }, [household?._id]);
 
-    // ── First-login prompt: show once when the server says it's the first login
+    // ── First-login prompt: show once when the server says it's the first login.
+    // The prompt is only ever closed by the user's Yes / No choice (see the
+    // handlers below), so there is intentionally no "else close" branch here.
     useEffect(() => {
         const id = household?._id;
         const isFirst = (household as any)?.isFirstLogin === true;
 
         if (isFirst && id && !pwPromptHandledRef.current && !promptHandledIds.has(id)) {
             setShowPwPrompt(true);
-        } else if (!isFirst) {
-            setShowPwPrompt(false); // flag cleared on the server → make sure it's closed
         }
     }, [household?._id, (household as any)?.isFirstLogin]);
 
@@ -785,13 +785,15 @@ export default function Home() {
                 onClose={() => setSelected(null)}
             />
 
-            {/* First-login password prompt (Yes / No) */}
+            {/* First-login password prompt (Yes / No).
+                Cannot be dismissed any other way: no backdrop press, and the
+                Android back button is a no-op. */}
             <Modal
                 visible={showPwPrompt}
                 transparent
                 animationType="fade"
                 statusBarTranslucent
-                onRequestClose={handleChangePwNo}
+                onRequestClose={() => {}}
             >
                 <View className="flex-1 items-center justify-center bg-black/40 px-6">
                     <View className="bg-white rounded-2xl p-6 w-full">

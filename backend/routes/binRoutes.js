@@ -26,12 +26,28 @@ const {
     createBin,
     updateBin,
     deleteBin,
-    getBinCount,
+    getBinByMac,
     heartbeat,
+    getBinCount,
+    getBinDiagnostics,
+    updateBinDiagnostics,
 } = require("../controllers/binController");
 
 // ── No-param routes FIRST (before /:id) ──────────────────────────────────────
 router.post("/heartbeat", heartbeat);
+
+router.get(
+    "/:binId/diagnostics",
+    protect,
+    adminOnly,
+    getBinDiagnostics
+);
+
+router.post(
+    "/:binId/diagnostics",
+    updateBinDiagnostics
+);
+
 router.post("/dispose", dispose);
 router.post("/auto-schedule", async (req, res) => {
     try {

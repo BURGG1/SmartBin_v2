@@ -5,6 +5,7 @@ import Footer from "../../components/Footer";
 import BASE_URL from "../../config";
 import Pagination from "../../components/Pagination";
 import useDebounce from "../../hooks/useDebounce";
+import BinDiagnosticsModal from "../../components/BinDiagnosticsModal";
 
 import {
     CheckCircle,
@@ -69,6 +70,7 @@ export default function WasteBin() {
     const [activeBin, setActiveBin] = useState(null);
     const [openCounterModal, setOpenCounterModal] = useState(false);
     const [openAddModal, setOpenAddModal] = useState(false);
+    const [openDiagnosticsModal, setOpenDiagnosticsModal] = useState(false);
 
     // Pending bin
     const [pendingBin, setPendingBin] = useState(null);
@@ -517,16 +519,31 @@ export default function WasteBin() {
                                             </p>
                                         </div>
 
-                                        <button
-                                            onClick={() => {
-                                                setActiveBin(bin);
-                                                setOpenCounterModal(true);
-                                            }}
-                                            className="w-full mt-4 bg-gray-900 cursor-pointer text-white py-2 rounded-lg hover:bg-gray-800 flex items-center justify-center gap-2"
-                                        >
-                                            <Eye size={16} />
-                                            View
-                                        </button>
+
+                                        <div className="mt-4 space-y-2">
+                                            <button
+                                                onClick={() => {
+                                                    setActiveBin(bin);
+                                                    setOpenCounterModal(true);
+                                                }}
+                                                className="w-full bg-gray-900 cursor-pointer text-white py-2 rounded-lg hover:bg-gray-800 flex items-center justify-center gap-2"
+                                            >
+                                                <Eye size={16} />
+                                                View
+                                            </button>
+
+                                            <button
+                                                onClick={() => {
+                                                    setActiveBin(bin);
+                                                    setOpenDiagnosticsModal(true);
+                                                }}
+                                                className="w-full bg-blue-600 cursor-pointer text-white py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+                                            >
+                                                <AlertTriangle size={16} />
+                                                Diagnostics
+                                            </button>
+                                        </div>
+
                                     </div>
                                 );
                             })}
@@ -748,6 +765,14 @@ export default function WasteBin() {
                 onClose={() => setOpenCounterModal(false)}
                 bin={activeBin}
             />
+
+
+            <BinDiagnosticsModal
+                isOpen={openDiagnosticsModal}
+                onClose={() => setOpenDiagnosticsModal(false)}
+                bin={activeBin}
+            />
+
 
             <Footer />
         </div>

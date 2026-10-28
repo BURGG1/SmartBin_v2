@@ -20,6 +20,8 @@ import ForgotPasswordModal from "@/components/ForgotPasswordModal";
 // --- Config / constants -----------------------------------------------
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^\+?[0-9][0-9\s()-]{6,18}$/;
+
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 60_000; // client-side cool-down after repeated failures
@@ -31,7 +33,7 @@ const SAVED_PASSWORD_KEY = "saved_password";
 // --- Types ---------------------------------------------------------------
 
 interface LoginForm {
-  email: string;
+  identifier: string;
   password: string;
 }
 
@@ -94,18 +96,29 @@ async function clearSavedCredentials(): Promise<void> {
 
 async function loadSavedCredentials(): Promise<LoginForm | null> {
   try {
-    const email = await SecureStore.getItemAsync(SAVED_EMAIL_KEY);
-    const password = await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
-    if (email && password) return { email, password };
+    const identifier =
+      (await SecureStore.getItemAsync(SAVED_EMAIL_KEY)) ??
+      (await SecureStore.getItemAsync("saved_identifier"));
+
+    const password =
+      await SecureStore.getItemAsync(SAVED_PASSWORD_KEY);
+
+    if (identifier && password) {
+      return { identifier, password };
+    }
   } catch (err) {
     if (__DEV__) console.warn("Could not load credentials:", err);
   }
+
   return null;
 }
 
 export default function AuthPage() {
   const router = useRouter();
-  const [form, setForm] = useState<LoginForm>({ email: "", password: "" });
+  const [form, setForm] = useState<LoginForm>({
+    identifier: "",
+    password: "",
+  });
   const [isRegisterOpen, setIsRegisterOpen] = useState<boolean>(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -226,9 +239,19 @@ export default function AuthPage() {
     if (inFlightRef.current) return;
     if (isLockedOut()) return;
 
-    const email = form.email.trim().toLowerCase();
-    if (!email || !EMAIL_REGEX.test(email)) {
-      Alert.alert("Error", "Please enter a valid email address.");
+    const identifier = form.identifier.trim();
+    const normalizedIdentifier = EMAIL_REGEX.test(identifier)
+      ? identifier.toLowerCase()
+      : identifier;
+
+    const isEmail = EMAIL_REGEX.test(normalizedIdentifier);
+    const isPhone = PHONE_REGEX.test(normalizedIdentifier);
+
+    if (!normalizedIdentifier || (!isEmail && !isPhone)) {
+      Alert.alert(
+        "Invalid Login",
+        "Enter a valid email address or phone number."
+      );
       return;
     }
     if (!form.password) {
@@ -245,7 +268,10 @@ export default function AuthPage() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password: form.password }),
+          body: JSON.stringify({
+            identifier: normalizedIdentifier,
+            password: form.password,
+          }),
         },
         REQUEST_TIMEOUT_MS
       );
@@ -273,7 +299,7 @@ export default function AuthPage() {
       // password), and only if the checkbox is ticked. If it's not ticked,
       // make sure nothing old is lingering.
       if (savePassword) {
-        await saveCredentials(email, form.password);
+        await saveCredentials(normalizedIdentifier, form.password);
       } else {
         await clearSavedCredentials();
       }
@@ -355,16 +381,19 @@ export default function AuthPage() {
 
             {/* EMAIL */}
             <View>
-              <Text className="text-sm mb-1 font-semibold">Email</Text>
+              <Text className="text-sm mb-1 font-semibold">
+                Email or Phone Number
+              </Text>
+
               <View className="flex-row items-center mb-4 bg-gray-100 rounded-lg px-3 py-3">
-                <Feather name="mail" size={18} color="gray" />
+                <Feather name="user" size={18} color="gray" />
 
                 <TextInput
-                  placeholder="Enter your email"
+                  placeholder="Enter your email or phone number"
                   placeholderTextColor="#6B7280"
-                  value={form.email}
+                  value={form.identifier}
                   onChangeText={(text: string) =>
-                    setForm((f) => ({ ...f, email: text }))
+                    setForm((f) => ({ ...f, identifier: text }))
                   }
                   className="flex-1 ml-3 text-gray-900"
                   style={{
@@ -375,14 +404,12 @@ export default function AuthPage() {
                   selectionColor="#16A34A"
                   autoCapitalize="none"
                   autoCorrect={false}
-                  keyboardType="email-address"
-                  textContentType="emailAddress"
-                  autoComplete="email"
+                  keyboardType="default"
                   editable={!loading && !isLocked}
                   maxLength={254}
-                  accessibilityLabel="Email"
+                  accessibilityLabel="Email or phone number"
+                  returnKeyType="next"
                 />
-
               </View>
             </View>
 

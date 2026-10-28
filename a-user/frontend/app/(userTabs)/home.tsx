@@ -24,6 +24,8 @@ type DisposalLog = {
     note?: string;
     household?: { fullname?: string };
     action?: string;
+    binType?: string | null;
+    currentBinType?: string | null;
 };
 
 type ActivityLog = {
@@ -161,6 +163,11 @@ export default function Home() {
                 { signal: controller.signal }
             );
             const data = await res.json();
+
+            console.log(
+                "[MOBILE DISPOSAL LOGS]",
+                JSON.stringify(data.data?.[0], null, 2)
+            );
 
             if (data.success) {
                 const rows: DisposalLog[] = Array.isArray(data.data) ? data.data : [];
@@ -639,13 +646,12 @@ export default function Home() {
                             )}
                             {!disposalLoading && !disposalError && disposalLogs.map((log) => {
                                 const scannedAt = new Date(log.scannedAt);
-                                const binTypeMatch = log.note?.match(/\((.+)\)/);
-                                const binType = binTypeMatch ? binTypeMatch[1] : "—";
+                                const binType = log.currentBinType ?? log.binType ?? "—";
                                 return (
                                     <View key={log._id} className="flex-row justify-between items-center py-3 border-t border-gray-100">
                                         <View className="flex-1">
                                             <Text className="text-base font-semibold text-gray-900">
-                                                {log.binId ?? "—"} · {binType}
+                                                {log.binId ?? "—"} · {log.currentBinType ?? log.binType ?? "—"}
                                             </Text>
                                             <Text className="text-sm text-gray-600 mt-0.5">
                                                 {scannedAt.toLocaleDateString("en-CA")} ·{" "}

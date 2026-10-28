@@ -17,57 +17,69 @@ const generateToken = (payload) => {
 };
 
 // POST /api/auth/login
+
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    // Support the new "identifier" field and legacy "email" requests.
+    const { identifier, email, password } = req.body;
+    const loginValue = String(identifier ?? email ?? "").trim();
 
-    if (!email || !password) {
+    if (!loginValue || !password) {
       return res.status(400).json({
         success: false,
-        message: "Email and password are required.",
+        message: "Email or phone number and password are required.",
       });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginValue);
 
-    // 1. Admin login
-    const admin = await Admin.findOne({
-      email: normalizedEmail,
-      isActive: true,
-    });
+    // Email is case-insensitive. Phone numbers are matched as stored.
+    const normalizedValue = isEmail
+      ? loginValue.toLowerCase()
+      : loginValue;
 
-    if (admin) {
-      const isMatch = await bcrypt.compare(password, admin.password);
+    // 1. Admin login: email only.
+    if (isEmail) {
+      const admin = await Admin.findOne({
+        email: normalizedValue,
+        isActive: true,
+      });
 
-      if (!isMatch) {
-        return res.status(401).json({
-          success: false,
-          message: "Incorrect password.",
+      if (admin) {
+        const isMatch = await bcrypt.compare(password, admin.password);
+
+        if (!isMatch) {
+          return res.status(401).json({
+            success: false,
+            message: "Incorrect password.",
+          });
+        }
+
+        const token = generateToken({
+          id: admin._id,
+          role: "admin",
+          email: admin.email,
+        });
+
+        return res.json({
+          success: true,
+          role: "admin",
+          token,
+          user: {
+            id: admin._id,
+            name: admin.name,
+            email: admin.email,
+            role: "admin",
+          },
         });
       }
-
-      const token = generateToken({
-        id: admin._id,
-        role: "admin",
-        email: admin.email,
-      });
-
-      return res.json({
-        success: true,
-        role: "admin",
-        token,
-        user: {
-          id: admin._id,
-          name: admin.name,
-          email: admin.email,
-          role: "admin",
-        },
-      });
     }
 
-    // 2. Collector login
+    // 2. Collector login: email or registered contact number.
     const collector = await Collector.findOne({
-      email: normalizedEmail,
+      ...(isEmail
+        ? { email: normalizedValue }
+        : { contact: normalizedValue }),
       isActive: true,
     });
 
@@ -107,16 +119,18 @@ const login = async (req, res) => {
       });
     }
 
-    // 3. Household login
+    // 3. Household login: email or registered contact number.
     const household = await Household.findOne({
-      email: normalizedEmail,
+      ...(isEmail
+        ? { email: normalizedValue }
+        : { contactNumber: normalizedValue }),
       isActive: true,
     });
 
     if (!household) {
       return res.status(401).json({
         success: false,
-        message: "No account found with that email.",
+        message: "No active account found with that email or phone number.",
       });
     }
 
@@ -161,6 +175,7 @@ const login = async (req, res) => {
     });
   }
 };
+
 
 // ------------------------------------------------------------
 // Forgot / Reset Password

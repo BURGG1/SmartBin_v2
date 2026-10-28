@@ -10,6 +10,8 @@ import {
     Alert,
     KeyboardAvoidingView,
     FlatList,
+    Platform,
+    StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { API_BASE } from "@/config";
@@ -37,6 +39,7 @@ interface FormErrors {
     street?: string;
     email?: string;
     contactNumber?: string;
+    consent?: string;
 }
 
 const INITIAL_FORM: FormState = {
@@ -215,6 +218,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     const [form, setForm] = useState<FormState>(INITIAL_FORM);
     const [errors, setErrors] = useState<FormErrors>({});
     const [streetPickerOpen, setStreetPickerOpen] = useState(false);
+    const [consent, setConsent] = useState(false);
     const submittingRef = useRef(false);
 
     const handleChange = (field: keyof FormState, value: string) => {
@@ -227,6 +231,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     const resetForm = () => {
         setForm(INITIAL_FORM);
         setErrors({});
+        setConsent(false);
     };
 
     const isEmailTaken = async (email: string): Promise<boolean> => {
@@ -302,6 +307,10 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
             if (!Number.isInteger(n) || n < 0) {
                 next.familyMember = "Enter a valid number of family members.";
             }
+        }
+
+        if (!consent) {
+            next.consent = "You must agree to the Data Privacy Notice to continue.";
         }
 
         return { errors: next, birthdayIso };
@@ -421,15 +430,16 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
             statusBarTranslucent
             onRequestClose={handleClose}
         >
-            <KeyboardAvoidingView behavior="padding" className="flex-1">
-                <Pressable
-                    className="flex-1 bg-black/40 justify-center items-center p-4"
-                    onPress={handleClose}
-                >
-                    <Pressable
-                        className="bg-white w-full max-w-lg max-h-[90%] rounded-2xl overflow-hidden"
-                        onPress={() => { }}
-                    >
+            <KeyboardAvoidingView
+                behavior={Platform.OS === "ios" ? "padding" : undefined}
+                className="flex-1"
+            >
+                <View className="flex-1 bg-black/40 justify-center items-center p-4">
+                    {/* Backdrop: tap outside to close */}
+                    <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
+
+                    {/* Card (plain View so it doesn't intercept scroll gestures) */}
+                    <View className="bg-white w-full max-w-lg max-h-[90%] rounded-2xl overflow-hidden">
                         {/* HEADER */}
                         <View className="flex-row justify-between items-center px-6 py-4 border-b border-gray-200">
                             <Text className="text-lg font-bold">Register Household</Text>
@@ -439,11 +449,11 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                         </View>
 
                         <ScrollView
-                            className="p-5"
                             keyboardShouldPersistTaps="handled"
-                            keyboardDismissMode="on-drag"
-                            automaticallyAdjustKeyboardInsets
-                            contentContainerStyle={{ paddingBottom: 24 }}
+                            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
+                            showsVerticalScrollIndicator={false}
+                            overScrollMode="never"
+                            contentContainerStyle={{ padding: 20, paddingBottom: 24 }}
                         >
                             {/* Fullname */}
                             <View className="mb-3">
@@ -561,7 +571,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             <View className="mb-3">
                                 <View className="flex-row items-center">
                                     <Text className="text-lg font-semibold">Email</Text>
-                                    <Text className="text-red-500 ml-1">*</Text>
+                                    {/* <Text className="text-red-500 ml-1">*</Text> */}
                                 </View>
                                 <TextInput
                                     placeholder="ex. janicedelacruz@gmail.com"
@@ -612,11 +622,57 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 )}
                             </View>
 
+                            {/* Data Privacy Notice (RA 10173) */}
+                            <View className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                <View className="flex-row items-center mb-1">
+                                    <Ionicons name="shield-checkmark-outline" size={16} color="#16a34a" />
+                                    <Text className="ml-1 text-md font-bold text-gray-800">Data Privacy Notice</Text>
+                                </View>
+                                <Text className="text-sm text-gray-600 leading-4">
+                                    In compliance with Republic Act No. 10173, or the Data Privacy Act of 2012, the
+                                    Barangay collects your full name, birthday, number of family members, address,
+                                    email, and contact number solely to register your household, verify your identity,
+                                    send your account credentials, and deliver barangay services. Your information will
+                                    be kept confidential, stored securely, accessed only by authorized barangay
+                                    personnel, and will not be shared with third parties without your consent, except
+                                    as required by law. You have the right to be informed, to access, correct, object
+                                    to, or request erasure of your personal data, and to file a complaint with the
+                                    National Privacy Commission. For concerns, contact the Barangay Data Protection
+                                    Officer.
+                                </Text>
+                            </View>
+
+                            <TouchableOpacity
+                                onPress={() => {
+                                    if (loading) return;
+                                    setConsent((c) => !c);
+                                    if (errors.consent) setErrors((prev) => ({ ...prev, consent: undefined }));
+                                }}
+                                disabled={loading}
+                                activeOpacity={0.7}
+                                className="flex-row items-start mt-3"
+                                accessibilityRole="checkbox"
+                                accessibilityState={{ checked: consent }}
+                            >
+                                <Ionicons
+                                    name={consent ? "checkbox" : "square-outline"}
+                                    size={22}
+                                    color={errors.consent ? "#ef4444" : consent ? "#16a34a" : "#6B7280"}
+                                />
+                                <Text className="flex-1 ml-2 text-sm text-gray-700 leading-4">
+                                    I have read and understood the <Text className="font-bold">Data Privacy Notice</Text>, and I voluntarily consent to the
+                                    collection and processing of my personal information in accordance with RA 10173.
+                                </Text>
+                            </TouchableOpacity>
+                            {errors.consent && (
+                                <Text className="text-red-500 text-xs mt-1">{errors.consent}</Text>
+                            )}
+
                             {/* Button */}
                             <TouchableOpacity
                                 onPress={handleRegister}
                                 disabled={loading}
-                                className="mt-5 bg-green-600 rounded-lg p-3 items-center"
+                                className="mt-5 mb-5 bg-green-600 rounded-lg p-3 items-center"
                                 activeOpacity={0.8}
                                 style={{ opacity: loading ? 0.6 : 1 }}
                             >
@@ -625,8 +681,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                 </Text>
                             </TouchableOpacity>
                         </ScrollView>
-                    </Pressable>
-                </Pressable>
+                    </View>
+                </View>
 
                 {/* ── Street/Purok picker modal ── */}
                 <Modal
@@ -635,14 +691,12 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                     transparent
                     onRequestClose={() => setStreetPickerOpen(false)}
                 >
-                    <Pressable
-                        className="flex-1 bg-black/40 justify-end items-center p-4"
-                        onPress={() => setStreetPickerOpen(false)}
-                    >
+                    <View className="flex-1 bg-black/40 justify-end items-center p-4">
                         <Pressable
-                            className="w-[90%] bg-white rounded-t-2xl max-h-[70%]"
-                            onPress={() => { }}
-                        >
+                            style={StyleSheet.absoluteFill}
+                            onPress={() => setStreetPickerOpen(false)}
+                        />
+                        <View className="w-[90%] bg-white rounded-t-2xl max-h-[70%]">
                             <View className="flex-row justify-between items-center px-5 py-4 border-b border-gray-200">
                                 <Text className="text-lg font-bold">Select Purok</Text>
                                 <TouchableOpacity onPress={() => setStreetPickerOpen(false)} hitSlop={8}>
@@ -652,6 +706,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             <FlatList
                                 data={STREET_OPTIONS}
                                 keyExtractor={(item) => item}
+                                showsVerticalScrollIndicator={false}
+                                overScrollMode="never"
                                 renderItem={({ item }) => (
                                     <TouchableOpacity
                                         onPress={() => {
@@ -675,8 +731,8 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     </TouchableOpacity>
                                 )}
                             />
-                        </Pressable>
-                    </Pressable>
+                        </View>
+                    </View>
                 </Modal>
             </KeyboardAvoidingView>
         </Modal>

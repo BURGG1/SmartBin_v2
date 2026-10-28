@@ -467,9 +467,9 @@ export default function CollectorHome() {
                 }`}
               >
                 <View className="flex-1 pr-3">
-                  <Text className="text-base font-semibold text-gray-900">{activity.bin}</Text>
-                  <Text className="text-sm text-gray-600 mt-0.5">{activity.location}</Text>
-                  <Text className="text-sm text-gray-500 mt-0.5">
+                  <Text className="text-lg font-semibold text-gray-900">{activity.bin}</Text>
+                  <Text className="text-md font-semibold text-gray-600 mt-0.5">{activity.location}</Text>
+                  <Text className="text-md font-semibold text-gray-500 mt-0.5">
                     {activity.date} • {activity.time}
                   </Text>
                 </View>

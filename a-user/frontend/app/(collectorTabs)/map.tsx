@@ -444,7 +444,7 @@ export default function BinLocationMap() {
             >
               <View className={`w-2.5 h-2.5 rounded-full ${statusColors[s].dot}`} />
               <Text className="text-gray-900 font-bold text-base">{counts[s]}</Text>
-              <Text className="text-gray-600 text-xs">{statusColors[s].label}</Text>
+              <Text className="text-gray-600 font-semibold text-lg">{statusColors[s].label}</Text>
             </View>
           ))}
         </View>

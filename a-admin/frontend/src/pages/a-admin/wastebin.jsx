@@ -11,6 +11,7 @@ import {
     CheckCircle,
     AlertTriangle,
     XCircle,
+    HelpCircle,
     MapPin,
     Search,
     Asterisk,
@@ -61,6 +62,138 @@ function getStatusFromFill(fill) {
     if (fill >= 90) return "critical";
     if (fill >= 61) return "warning";
     return "good";
+}
+
+// ── Diagnostics summary (card header) ────────────────────────────────────────
+const DIAG_STATUSES = {
+    working: { label: "Working", Icon: CheckCircle, style: "bg-green-50 text-green-700", text: "text-green-700", icon: "text-green-600", border: "border-green-300" },
+    warning: { label: "Warning", Icon: AlertTriangle, style: "bg-amber-50 text-amber-800", text: "text-amber-700", icon: "text-amber-500", border: "border-amber-300" },
+    fault: { label: "Fault", Icon: XCircle, style: "bg-red-50 text-red-700", text: "text-red-700", icon: "text-red-600", border: "border-red-300" },
+    unknown: { label: "Cannot verify", Icon: HelpCircle, style: "bg-gray-100 text-gray-600", text: "text-gray-600", icon: "text-gray-500", border: "border-gray-300" },
+};
+
+function formatDiagDate(value) {
+    if (!value) return "No report received";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "Invalid date" : date.toLocaleString();
+}
+
+async function fetchDiagnosticsReport(binId, signal) {
+    const token = sessionStorage.getItem("token");
+    const response = await fetch(
+        `${BASE_URL}/api/bins/${encodeURIComponent(binId)}/diagnostics`,
+        {
+            method: "GET",
+            cache: "no-store",
+            credentials: "include",
+            headers: {
+                Accept: "application/json",
+                "Cache-Control": "no-cache",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            signal,
+        }
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(body.message || `Request failed (${response.status})`);
+    }
+    const data = body.data;
+    if (data?.diagnostics) {
+        return {
+            ...data.diagnostics,
+            name: data.name,
+            stale: data.diagnostics.stale ?? false,
+        };
+    }
+    return data?.components ? data : null;
+}
+
+function BinDiagnosticsCard({ bin, onOpen }) {
+    const [report, setReport] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+
+    const binId = bin?.binId || bin?.id;
+
+    useEffect(() => {
+        if (!binId) {
+            setLoading(false);
+            setError("This bin has no binId.");
+            return undefined;
+        }
+        const controller = new AbortController();
+        setLoading(true);
+        setError("");
+
+        fetchDiagnosticsReport(binId, controller.signal)
+            .then((data) => setReport(data))
+            .catch((err) => {
+                if (err.name === "AbortError") return;
+                setError(err.message || "Unable to load diagnostics.");
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setLoading(false);
+            });
+
+        return () => controller.abort();
+    }, [binId]);
+
+    const overall = DIAG_STATUSES[report?.overallStatus] || DIAG_STATUSES.unknown;
+    const OverallIcon = overall.Icon;
+
+    return (
+        <div className={`bg-white rounded-xl border ${overall.border} p-6 shadow-md flex flex-col`}>
+            {/* Header: title + subtitle on the left, status icon on the right */}
+            <div className="flex items-start justify-between gap-2">
+                <div>
+                    <h3 className="font-bold">Bin Diagnostics</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                        {binId} · {report?.name || bin.name || "SmartBin"}
+                    </p>
+                </div>
+                <OverallIcon size={24} className={`shrink-0 ${overall.icon}`} />
+            </div>
+
+            {/* Status summary */}
+            <div className="mt-6 text-sm">
+                {loading ? (
+                    <p className="text-gray-500">Loading diagnostics…</p>
+                ) : error ? (
+                    <p className="text-red-600">{error}</p>
+                ) : (
+                    <>
+                        <p className={`text-base font-semibold ${overall.text}`}>
+                            Status: {overall.label}
+                        </p>
+                        <p className="mt-1">
+                            Last report: {formatDiagDate(report?.reportedAt)}
+                        </p>
+                        {report?.stale && (
+                            <p className="mt-1 font-medium">
+                                Report is stale. Current component health cannot be confirmed.
+                            </p>
+                        )}
+                        {!report?.reportedAt && (
+                            <p className="mt-1">
+                                The ESP32 has not submitted a report yet.
+                            </p>
+                        )}
+                    </>
+                )}
+            </div>
+
+            <div className="mt-auto pt-6">
+                <button
+                    onClick={onOpen}
+                    className="w-full bg-blue-600 cursor-pointer text-white py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+                >
+                    <AlertTriangle size={16} />
+                    Diagnostics
+                </button>
+            </div>
+        </div>
+    );
 }
 
 export default function WasteBin() {
@@ -474,9 +607,6 @@ export default function WasteBin() {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-5">
                             {binsData.map((bin) => {
-                                const status = getStatusFromFill(bin.fill);
-                                const style = statusColors[status];
-
                                 return (
                                     <div
                                         key={bin._id}
@@ -520,7 +650,7 @@ export default function WasteBin() {
                                         </div>
 
 
-                                        <div className="mt-4 space-y-2">
+                                        <div className="mt-4">
                                             <button
                                                 onClick={() => {
                                                     setActiveBin(bin);
@@ -531,22 +661,34 @@ export default function WasteBin() {
                                                 <Eye size={16} />
                                                 View
                                             </button>
-
-                                            <button
-                                                onClick={() => {
-                                                    setActiveBin(bin);
-                                                    setOpenDiagnosticsModal(true);
-                                                }}
-                                                className="w-full bg-blue-600 cursor-pointer text-white py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
-                                            >
-                                                <AlertTriangle size={16} />
-                                                Diagnostics
-                                            </button>
                                         </div>
 
                                     </div>
                                 );
                             })}
+                        </div>
+                    </section>
+
+                    {/* ── Diagnostics Section ───────────────────────────────── */}
+                    {/* Each card shows the diagnostics header summary (overall
+                        status, last report, stale note); the button opens the
+                        full modal. */}
+                    <section className="bg-white rounded-xl p-6 shadow">
+                        <h2 className="text-lg md:text-xl font-bold text-gray-900">
+                            Bin Diagnostics
+                        </h2>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-5">
+                            {binsData.map((bin) => (
+                                <BinDiagnosticsCard
+                                    key={`diag-${bin._id}`}
+                                    bin={bin}
+                                    onOpen={() => {
+                                        setActiveBin(bin);
+                                        setOpenDiagnosticsModal(true);
+                                    }}
+                                />
+                            ))}
                         </div>
                     </section>
 

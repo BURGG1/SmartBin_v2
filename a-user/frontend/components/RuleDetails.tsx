@@ -188,7 +188,7 @@ export default function RuleDetails({ rule, ruleNumber, visible, onClose }: Rule
             <SafeAreaView className="flex-1 bg-gray-50" edges={["top", "bottom"]}>
                 {/* Top bar */}
                 <View className="flex-row items-center px-4 py-3 bg-white border-b border-gray-200">
-                    <TouchableOpacity
+                    {/* <TouchableOpacity
                         onPress={onClose}
                         accessibilityRole="button"
                         accessibilityLabel="Go back"
@@ -197,7 +197,7 @@ export default function RuleDetails({ rule, ruleNumber, visible, onClose }: Rule
                     >
                         <Feather name="arrow-left" size={22} color="#15803D" />
                         <Text className="text-base font-semibold text-green-700">Back</Text>
-                    </TouchableOpacity>
+                    </TouchableOpacity> */}
                     <Text className="flex-1 text-center text-lg font-bold text-gray-900 pr-16" numberOfLines={1}>
                         Activity {ruleNumber}
                     </Text>
@@ -271,7 +271,7 @@ export default function RuleDetails({ rule, ruleNumber, visible, onClose }: Rule
                                 accessibilityRole="button"
                                 className="bg-green-600 rounded-xl py-4 items-center"
                             >
-                                <Text className="text-white text-base font-bold">Back to rules</Text>
+                                <Text className="text-white text-base font-bold">Back</Text>
                             </TouchableOpacity>
                         </View>
                     </ScrollView>

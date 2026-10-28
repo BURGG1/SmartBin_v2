@@ -204,10 +204,18 @@ export default function Leaderboard() {
                   </View>
                 </View>
 
-                {/* All Rankings Title */}
+                {/* All Rankings Title + Column Labels */}
                 <View className="bg-white rounded-tr-2xl rounded-tl-2xl shadow overflow-hidden mt-1">
                   <View className="p-4 border-b border-gray-200">
                     <Text className="text-xl font-bold text-gray-900">All Rankings</Text>
+                  </View>
+                  <View className="flex-row items-center px-4 py-2 bg-gray-100 border-b border-gray-200">
+                    <Text className="w-9 text-xs font-semibold text-gray-600">Rank</Text>
+                    <Text className="flex-1 px-2 text-xs font-semibold text-gray-600">Household</Text>
+                    <Text className="w-16 text-center text-xs font-semibold text-gray-600">Tier</Text>
+                    <Text className="w-14 text-center text-xs font-semibold text-gray-600">Disposals</Text>
+                    <Text className="w-12 text-center text-xs font-semibold text-gray-600">Points</Text>
+                    <View className="w-5" />
                   </View>
                 </View>
               </>
@@ -218,8 +226,8 @@ export default function Leaderboard() {
           item.__filler ? (
             <View className="h-16 bg-white" style={{ opacity: 0 }} />
           ) : (
-          <View className={`flex-row justify-between items-center px-4 py-3 border-b border-gray-100 ${item.isYou ? "bg-green-50" : "bg-white"}`}>
-            <Text className="text-base font-bold text-gray-900 w-10">#{item.rank}</Text>
+          <View className={`flex-row items-center px-4 py-3 border-b border-gray-100 ${item.isYou ? "bg-green-50" : "bg-white"}`}>
+            <Text className="w-9 text-base font-bold text-gray-900">#{item.rank}</Text>
 
             <View className="flex-1 px-2">
               <Text className="text-base font-semibold text-gray-900">{item.fullname}</Text>
@@ -229,20 +237,18 @@ export default function Leaderboard() {
               )}
             </View>
 
-            <View className="px-2">
-              {item.tier ? (
-                <Text className={`px-3 py-1 rounded-full text-xs font-semibold ${tierStyles[item.tier].bg} ${tierStyles[item.tier].text}`}>
+            <View className="w-16 items-center">
+              {item.tier && (
+                <Text className={`px-2 py-1 rounded-full text-xs font-semibold ${tierStyles[item.tier].bg} ${tierStyles[item.tier].text}`}>
                   {item.tier}
                 </Text>
-              ) : (
-                <Text className="text-gray-500 text-sm px-3">—</Text>
               )}
             </View>
 
-            <Text className="px-2 text-gray-700 text-sm">{item.disposals}</Text>
-            <Text className="px-2 text-base font-bold text-green-700">{item.points}</Text>
+            <Text className="w-14 text-center text-gray-700 text-sm">{item.disposals}</Text>
+            <Text className="w-12 text-center text-base font-bold text-green-700">{item.points}</Text>
 
-            <View className="px-1">
+            <View className="w-5 items-end">
               <Feather name="trending-up" size={18} color="#16A34A" />
             </View>
           </View>

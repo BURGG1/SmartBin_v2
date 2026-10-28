@@ -1,9 +1,9 @@
 
-const UNISMS_API_URL = "https://unismsapi.com/api/sms";
+const TEXTBEE_API_URL =
+  "https://api.textbee.dev/api/v1/gateway/send-sms";
 
 /**
- * Normalize Philippine mobile numbers into +639XXXXXXXXX.
- *
+ * Normalize common Philippine mobile formats to +639XXXXXXXXX.
  * Accepted examples:
  * 09171234567
  * 9171234567
@@ -18,10 +18,8 @@ const normalizePhilippinePhone = (input) => {
   let digits = input.replace(/\D/g, "");
 
   if (digits.startsWith("63") && digits.length === 12) {
-    digits = digits.slice(2);
-  }
-
-  if (digits.length === 10 && digits.startsWith("9")) {
+    digits = "0" + digits.slice(2);
+  } else if (digits.length === 10 && digits.startsWith("9")) {
     digits = "0" + digits;
   }
 
@@ -35,56 +33,43 @@ const normalizePhilippinePhone = (input) => {
 };
 
 /**
- * Send an SMS using UniSMS.
+ * Send SMS using TextBee.
  *
- * Required .env variables:
- * UNISMS_SECRET_KEY
- * UNISMS_SENDER_ID
+ * Required environment variable:
+ * TEXTBEE_API_KEY
  *
- * Node.js 18+ is recommended for built-in fetch.
+ * Optional environment variable:
+ * TEXTBEE_DEVICE_ID
  */
-const sendUniSms = async ({ to, message, metadata = {} }) => {
-  const secretKey = process.env.UNISMS_SECRET_KEY;
-  const senderId = process.env.UNISMS_SENDER_ID;
+const sendTextBeeSms = async ({ to, message }) => {
+  const apiKey = process.env.TEXTBEE_API_KEY;
+  const deviceId = process.env.TEXTBEE_DEVICE_ID;
 
-  if (!secretKey) {
-    throw new Error("UNISMS_SECRET_KEY is not configured.");
-  }
-
-  if (!senderId) {
-    throw new Error("UNISMS_SENDER_ID is not configured.");
+  if (!apiKey) {
+    throw new Error("TEXTBEE_API_KEY is not configured.");
   }
 
   if (typeof message !== "string" || !message.trim()) {
     throw new Error("SMS message cannot be empty.");
   }
 
-  if (message.length > 670) {
-    throw new Error("SMS message exceeds the 670-character limit.");
-  }
-
   const recipient = normalizePhilippinePhone(to);
 
-  // UniSMS uses HTTP Basic Authentication:
-  // username = secret key; password = empty.
-  const authorization = Buffer.from(`${secretKey}:`).toString("base64");
-
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
 
   try {
-    const response = await fetch(UNISMS_API_URL, {
+    const response = await fetch(TEXTBEE_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Basic ${authorization}`,
+        "x-api-key": apiKey,
         Accept: "application/json",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        recipient,
-        content: message,
-        sender_id: senderId,
-        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+        recipients: [recipient],
+        message: message.trim(),
+        ...(deviceId ? { deviceId } : {}),
       }),
       signal: controller.signal,
     });
@@ -92,30 +77,29 @@ const sendUniSms = async ({ to, message, metadata = {} }) => {
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      console.error("[UniSMS] Request failed:", {
+      console.error("[TextBee] Request failed:", {
         httpStatus: response.status,
-        response: result,
+        error: result?.message || result?.error || "Unknown API error",
       });
 
       throw new Error(
-        result.message ||
-          result.error ||
-          `UniSMS returned HTTP ${response.status}.`
+        result?.message ||
+          result?.error ||
+          `TextBee returned HTTP ${response.status}`
       );
     }
 
-    const sms = result.message || result;
-
-    console.log("[UniSMS] SMS request accepted:", {
+    console.log("[TextBee] SMS request accepted:", {
       recipient,
-      status: sms.status,
-      reference_id: sms.reference_id,
+      smsBatchId: result?.data?.smsBatchId || result?.smsBatchId,
+      recipientCount:
+        result?.data?.recipientCount || result?.recipientCount,
     });
 
     return result;
   } catch (error) {
     if (error.name === "AbortError") {
-      throw new Error("UniSMS request timed out after 15 seconds.");
+      throw new Error("TextBee request timed out after 20 seconds.");
     }
 
     throw error;
@@ -125,44 +109,42 @@ const sendUniSms = async ({ to, message, metadata = {} }) => {
 };
 
 /**
- * Send the initial password after household registration.
+ * Send initial household account credentials.
  */
 const sendInitialPasswordSms = ({ to, fullname, password }) => {
-  return sendUniSms({
+  return sendTextBeeSms({
     to,
     message:
       `Hello ${fullname}, your SmartBin account has been created. ` +
       `Your initial password is ${password}. ` +
-      `Please log in and change it immediately.`,
-    metadata: {
-      purpose: "household_initial_password",
-    },
+      "Please log in and change it immediately.",
   });
 };
 
 /**
- * Send the password-reset code.
+ * Send password-reset verification code.
  */
 const sendResetCodeSms = ({ to, code }) => {
   const expiryMinutes = Number(
     process.env.RESET_CODE_EXPIRY_MINUTES || 10
   );
 
-  return sendUniSms({
+  return sendTextBeeSms({
     to,
     message:
       `SmartBin password reset code: ${code}. ` +
       `This code expires in ${expiryMinutes} minutes. ` +
-      `Do not share it with anyone.`,
-    metadata: {
-      purpose: "password_reset",
-    },
+      "Do not share it with anyone.",
   });
 };
 
 module.exports = {
   normalizePhilippinePhone,
-  sendUniSms,
+  sendTextBeeSms,
+
+  // Compatibility alias for any older imports.
+  sendUniSms: sendTextBeeSms,
+
   sendInitialPasswordSms,
   sendResetCodeSms,
 };

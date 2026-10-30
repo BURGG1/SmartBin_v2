@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
     View,
     Text,
@@ -41,6 +41,9 @@ interface FormErrors {
     contactNumber?: string;
     consent?: string;
 }
+
+// Sections of the form we can scroll to when an input is focused.
+type SectionKey = "fullname" | "birthday" | "familyMember" | "address" | "email" | "contact";
 
 const INITIAL_FORM: FormState = {
     fullname: "",
@@ -220,34 +223,80 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     const [streetPickerOpen, setStreetPickerOpen] = useState(false);
     const [privacyOpen, setPrivacyOpen] = useState(false);
     const [consent, setConsent] = useState(false);
-    const [keyboardHeight, setKeyboardHeight] = useState(0);
+
     const submittingRef = useRef(false);
     const scrollRef = useRef<ScrollView>(null);
+    const sectionY = useRef<Partial<Record<SectionKey, number>>>({});
 
-    // Track the keyboard height ourselves. KeyboardAvoidingView does nothing on
-    // Android (and is unreliable inside a Modal with statusBarTranslucent), so
-    // we shrink the overlay by the keyboard height on both platforms.
+    // ── Keyboard handling ───────────────────────────────────────────────────
+    // Android often shrinks the Modal's window by itself when the keyboard opens
+    // (adjustResize), while iOS never does. If we also add padding on a window that
+    // already shrank, the keyboard is compensated twice and the card collapses to a
+    // sliver. So instead of guessing, we MEASURE: we compare where the bottom of our
+    // root view sits on screen with where the keyboard starts. If the keyboard covers
+    // part of the view, we pad by exactly that amount. If the window already shrank,
+    // the overlap comes out as 0 and no padding is added.
+    const rootRef = useRef<View>(null);
+    const keyboardTopRef = useRef<number | null>(null); // where the keyboard starts on screen
+    const [keyboardOverlap, setKeyboardOverlap] = useState(0);
+
+    const recomputeOverlap = useCallback(() => {
+        const kbTop = keyboardTopRef.current;
+        if (kbTop == null) {
+            setKeyboardOverlap(0);
+            return;
+        }
+        rootRef.current?.measureInWindow((_x, y, _w, h) => {
+            const overlap = Math.max(0, y + h - kbTop);
+            setKeyboardOverlap((prev) => (Math.abs(prev - overlap) < 1 ? prev : overlap));
+        });
+    }, []);
+
     useEffect(() => {
         const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
         const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
         const showSub = Keyboard.addListener(showEvent, (e) => {
-            setKeyboardHeight(e.endCoordinates.height);
+            keyboardTopRef.current = e.endCoordinates.screenY;
+            recomputeOverlap();
+            // Android sometimes finishes resizing the window a moment later, so measure again.
+            setTimeout(recomputeOverlap, 150);
         });
         const hideSub = Keyboard.addListener(hideEvent, () => {
-            setKeyboardHeight(0);
+            keyboardTopRef.current = null;
+            setKeyboardOverlap(0);
         });
 
         return () => {
             showSub.remove();
             hideSub.remove();
         };
-    }, []);
+    }, [recomputeOverlap]);
 
-    // Scrolls to the bottom once the layout has had time to resize around the keyboard.
-    const scrollToEndAfterKeyboard = () => {
-        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+    // Clear keyboard state whenever the modal closes.
+    useEffect(() => {
+        if (!isOpen) {
+            keyboardTopRef.current = null;
+            setKeyboardOverlap(0);
+        }
+    }, [isOpen]);
+
+    // Scrolls the focused field's section to the top of the card's scroll area.
+    const focusSection = (key: SectionKey) => {
+        // Give the keyboard + layout time to settle before scrolling.
+        setTimeout(() => {
+            const y = sectionY.current[key];
+            if (y != null) {
+                scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });
+            }
+        }, 250);
     };
+
+    const trackSection = (key: SectionKey) => ({
+        onLayout: (e: { nativeEvent: { layout: { y: number } } }) => {
+            sectionY.current[key] = e.nativeEvent.layout.y;
+        },
+    });
 
     const handleChange = (field: keyof FormState, value: string) => {
         setForm((prev) => ({ ...prev, [field]: value }));
@@ -463,20 +512,26 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     return (
         <Modal
             visible={isOpen}
-            className="bg-white"
             animationType="fade"
             statusBarTranslucent
             onRequestClose={() => {}} // Android back button does nothing; use the X button
         >
-            <View className="flex-1">
-                {/* Bottom padding grows with the keyboard so the card (and its
-                    ScrollView) shrink to fit in the space above it. */}
+            {/* Root: we measure this view against the keyboard's top edge to know
+                how much (if any) bottom padding is really needed. */}
+            <View
+                ref={rootRef}
+                collapsable={false}
+                onLayout={recomputeOverlap}
+                style={{ flex: 1, backgroundColor: "white" }}
+            >
+                {/* Bottom padding is only added when the keyboard really overlaps us,
+                    so the card (and its ScrollView) always fit above the keyboard. */}
                 <View
                     className="flex-1 bg-black/40 justify-center items-center p-4"
-                    style={{ paddingBottom: 16 + keyboardHeight }}
+                    style={{ paddingBottom: 16 + keyboardOverlap }}
                 >
                     {/* Card (plain View so it doesn't intercept scroll gestures) */}
-                    <View className="bg-white w-full max-w-lg max-h-[90%] rounded-2xl overflow-hidden">
+                    <View className="bg-white w-full max-w-lg max-h-full rounded-2xl overflow-hidden">
                         {/* HEADER */}
                         <View className="flex-row justify-between items-center px-6 py-4 border-b border-gray-200">
                             <Text className="text-lg font-bold">Register Household</Text>
@@ -487,6 +542,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
 
                         <ScrollView
                             ref={scrollRef}
+                            style={{ flexShrink: 1 }}
                             keyboardShouldPersistTaps="handled"
                             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
                             showsVerticalScrollIndicator={false}
@@ -494,7 +550,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             contentContainerStyle={{ padding: 20, paddingBottom: 24 }}
                         >
                             {/* Fullname */}
-                            <View className="mb-3">
+                            <View className="mb-3" {...trackSection("fullname")}>
                                 <View className="flex-row items-center">
                                     <Text className="text-lg font-semibold">Fullname</Text>
                                     <Text className="text-red-500 ml-1">*</Text>
@@ -504,6 +560,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     placeholderTextColor={PLACEHOLDER_COLOR}
                                     value={form.fullname}
                                     onChangeText={(v) => handleChange("fullname", formatFullnameInput(v))}
+                                    onFocus={() => focusSection("fullname")}
                                     autoCapitalize="words"
                                     maxLength={100}
                                     editable={!loading}
@@ -516,7 +573,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             </View>
 
                             {/* Birthday */}
-                            <View className="mb-3">
+                            <View className="mb-3" {...trackSection("birthday")}>
                                 <Text className="text-lg font-semibold">Birthday</Text>
                                 <TextInput
                                     placeholder="MM/DD/YYYY"
@@ -524,6 +581,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     keyboardType="default"
                                     value={form.birthday}
                                     onChangeText={(v) => handleChange("birthday", formatBirthdayInput(v, form.birthday))}
+                                    onFocus={() => focusSection("birthday")}
                                     maxLength={10}
                                     editable={!loading}
                                     className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.birthday ? "border-red-500" : "border-gray-300"
@@ -535,7 +593,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             </View>
 
                             {/* Family Member */}
-                            <View className="mb-3">
+                            <View className="mb-3" {...trackSection("familyMember")}>
                                 <Text className="text-lg font-semibold">Family Member</Text>
                                 <TextInput
                                     placeholder="ex. 5"
@@ -543,6 +601,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     keyboardType="numeric"
                                     value={form.familyMember}
                                     onChangeText={(v) => handleChange("familyMember", v.replace(/[^0-9]/g, ""))}
+                                    onFocus={() => focusSection("familyMember")}
                                     maxLength={2}
                                     editable={!loading}
                                     className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.familyMember ? "border-red-500" : "border-gray-300"
@@ -554,7 +613,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             </View>
 
                             {/* Address */}
-                            <View className="mb-3">
+                            <View className="mb-3" {...trackSection("address")}>
                                 <View className="flex-row items-center">
                                     <Text className="text-lg font-semibold">Address</Text>
                                     <Text className="text-red-500 ml-1">*</Text>
@@ -571,6 +630,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                             placeholderTextColor={PLACEHOLDER_COLOR}
                                             value={form.houseNo}
                                             onChangeText={(v) => handleChange("houseNo", formatHouseNoInput(v))}
+                                            onFocus={() => focusSection("address")}
                                             maxLength={20}
                                             editable={!loading}
                                             className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.houseNo ? "border-red-500" : "border-gray-300"
@@ -610,7 +670,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             </View>
 
                             {/* Email (optional) */}
-                            <View className="mb-3">
+                            <View className="mb-3" {...trackSection("email")}>
                                 <View className="flex-row items-center">
                                     <Text className="text-lg font-semibold">Email</Text>
                                 </View>
@@ -622,7 +682,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     autoCorrect={false}
                                     value={form.email}
                                     onChangeText={(v) => handleChange("email", formatEmailInput(v))}
-                                    onFocus={scrollToEndAfterKeyboard}
+                                    onFocus={() => focusSection("email")}
                                     maxLength={100}
                                     editable={!loading}
                                     className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.email ? "border-red-500" : "border-gray-300"
@@ -634,7 +694,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                             </View>
 
                             {/* Contact Number — same +63 prefix pattern as the admin panel */}
-                            <View className="mb-3">
+                            <View className="mb-3" {...trackSection("contact")}>
                                 <View className="flex-row items-center">
                                     <Text className="text-lg font-semibold">Contact Number</Text>
                                     <Text className="text-red-500 ml-1">*</Text>
@@ -655,7 +715,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                         keyboardType="phone-pad"
                                         value={formatContactDisplay(form.contactNumber)}
                                         onChangeText={(v) => handleChange("contactNumber", extractContactDigits(v))}
-                                        onFocus={scrollToEndAfterKeyboard}
+                                        onFocus={() => focusSection("contact")}
                                         editable={!loading}
                                         className="flex-1 px-3 py-2 text-black"
                                     />

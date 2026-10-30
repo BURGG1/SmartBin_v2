@@ -12,6 +12,7 @@ import {
     Plus,
     Home,
     Eye,
+    AlertCircle,
 } from "lucide-react";
 import BASE_URL from "../../config";
 import HouseholdRecordModal from "../../components/HHrecordModal";
@@ -20,6 +21,10 @@ import AssignRFIDModal from "../../components/AssignRFID";
 
 const REQUESTS_PER_PAGE = 10;
 const HOUSEHOLDS_PER_PAGE = 10;
+
+// Normalize a name so "  Juan   Dela Cruz " and "juan dela cruz" match.
+const normalizeName = (name) =>
+    (name || "").trim().replace(/\s+/g, " ").toLowerCase();
 
 function RequestTab() {
     const [requests, setRequests] = useState([]);
@@ -32,6 +37,16 @@ function RequestTab() {
 
     const [declineActive, setDeclineActive] = useState(false);
     const [selectedDeclineId, setSelectedDeclineId] = useState(null);
+
+    // ── Reason shown when a decline is not allowed ──
+    // { title: string, message: string } | null
+    const [declineNotice, setDeclineNotice] = useState(null);
+
+    // ── Duplicate detection ──
+    // IDs of pending requests whose name already exists in registered households.
+    // Decline is only allowed for these.
+    const [duplicateIds, setDuplicateIds] = useState(new Set());
+    const [checkingDuplicates, setCheckingDuplicates] = useState(false);
 
     // ── Pagination (server-side) ──
     const [requestPage, setRequestPage] = useState(1);
@@ -72,6 +87,63 @@ function RequestTab() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [requestPage]);
 
+    // Check each request on the current page against registered households.
+    useEffect(() => {
+        if (requests.length === 0) {
+            setDuplicateIds(new Set());
+            return;
+        }
+
+        const controller = new AbortController();
+
+        const checkDuplicates = async () => {
+            setCheckingDuplicates(true);
+            try {
+                const results = await Promise.all(
+                    requests.map(async (req) => {
+                        const target = normalizeName(req.fullname);
+                        if (!target) return null;
+                        try {
+                            const params = new URLSearchParams({
+                                search: req.fullname.trim(),
+                                page: 1,
+                                limit: 50,
+                            });
+                            const res = await fetch(
+                                `${BASE_URL}/api/households?${params}`,
+                                { signal: controller.signal }
+                            );
+                            const data = await res.json();
+                            if (!data.success) return null;
+
+                            // Exact (normalized) name match only — the search
+                            // endpoint may return partial matches.
+                            const isDuplicate = data.data.some(
+                                (h) => normalizeName(h.fullname) === target
+                            );
+                            return isDuplicate ? req._id : null;
+                        } catch (err) {
+                            if (err.name === "AbortError") throw err;
+                            return null;
+                        }
+                    })
+                );
+                if (!controller.signal.aborted) {
+                    setDuplicateIds(new Set(results.filter(Boolean)));
+                }
+            } catch (err) {
+                if (err.name === "AbortError") return;
+                console.error(err);
+                setDuplicateIds(new Set());
+            } finally {
+                if (!controller.signal.aborted) setCheckingDuplicates(false);
+            }
+        };
+
+        checkDuplicates();
+        return () => controller.abort();
+    }, [requests]);
+
     // If an approve/decline shrinks the total below the current page,
     // step back to the last valid page.
     useEffect(() => {
@@ -96,13 +168,44 @@ function RequestTab() {
         setopenRFIDmodal(true);
     };
 
-    const handleDeclineClick = (id) => {
-        setSelectedDeclineId(id);
+    const handleDeclineClick = (item) => {
+        // Still verifying — we can't say yet whether it's a duplicate.
+        if (checkingDuplicates) {
+            setDeclineNotice({
+                title: "Please wait",
+                message:
+                    "We're still checking whether this name is already registered. Try again in a moment.",
+            });
+            return;
+        }
+
+        // Decline is only allowed for duplicate registrations.
+        if (!duplicateIds.has(item._id)) {
+            setDeclineNotice({
+                title: "Unable to decline this request",
+                message: `A request can only be declined if it is a duplicate registration. No existing household is registered under the name "${item.fullname}", so this request can't be declined.`,
+            });
+            return;
+        }
+
+        setSelectedDeclineId(item._id);
         setDeclineActive(true);
     };
 
     const handleConfirmDecline = async () => {
         if (!selectedDeclineId) return;
+
+        // Safety check in case state changed while the modal was open.
+        if (!duplicateIds.has(selectedDeclineId)) {
+            setDeclineActive(false);
+            setSelectedDeclineId(null);
+            setDeclineNotice({
+                title: "Unable to decline this request",
+                message:
+                    "This request is no longer detected as a duplicate registration, so it can't be declined.",
+            });
+            return;
+        }
 
         try {
             await fetch(`${BASE_URL}/api/requests/${selectedDeclineId}/status`, {
@@ -207,32 +310,43 @@ function RequestTab() {
                                 </tr>
                             ) : (
                                 <>
-                                    {requests.map((item) => (
-                                        <tr key={item._id} className="hover:bg-gray-50 text-center">
-                                            <td className="px-4 py-3 font-medium">{item.fullname}</td>
-                                            <td className="px-4 py-3 text-gray-600">
-                                                {[item.address?.houseNo, item.address?.street]
-                                                    .filter(Boolean)
-                                                    .join(", ") || "—"}
-                                            </td>
-                                            <td className="px-4 py-3">{item.email || "—"}</td>
-                                            <td className="px-4 py-3">{item.contactNumber || "—"}</td>
-                                            <td className="flex flex-row justify-center items-center gap-2 py-3">
-                                                <button
-                                                    onClick={() => handleApprove(item)}
-                                                    className="cursor-pointer bg-green-600 text-white px-3 py-1 rounded-lg"
-                                                >
-                                                    Approve
-                                                </button>
-                                                <button
-                                                      onClick={() => handleDeclineClick(item._id)}
-                                                    className="cursor-pointer bg-red-600 text-white px-3 py-1 rounded-lg"
-                                                >
-                                                    Decline
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {requests.map((item) => {
+                                        const isDuplicate = duplicateIds.has(item._id);
+
+                                        return (
+                                            <tr key={item._id} className="hover:bg-gray-50 text-center">
+                                                <td className="px-4 py-3 font-medium">
+                                                    {item.fullname}
+                                                    {isDuplicate && (
+                                                        <span className="ml-2 text-xs font-normal bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">
+                                                            Already registered
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-3 text-gray-600">
+                                                    {[item.address?.houseNo, item.address?.street]
+                                                        .filter(Boolean)
+                                                        .join(", ") || "—"}
+                                                </td>
+                                                <td className="px-4 py-3">{item.email || "—"}</td>
+                                                <td className="px-4 py-3">{item.contactNumber || "—"}</td>
+                                                <td className="flex flex-row justify-center items-center gap-2 py-3">
+                                                    <button
+                                                        onClick={() => handleApprove(item)}
+                                                        className="cursor-pointer bg-green-600 text-white px-3 py-1 rounded-lg"
+                                                    >
+                                                        Approve
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeclineClick(item)}
+                                                        className="cursor-pointer bg-red-600 text-white px-3 py-1 rounded-lg hover:bg-red-700"
+                                                    >
+                                                        Decline
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                     {Array.from({ length: requestEmptyRows }).map((_, i) => (
                                         <tr key={`request-empty-${i}`} aria-hidden="true">
                                             <td className="px-4 py-3" colSpan={5}>&nbsp;</td>
@@ -275,6 +389,41 @@ function RequestTab() {
                 }}
                 onConfirm={handleConfirmDecline}
             />
+
+            {/* ── Reason why a decline is not allowed ── */}
+            {declineNotice && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                    onClick={() => setDeclineNotice(null)}
+                >
+                    <div
+                        role="alertdialog"
+                        aria-modal="true"
+                        className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={22} />
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900">
+                                    {declineNotice.title}
+                                </h3>
+                                <p className="mt-2 text-sm text-gray-600">
+                                    {declineNotice.message}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-6 flex justify-end">
+                            <button
+                                onClick={() => setDeclineNotice(null)}
+                                className="cursor-pointer bg-gray-900 w-[100px] text-white px-4 py-2 rounded-lg hover:bg-gray-800"
+                            >
+                                OK
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </section>
     );
 }

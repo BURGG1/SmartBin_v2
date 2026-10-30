@@ -791,7 +791,7 @@ export default function WasteBin() {
                                         <option value="">Select Bin Device (e.g. BIN-001)</option>
                                         {devices.map((d) => (
                                             <option key={d.deviceId} value={d.deviceId}>
-                                                {d.deviceId} ({d.lat?.toFixed(5)}, {d.lng?.toFixed(5)})
+                                                {d.deviceId}
                                             </option>
                                         ))}
                                     </select>

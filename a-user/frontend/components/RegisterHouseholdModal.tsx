@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
     View,
     Text,
@@ -8,8 +8,8 @@ import {
     Pressable,
     ScrollView,
     Alert,
-    KeyboardAvoidingView,
     FlatList,
+    Keyboard,
     Platform,
     StyleSheet,
 } from "react-native";
@@ -220,7 +220,34 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
     const [streetPickerOpen, setStreetPickerOpen] = useState(false);
     const [privacyOpen, setPrivacyOpen] = useState(false);
     const [consent, setConsent] = useState(false);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
     const submittingRef = useRef(false);
+    const scrollRef = useRef<ScrollView>(null);
+
+    // Track the keyboard height ourselves. KeyboardAvoidingView does nothing on
+    // Android (and is unreliable inside a Modal with statusBarTranslucent), so
+    // we shrink the overlay by the keyboard height on both platforms.
+    useEffect(() => {
+        const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+        const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+        const showSub = Keyboard.addListener(showEvent, (e) => {
+            setKeyboardHeight(e.endCoordinates.height);
+        });
+        const hideSub = Keyboard.addListener(hideEvent, () => {
+            setKeyboardHeight(0);
+        });
+
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
+
+    // Scrolls to the bottom once the layout has had time to resize around the keyboard.
+    const scrollToEndAfterKeyboard = () => {
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+    };
 
     const handleChange = (field: keyof FormState, value: string) => {
         setForm((prev) => ({ ...prev, [field]: value }));
@@ -441,11 +468,13 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
             statusBarTranslucent
             onRequestClose={() => {}} // Android back button does nothing; use the X button
         >
-            <KeyboardAvoidingView
-                behavior={Platform.OS === "ios" ? "padding" : undefined}
-                className="flex-1"
-            >
-                <View className="flex-1 bg-black/40 justify-center items-center p-4">
+            <View className="flex-1">
+                {/* Bottom padding grows with the keyboard so the card (and its
+                    ScrollView) shrink to fit in the space above it. */}
+                <View
+                    className="flex-1 bg-black/40 justify-center items-center p-4"
+                    style={{ paddingBottom: 16 + keyboardHeight }}
+                >
                     {/* Card (plain View so it doesn't intercept scroll gestures) */}
                     <View className="bg-white w-full max-w-lg max-h-[90%] rounded-2xl overflow-hidden">
                         {/* HEADER */}
@@ -457,6 +486,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                         </View>
 
                         <ScrollView
+                            ref={scrollRef}
                             keyboardShouldPersistTaps="handled"
                             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
                             showsVerticalScrollIndicator={false}
@@ -558,7 +588,11 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                             <Text className="text-red-500 ml-1">*</Text>
                                         </View>
                                         <TouchableOpacity
-                                            onPress={() => !loading && setStreetPickerOpen(true)}
+                                            onPress={() => {
+                                                if (loading) return;
+                                                Keyboard.dismiss();
+                                                setStreetPickerOpen(true);
+                                            }}
                                             disabled={loading}
                                             className={`border rounded-lg px-3 py-2 mt-1 flex-row justify-between items-center ${errors.street ? "border-red-500" : "border-gray-300"
                                                 }`}
@@ -588,6 +622,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                     autoCorrect={false}
                                     value={form.email}
                                     onChangeText={(v) => handleChange("email", formatEmailInput(v))}
+                                    onFocus={scrollToEndAfterKeyboard}
                                     maxLength={100}
                                     editable={!loading}
                                     className={`border rounded-lg px-3 py-2 mt-1 text-black ${errors.email ? "border-red-500" : "border-gray-300"
@@ -620,6 +655,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                                         keyboardType="phone-pad"
                                         value={formatContactDisplay(form.contactNumber)}
                                         onChangeText={(v) => handleChange("contactNumber", extractContactDigits(v))}
+                                        onFocus={scrollToEndAfterKeyboard}
                                         editable={!loading}
                                         className="flex-1 px-3 py-2 text-black"
                                     />
@@ -793,7 +829,7 @@ export default function RegisterHousehold({ isOpen, onClose }: RegisterHousehold
                         </View>
                     </View>
                 </Modal>
-            </KeyboardAvoidingView>
+            </View>
         </Modal>
     );
 }

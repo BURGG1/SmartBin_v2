@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import ConfirmationModal from "./confirmationModal";
 
+import icon from "../resources/icon.png";
+
 // Use your deployed backend URL through VITE_API_URL in production.
 const API_URL = (
   import.meta.env.VITE_API_URL || "http://localhost:5000"
@@ -75,8 +77,8 @@ const readJsonResponse = async (response) => {
   if (!response.ok) {
     throw new Error(
       data.message ||
-        data.error ||
-        `Request failed with status ${response.status}.`
+      data.error ||
+      `Request failed with status ${response.status}.`
     );
   }
 
@@ -460,15 +462,18 @@ export default function Navbar() {
     <header className="w-full bg-white border-b border-gray-200 sticky top-0 z-50">
       <div className="max-w-full px-4 py-4 flex justify-between items-center">
         {/* Logo (left) */}
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 bg-green-500 rounded-lg flex items-center justify-center">
+        <div className="flex items-center ">
+          {/* <div className="w-9 h-9 bg-green-500 rounded-lg flex items-center justify-center">
             <Recycle className="text-white" size={20} />
-          </div>
+          </div> */}
+          <img src={icon} alt="Logo" className="h-10" />
 
           <Link
             to="/landing"
             className="text-lg font-semibold text-gray-800"
           >
+
+
             <span className="text-xl font-bold text-gray-900">
               Smart<span className="text-green-500">Bin</span>
             </span>
@@ -543,9 +548,8 @@ export default function Navbar() {
                     notifications.map((n) => (
                       <div
                         key={n._id}
-                        className={`border-b border-gray-50 last:border-0 ${
-                          n.read ? "bg-white" : "bg-green-50"
-                        }`}
+                        className={`border-b border-gray-50 last:border-0 ${n.read ? "bg-white" : "bg-green-50"
+                          }`}
                       >
                         {/* Notification body */}
                         <button
@@ -553,11 +557,10 @@ export default function Navbar() {
                           onClick={() => {
                             if (!n.read) markAsRead(n._id);
                           }}
-                          className={`w-full text-left px-4 py-3 cursor-pointer transition-colors ${
-                            n.read
-                              ? "hover:bg-gray-50"
-                              : "hover:bg-green-100"
-                          }`}
+                          className={`w-full text-left px-4 py-3 cursor-pointer transition-colors ${n.read
+                            ? "hover:bg-gray-50"
+                            : "hover:bg-green-100"
+                            }`}
                         >
                           <div className="flex items-start gap-3">
                             <div className="mt-0.5 shrink-0">

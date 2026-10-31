@@ -754,7 +754,7 @@ export default function WasteBin() {
                                         className="ml-2 w-full py-2 border rounded-lg bg-white focus:ring-2 focus:ring-green-500"
                                     >
                                         <option value="">Capacity</option>
-                                        <option value="100L">100L</option>
+                                        <option value="210L">210L</option>
                                         <option value="500L">500L</option>
                                     </select>
                                 </div>

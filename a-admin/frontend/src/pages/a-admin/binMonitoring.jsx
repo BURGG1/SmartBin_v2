@@ -1281,7 +1281,7 @@ export default function BinMonitoring() {
             })}
           </div>
           {/* AVERAGE BIN CAPACITY */}
-          <div className="bg-white rounded-xl shadow-sm p-6">
+          {/* <div className="bg-white rounded-xl shadow-sm p-6">
             <div className="flex justify-between mb-3">
               <h3 className="font-semibold">Average Fill Level</h3>
               <span className="font-bold text-xl">{aveFillLevel}%</span>
@@ -1292,7 +1292,7 @@ export default function BinMonitoring() {
                 style={{ width: `${aveFillLevel}%` }}
               />
             </div>
-          </div>
+          </div> */}
           {/* BIN CARDS */}
           {binsLoading ? (
             <p className="text-center text-gray-400 py-8">Loading bins...</p>
@@ -1378,7 +1378,7 @@ export default function BinMonitoring() {
                           fill 0 + done      -> shown
                           fill > 0 + done    -> hidden
                           fill 0 + not done  -> hidden */}
-                      {bin.schedule?.collectorDone && bin.fill === 0 && (
+                      {bin.schedule?.collectorDone && bin.fill <= 5 && (
                         <button
                           type="button"
                           onClick={() => handleConfirmCollection(bin.id)}

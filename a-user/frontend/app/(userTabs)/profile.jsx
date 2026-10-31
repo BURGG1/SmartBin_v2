@@ -246,7 +246,7 @@ export default function Profile() {
                 {/* Household details */}
                 <View className="mx-5 mt-6 mb-2 flex-row items-center justify-between">
                     <Text className="text-sm font-bold text-gray-600 tracking-wide">HOUSEHOLD DETAILS</Text>
-                    {/* <TouchableOpacity
+                    <TouchableOpacity
                         onPress={() => setIsModalOpen(true)}
                         accessibilityRole="button"
                         accessibilityLabel="Edit household information"
@@ -255,7 +255,7 @@ export default function Profile() {
                     >
                         <Feather name="edit-2" size={14} color="#15803d" />
                         <Text className="text-green-700 text-sm font-semibold ml-1">Edit</Text>
-                    </TouchableOpacity> */}
+                    </TouchableOpacity>
                 </View>
                 
                 <View className="mx-4 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">

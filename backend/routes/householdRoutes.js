@@ -1,5 +1,7 @@
+
 const express = require("express");
 const router = express.Router();
+
 const {
   getAllHouseholds,
   getHouseholdById,
@@ -17,31 +19,52 @@ const {
   clearViolation,
   completeFirstLogin,
 } = require("../controllers/householdController");
-const { protect, allowRoles } = require("../middleware/authMiddleware");
 
-// All public for admin dashboard
-router.route("/")
-  .get(getAllHouseholds)
-  .post(createHousehold);
+const {
+  protect,
+  allowRoles,
+  allowSelfOrAdmin,
+} = require("../middleware/authMiddleware");
 
-router.get("/count", getHouseholdCount);
+// PUBLIC ROUTES: Registration and public leaderboard
 router.get("/check-email", checkEmailExists);
 router.get("/check-contact", checkContactExists);
 router.get("/leaderboard", getLeaderboard);
 
-router.post("/:id/penalize",    penalizeHousehold);
-router.get("/:id/violations",   getViolationLogs);
-router.patch("/:id/violations/:violationId/clear", clearViolation);
+// ALL ROUTES BELOW REQUIRE AUTHENTICATION
+router.use(protect);
 
-// Mobile app: user answered the first-login "change password?" prompt
-router.patch("/:id/first-login-done", completeFirstLogin);
+// ADMIN-ONLY HOUSEHOLD MANAGEMENT
+router.route("/")
+  .get(allowRoles("admin"), getAllHouseholds)
+  .post(allowRoles("admin"), createHousehold);
 
-router.route("/:id")
-.get(getHouseholdById)
-.put(updateHousehold)
-.delete(deleteHousehold);
+router.get("/count", allowRoles("admin"), getHouseholdCount);
 
-router.post("/:id/award-points", awardPoints);
-router.get("/:id/activity", getHouseholdActivity);
+// ADMIN-ONLY ACTIONS
+router.post("/:id/penalize", allowRoles("admin"), penalizeHousehold);
+router.get("/:id/violations", allowRoles("admin"), getViolationLogs);
+
+router.patch(
+  "/:id/violations/:violationId/clear",
+  allowRoles("admin"),
+  clearViolation
+);
+
+router.post("/:id/award-points", allowRoles("admin"), awardPoints);
+
+// HOUSEHOLD OWNER OR ADMIN
+router.patch(
+  "/:id/first-login-done",
+  allowSelfOrAdmin,
+  completeFirstLogin
+);
+
+router.get("/:id", allowSelfOrAdmin, getHouseholdById);
+router.get("/:id/activity", allowSelfOrAdmin, getHouseholdActivity);
+
+// ADMIN-ONLY ACCOUNT MODIFICATION
+router.put("/:id", allowRoles("admin"), updateHousehold);
+router.delete("/:id", allowRoles("admin"), deleteHousehold);
 
 module.exports = router;

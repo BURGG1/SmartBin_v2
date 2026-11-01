@@ -955,21 +955,28 @@ const flagBagByStamp = async (req, res) => {
             "Unknown"
         );
 
-        await createNotification({
-            title: "Household flagged: segregation anomaly",
-            message:
-                `Household ${householdId} (${household?.fullname ?? "Unknown"}) ` +
-                `was flagged for bag #${preview.stampNumber} at ${updated.binId}.`,
-            type: "household_flagged",
-            meta: {
-                householdId,
-                householdName: household?.fullname,
-                stampNumber: preview.stampNumber,
-                binId: updated.binId,
-                logId: String(updated._id),
-                evidenceUrl: updated.evidencePhoto || undefined,
-            },
-        });
+        try {
+            await createNotification({
+                title: "Household flagged: segregation anomaly",
+                message:
+                    `Household ${householdId} (${household?.fullname ?? "Unknown"}) ` +
+                    `was flagged for bag #${preview.stampNumber} at ${updated.binId}.`,
+                type: "household_flagged",
+                meta: {
+                    householdId,
+                    householdName: household?.fullname,
+                    stampNumber: preview.stampNumber,
+                    binId: updated.binId,
+                    logId: String(updated._id),
+                    evidenceUrl: updated.evidencePhoto || undefined,
+                },
+            });
+        } catch (notificationError) {
+            console.error(
+                "[flagBagByStamp] Notification failed:",
+                notificationError.message
+            );
+        }
 
         return res.json({
             success: true,

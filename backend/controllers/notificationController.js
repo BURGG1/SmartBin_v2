@@ -321,7 +321,6 @@ const reassignMissedCollection = async (req, res) => {
   }
 };
 
-// Call this from other controllers to create ordinary alerts.
 const createNotification = async ({
   title,
   message,
@@ -330,6 +329,13 @@ const createNotification = async ({
   dedupe = null,
 }) => {
   try {
+    if (
+      process.env.TEST_NOTIFICATION_FAILURE === "true" &&
+      type === "household_flagged"
+    ) {
+      throw new Error("TC-25 simulated notification failure");
+    }
+
     if (dedupe) {
       const exists = await Notification.findOne({
         ...dedupe,

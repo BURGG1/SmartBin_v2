@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+
 const {
   getAllHouseholds,
   getHouseholdById,
@@ -17,31 +18,40 @@ const {
   clearViolation,
   completeFirstLogin,
 } = require("../controllers/householdController");
-const { protect, allowRoles } = require("../middleware/authMiddleware");
 
-// All public for admin dashboard
-router.route("/")
-  .get(getAllHouseholds)
-  .post(createHousehold);
+const { protect, allowRoles, allowSelfOrAdmin} = require("../middleware/authMiddleware");
 
-router.get("/count", getHouseholdCount);
+// Public endpoints needed for registration and public leaderboard
 router.get("/check-email", checkEmailExists);
 router.get("/check-contact", checkContactExists);
 router.get("/leaderboard", getLeaderboard);
 
-router.post("/:id/penalize",    penalizeHousehold);
-router.get("/:id/violations",   getViolationLogs);
-router.patch("/:id/violations/:violationId/clear", clearViolation);
+// All remaining routes require authentication
+router.use(protect);
 
-// Mobile app: user answered the first-login "change password?" prompt
+// Admin-only household management
+router.route("/")
+  .get(allowRoles("admin"), getAllHouseholds)
+  .post(allowRoles("admin"), createHousehold);
+
+router.get("/count", allowRoles("admin"), getHouseholdCount);
+
+router.post("/:id/penalize", allowRoles("admin"), penalizeHousehold);
+router.get("/:id/violations", allowRoles("admin"), getViolationLogs);
+router.patch(
+  "/:id/violations/:violationId/clear",
+  allowRoles("admin"),
+  clearViolation
+);
+
 router.patch("/:id/first-login-done", completeFirstLogin);
 
 router.route("/:id")
-.get(getHouseholdById)
-.put(updateHousehold)
-.delete(deleteHousehold);
+  .get(getHouseholdById)
+  .put(allowRoles("admin"), updateHousehold)
+  .delete(allowRoles("admin"), deleteHousehold);
 
-router.post("/:id/award-points", awardPoints);
+router.post("/:id/award-points", allowRoles("admin"), awardPoints);
 router.get("/:id/activity", getHouseholdActivity);
 
 module.exports = router;

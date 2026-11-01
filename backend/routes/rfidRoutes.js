@@ -15,8 +15,8 @@ router.post("/complete-disposal", completeDisposal);
 router.post("/web-scan", webScan);
 router.get("/latest-scan", getLatestScan);
 router.get("/check/:rfid", checkRfid);
-router.get("/logs", protect, getRfidLogs);
-router.get("/logs/:rfid", protect, getRfidHistory);
+router.get("/logs", getRfidLogs);
+router.get("/logs/:rfid", getRfidHistory);
 router.patch("/logs/:id/flag", protect, allowRoles("admin"), upload.single("evidencePhoto"), flagLog);
 
 const collectorOnly = [protect, allowRoles("collector")];

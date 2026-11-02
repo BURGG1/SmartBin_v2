@@ -118,6 +118,16 @@ app.use(
 // ═══════════════════════════════════════════════════════════════
 //  3. BODY PARSING — with size limit to prevent payload flooding
 // ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// API RESPONSE CACHE PROTECTION
+// ═══════════════════════════════════════════════════════════════
+
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
 

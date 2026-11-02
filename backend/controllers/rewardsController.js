@@ -219,132 +219,207 @@ const deleteReward = async (req, res) => {
 
 // POST /api/rewards/:id/redeem
 // body: { householdId }
+// POST /api/rewards/:id/redeem
+// The household ID comes from the verified JWT, NOT req.body.
 const redeemReward = async (req, res) => {
-  const { id } = req.params;
-  const { householdId } = req.body;
+    const { id } = req.params;
 
-  if (!householdId) {
-    return res.status(400).json({ success: false, message: "householdId is required." });
-  }
-  if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(householdId)) {
-    return res.status(400).json({ success: false, message: "Invalid id supplied." });
-  }
+    // Get the authenticated household ID from the JWT.
+    const householdId = req.user?.id;
 
-  const session = await mongoose.startSession();
-  try {
-    let result;
-
-    await session.withTransaction(async () => {
-      const reward = await Reward.findById(id).session(session);
-      if (!reward) {
-        throw Object.assign(new Error("Reward not found."), { status: 404 });
-      }
-
-      const household = await Household.findById(householdId).session(session);
-      if (!household) {
-        throw Object.assign(new Error("Household not found."), { status: 404 });
-      }
-
-      if (reward.stocks < 1) {
-        throw Object.assign(new Error("This reward is out of stock."), { status: 409 });
-      }
-      if ((household.points?.total ?? 0) < reward.points) {
-        throw Object.assign(new Error("Not enough points to redeem this reward."), { status: 400 });
-      }
-
-      // Enforce the per-household claim limit.
-      const claimLimit = Number(reward.claimLimit ?? 0);
-      const claimPeriod = reward.claimPeriod ?? "month";
-
-      if (!Number.isInteger(claimLimit) || claimLimit < 0) {
-        throw Object.assign(new Error("Reward has an invalid claim limit."), {
-          status: 500,
+    // Validate authenticated user.
+    if (!householdId || req.user?.role !== "household") {
+        return res.status(403).json({
+            success: false,
+            message: "Only authenticated households can redeem rewards.",
         });
-      }
+    }
 
-      if (
-        !["day", "week", "month", "year", "lifetime"].includes(claimPeriod)
-      ) {
-        throw Object.assign(new Error("Reward has an invalid claim period."), {
-          status: 500,
+    // Validate IDs.
+    if (
+        !mongoose.isValidObjectId(id) ||
+        !mongoose.isValidObjectId(householdId)
+    ) {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid reward or household ID.",
         });
-      }
+    }
 
-      if (claimLimit > 0) {
-        const existingClaims = await countHouseholdRewardClaims({
-          householdId,
-          rewardId: reward._id,
-          period: claimPeriod,
-          session,
+    let session;
+
+    try {
+        session = await mongoose.startSession();
+
+        let result;
+
+        await session.withTransaction(async () => {
+            const reward = await Reward.findById(id).session(session);
+
+            if (!reward) {
+                throw Object.assign(new Error("Reward not found."), {
+                    status: 404,
+                });
+            }
+
+            // Only access the household belonging to the authenticated JWT.
+            const household = await Household.findById(householdId).session(
+                session
+            );
+
+            if (!household) {
+                throw Object.assign(new Error("Household not found."), {
+                    status: 404,
+                });
+            }
+
+            if (reward.stocks < 1) {
+                throw Object.assign(
+                    new Error("This reward is out of stock."),
+                    { status: 409 }
+                );
+            }
+
+            if ((household.points?.total ?? 0) < reward.points) {
+                throw Object.assign(
+                    new Error("Not enough points to redeem this reward."),
+                    { status: 400 }
+                );
+            }
+
+            // Validate claim limits.
+            const claimLimit = Number(reward.claimLimit ?? 0);
+            const claimPeriod = reward.claimPeriod ?? "month";
+
+            if (!Number.isInteger(claimLimit) || claimLimit < 0) {
+                throw Object.assign(
+                    new Error("Reward has an invalid claim limit."),
+                    { status: 500 }
+                );
+            }
+
+            if (
+                !["day", "week", "month", "year", "lifetime"].includes(
+                    claimPeriod
+                )
+            ) {
+                throw Object.assign(
+                    new Error("Reward has an invalid claim period."),
+                    { status: 500 }
+                );
+            }
+
+            // Enforce per-household claim limits.
+            if (claimLimit > 0) {
+                const existingClaims = await countHouseholdRewardClaims({
+                    householdId,
+                    rewardId: reward._id,
+                    period: claimPeriod,
+                    session,
+                });
+
+                if (existingClaims >= claimLimit) {
+                    const periodLabels = {
+                        day: "today",
+                        week: "this week",
+                        month: "this month",
+                        year: "this year",
+                        lifetime: "in total",
+                    };
+
+                    throw Object.assign(
+                        new Error(
+                            `You have reached the claim limit for this reward (${claimLimit} per ${claimPeriod}). You cannot claim it again ${periodLabels[claimPeriod]}.`
+                        ),
+                        { status: 409 }
+                    );
+                }
+            }
+
+            // Atomically deduct one reward from stock.
+            const updatedReward = await Reward.findOneAndUpdate(
+                {
+                    _id: id,
+                    stocks: { $gte: 1 },
+                },
+                {
+                    $inc: { stocks: -1 },
+                },
+                {
+                    new: true,
+                    session,
+                }
+            );
+
+            if (!updatedReward) {
+                throw Object.assign(
+                    new Error("This reward just went out of stock."),
+                    { status: 409 }
+                );
+            }
+
+            // Atomically deduct points from the authenticated household.
+            const updatedHousehold = await Household.findOneAndUpdate(
+                {
+                    _id: householdId,
+                    "points.total": { $gte: reward.points },
+                },
+                {
+                    $inc: { "points.total": -reward.points },
+                },
+                {
+                    new: true,
+                    session,
+                }
+            );
+
+            if (!updatedHousehold) {
+                throw Object.assign(
+                    new Error("Not enough points to redeem this reward."),
+                    { status: 400 }
+                );
+            }
+
+            // Create redemption log.
+            const [log] = await RewardLog.create(
+                [
+                    {
+                        household: householdId,
+                        reward: reward._id,
+                        rewardName: reward.name,
+                        pointsSpent: reward.points,
+                    },
+                ],
+                { session }
+            );
+
+            result = {
+                reward: updatedReward,
+                household: updatedHousehold,
+                log,
+            };
         });
 
-        if (existingClaims >= claimLimit) {
-          const periodLabels = {
-            day: "today",
-            week: "this week",
-            month: "this month",
-            year: "this year",
-            lifetime: "in total",
-          };
+        return res.json({
+            success: true,
+            message: `Redeemed ${result.reward.name} for ${result.log.pointsSpent} points.`,
+            data: result,
+        });
+    } catch (error) {
+        console.error("redeemReward:", error);
 
-          throw Object.assign(
-            new Error(
-              `You have reached the claim limit for this reward (${claimLimit} per ${
-                claimPeriod === "lifetime"
-                  ? "lifetime"
-                  : claimPeriod
-              }). You cannot claim it again ${periodLabels[claimPeriod]}.`
-            ),
-            { status: 409 }
-          );
+        return res.status(error.status || 500).json({
+            success: false,
+            message:
+                error.status
+                    ? error.message
+                    : "Failed to redeem reward.",
+        });
+    } finally {
+        if (session) {
+            await session.endSession();
         }
-      }
-
-      // Conditional atomic writes — guards against two people redeeming the
-      // last unit, or a points balance changing between the checks above and here.
-      const updatedReward = await Reward.findOneAndUpdate(
-        { _id: id, stocks: { $gte: 1 } },
-        { $inc: { stocks: -1 } },
-        { new: true, session }
-      );
-      if (!updatedReward) {
-        throw Object.assign(new Error("This reward just went out of stock."), { status: 409 });
-      }
-
-      const updatedHousehold = await Household.findOneAndUpdate(
-        { _id: householdId, "points.total": { $gte: reward.points } },
-        { $inc: { "points.total": -reward.points } },
-        { new: true, session }
-      );
-      if (!updatedHousehold) {
-        throw Object.assign(new Error("Not enough points to redeem this reward."), { status: 400 });
-      }
-
-      const [log] = await RewardLog.create(
-        [
-          {
-            household: householdId,
-            reward: reward._id,
-            rewardName: reward.name,
-            pointsSpent: reward.points,
-          },
-        ],
-        { session }
-      );
-
-      result = { reward: updatedReward, household: updatedHousehold, log };
-    });
-
-    res.json({
-      success: true,
-      message: `Redeemed ${result.reward.name} for ${result.log.pointsSpent} points.`,
-      data: result,
-    });
-  } catch (error) {
-    res.status(error.status || 500).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
-  }
+    }
 };
 
 // GET /api/rewards/logs?page=1&limit=10&search=&rewardName=

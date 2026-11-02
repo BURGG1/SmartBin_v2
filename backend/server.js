@@ -52,33 +52,68 @@ app.set("trust proxy", 1);
 // ═══════════════════════════════════════════════════════════════
 app.use(helmet());
 
+
 // ═══════════════════════════════════════════════════════════════
 //  2. CORS — restrict to known origins
 // ═══════════════════════════════════════════════════════════════
+
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
-  .map((o) => o.trim())
+  .map((origin) => origin.trim().replace(/\/+$/, ""))
   .filter(Boolean);
+
+const isDevelopmentOrigin = (origin) => {
+  try {
+    const parsed = new URL(origin);
+
+    const isLocalhost =
+      ["localhost", "127.0.0.1"].includes(parsed.hostname);
+
+    const isLAN =
+      parsed.protocol === "http:" &&
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(parsed.hostname);
+
+    return (
+      (isLocalhost &&
+        ["http:", "https:"].includes(parsed.protocol)) ||
+      isLAN
+    );
+  } catch {
+    return false;
+  }
+};
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, ESP32, Postman, curl)
-      if (!origin) return callback(null, true);
-
-      const isLocalhost = origin.includes("localhost");
-      const isLAN = origin.includes("192.168.");
-      const isAllowed = ALLOWED_ORIGINS.some((o) => origin.startsWith(o));
-
-      if (isLocalhost || isLAN || isAllowed) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: origin "${origin}" not allowed`));
+      // ESP32, Postman, curl, and native clients may not send Origin.
+      // CORS is not a substitute for API authentication.
+      if (!origin) {
+        return callback(null, true);
       }
+
+      const normalizedOrigin = origin.replace(/\/+$/, "");
+
+      const isAllowed =
+        ALLOWED_ORIGINS.includes(normalizedOrigin);
+
+      const isLocalDevelopment =
+        process.env.NODE_ENV !== "production" &&
+        isDevelopmentOrigin(normalizedOrigin);
+
+      if (isAllowed || isLocalDevelopment) {
+        return callback(null, true);
+      }
+
+      console.warn(`[CORS] Rejected origin: ${origin}`);
+      return callback(null, false);
     },
+
     credentials: true,
+    optionsSuccessStatus: 204,
   })
 );
+
 
 // ═══════════════════════════════════════════════════════════════
 //  3. BODY PARSING — with size limit to prevent payload flooding

@@ -26,32 +26,27 @@ const updateDeviceHeartbeat = async (req, res) => {
     const normalizedDeviceId = deviceId.trim();
     const now = new Date();
 
+
     const device = await Device.findOneAndUpdate(
       { deviceId: normalizedDeviceId },
       {
         $set: {
           lastSeen: now,
         },
-        $setOnInsert: {
-          deviceId: normalizedDeviceId,
-        },
       },
       {
         new: true,
-        upsert: true,
-        setDefaultsOnInsert: true,
         runValidators: true,
       }
     );
 
-    let binId = null;
-
-    if (device.assignedBin) {
-      const bin = await Bin.findById(device.assignedBin).select("binId");
-      if (bin) {
-        binId = bin.binId;
-      }
+    if (!device) {
+      return res.status(404).json({
+        success: false,
+        message: "Device is not registered. Contact an administrator.",
+      });
     }
+
 
     return res.json({
       success: true,
@@ -114,6 +109,7 @@ const updateDeviceLocation = async (req, res) => {
     const normalizedDeviceId = deviceId.trim();
     const now = new Date();
 
+
     const device = await Device.findOneAndUpdate(
       { deviceId: normalizedDeviceId },
       {
@@ -122,17 +118,20 @@ const updateDeviceLocation = async (req, res) => {
           lng: lngNum,
           lastSeen: now,
         },
-        $setOnInsert: {
-          deviceId: normalizedDeviceId,
-        },
       },
       {
         new: true,
-        upsert: true,
-        setDefaultsOnInsert: true,
         runValidators: true,
       }
     );
+
+    if (!device) {
+      return res.status(404).json({
+        success: false,
+        message: "Device is not registered. Contact an administrator.",
+      });
+    }
+
 
     if (device.assignedBin) {
       await Bin.findByIdAndUpdate(device.assignedBin, {
@@ -177,7 +176,15 @@ const getAvailableDevices = async (req, res) => {
         now - lastSeenTime <= DEVICE_ONLINE_WINDOW_MS;
 
       return {
-        ...device,
+        _id: device._id,
+        deviceId: device.deviceId,
+        assignedBin: device.assignedBin,
+        lastSeen: device.lastSeen,
+        lat: device.lat,
+        lng: device.lng,
+        fillLevel: device.fillLevel,
+        distanceCm: device.distanceCm,
+        lastFillUpdate: device.lastFillUpdate,
         status: isOnline ? "online" : "offline",
       };
     });

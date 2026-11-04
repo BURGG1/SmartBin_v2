@@ -26,7 +26,6 @@ const deviceSchema = new mongoose.Schema(
       default: "offline",
     },
 
-    // Fill level reported by the HC-SR04.
     fillLevel: {
       type: Number,
       min: 0,
@@ -40,6 +39,39 @@ const deviceSchema = new mongoose.Schema(
     },
 
     lastFillUpdate: {
+      type: Date,
+      default: null,
+    },
+
+    // Device authentication
+    authEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    keyHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    encryptedSecret: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    keyVersion: {
+      type: Number,
+      default: 0,
+    },
+
+    provisionedAt: {
+      type: Date,
+      default: null,
+    },
+
+    revokedAt: {
       type: Date,
       default: null,
     },

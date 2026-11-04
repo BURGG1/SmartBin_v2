@@ -1,9 +1,10 @@
-
 const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
 
+const { protect, allowRoles } = require("../middleware/authMiddleware");
 const Reward = require("../models/Reward");
+
 const {
     getAllRewards,
     redeemReward,
@@ -39,18 +40,38 @@ function parseNonNegativeInteger(value) {
 }
 
 // GET /api/rewards
+// Public: View all rewards.
 router.get("/", getAllRewards);
 
 // GET /api/rewards/logs
-router.get("/logs", getRewardLogs);
+// Admin only: View reward redemption logs.
+router.get(
+    "/logs",
+    protect,
+    allowRoles("admin"),
+    getRewardLogs
+);
 
 // PATCH /api/rewards/logs/:logId/redeem
-router.patch("/logs/:logId/redeem", redeemRewardLog);
+// Admin only: Process or confirm a reward redemption log.
+router.patch(
+    "/logs/:logId/redeem",
+    protect,
+    allowRoles("admin"),
+    redeemRewardLog
+);
 
 // POST /api/rewards/:id/redeem
-router.post("/:id/redeem", redeemReward);
+// Household only: Redeem a reward.
+router.post(
+    "/:id/redeem",
+    protect,
+    allowRoles("household"),
+    redeemReward
+);
 
 // GET /api/rewards/:id
+// Public: View a specific reward.
 router.get("/:id", async (req, res) => {
     try {
         if (!mongoose.isValidObjectId(req.params.id)) {
@@ -84,218 +105,229 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/rewards
-router.post("/", upload.single("image"), async (req, res) => {
-    try {
-        const { name, points, stocks, claimLimit, claimPeriod } = req.body;
+// Admin only: Create a reward.
+router.post(
+    "/",
+    protect,
+    allowRoles("admin"),
+    upload.single("image"),
+    async (req, res) => {
+        try {
+            const { name, points, stocks, claimLimit, claimPeriod } = req.body;
 
-        if (
-            typeof name !== "string" ||
-            !name.trim() ||
-            points === undefined ||
-            points === "" ||
-            stocks === undefined ||
-            stocks === ""
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Name, points, and stocks are required.",
-            });
-        }
-
-        const parsedPoints = parseNonNegativeInteger(points);
-        const parsedStocks = parseNonNegativeInteger(stocks);
-        const parsedClaimLimit =
-            claimLimit === undefined || claimLimit === ""
-                ? 0
-                : parseNonNegativeInteger(claimLimit);
-
-        const parsedClaimPeriod = claimPeriod || "month";
-
-        if (
-            parsedPoints === null ||
-            parsedStocks === null ||
-            parsedClaimLimit === null
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Points, stocks, and claim limit must be non-negative whole numbers.",
-            });
-        }
-
-        if (!VALID_CLAIM_PERIODS.includes(parsedClaimPeriod)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid claim period.",
-            });
-        }
-
-        const reward = await Reward.create({
-            name: name.trim(),
-            points: parsedPoints,
-            stocks: parsedStocks,
-            claimLimit: parsedClaimLimit,
-            claimPeriod: parsedClaimPeriod,
-            image: req.file ? req.file.path : "",
-        });
-
-        return res.status(201).json({
-            success: true,
-            data: reward,
-        });
-    } catch (err) {
-        console.error("Create reward error:", err);
-
-        if (err.name === "ValidationError") {
-            return res.status(400).json({
-                success: false,
-                message: err.message,
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to create reward.",
-        });
-    }
-});
-
-// PUT /api/rewards/:id
-router.put("/:id", upload.single("image"), async (req, res) => {
-    let uploadedImagePath = req.file?.path;
-
-    try {
-        if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid reward ID.",
-            });
-        }
-
-        const reward = await Reward.findById(req.params.id);
-
-        if (!reward) {
-            return res.status(404).json({
-                success: false,
-                message: "Reward not found.",
-            });
-        }
-
-        const { name, points, stocks, claimLimit, claimPeriod } = req.body;
-
-        if (name !== undefined) {
-            if (typeof name !== "string" || !name.trim()) {
+            if (
+                typeof name !== "string" ||
+                !name.trim() ||
+                points === undefined ||
+                points === "" ||
+                stocks === undefined ||
+                stocks === ""
+            ) {
                 return res.status(400).json({
                     success: false,
-                    message: "Reward name cannot be empty.",
+                    message: "Name, points, and stocks are required.",
                 });
             }
 
-            reward.name = name.trim();
-        }
-
-        if (points !== undefined) {
             const parsedPoints = parseNonNegativeInteger(points);
-
-            if (parsedPoints === null) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Points must be a non-negative whole number.",
-                });
-            }
-
-            reward.points = parsedPoints;
-        }
-
-        if (stocks !== undefined) {
             const parsedStocks = parseNonNegativeInteger(stocks);
 
-            if (parsedStocks === null) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Stocks must be a non-negative whole number.",
-                });
-            }
-
-            reward.stocks = parsedStocks;
-        }
-
-        if (claimLimit !== undefined) {
             const parsedClaimLimit =
-                claimLimit === "" ? null : parseNonNegativeInteger(claimLimit);
+                claimLimit === undefined || claimLimit === ""
+                    ? 0
+                    : parseNonNegativeInteger(claimLimit);
 
-            if (parsedClaimLimit === null) {
+            const parsedClaimPeriod = claimPeriod || "month";
+
+            if (
+                parsedPoints === null ||
+                parsedStocks === null ||
+                parsedClaimLimit === null
+            ) {
                 return res.status(400).json({
                     success: false,
                     message:
-                        "Claim limit must be 0 or a positive whole number.",
+                        "Points, stocks, and claim limit must be non-negative whole numbers.",
                 });
             }
 
-            reward.claimLimit = parsedClaimLimit;
-        }
-
-        if (claimPeriod !== undefined) {
-            if (!VALID_CLAIM_PERIODS.includes(claimPeriod)) {
+            if (!VALID_CLAIM_PERIODS.includes(parsedClaimPeriod)) {
                 return res.status(400).json({
                     success: false,
                     message: "Invalid claim period.",
                 });
             }
 
-            reward.claimPeriod = claimPeriod;
-        }
+            const reward = await Reward.create({
+                name: name.trim(),
+                points: parsedPoints,
+                stocks: parsedStocks,
+                claimLimit: parsedClaimLimit,
+                claimPeriod: parsedClaimPeriod,
+                image: req.file ? req.file.path : "",
+            });
 
-        const oldImage = reward.image;
+            return res.status(201).json({
+                success: true,
+                data: reward,
+            });
+        } catch (err) {
+            console.error("Create reward error:", err);
 
-        if (req.file) {
-            reward.image = req.file.path;
-        }
-
-        const updated = await reward.save();
-
-        // Remove the old image only after the new reward data is saved.
-        if (req.file && oldImage && oldImage !== req.file.path) {
-            try {
-                const publicId = getCloudinaryPublicId(oldImage);
-
-                if (publicId) {
-                    await cloudinary.uploader.destroy(publicId);
-                }
-            } catch (imageError) {
-                console.error(
-                    "Failed to remove old reward image:",
-                    imageError
-                );
+            if (err.name === "ValidationError") {
+                return res.status(400).json({
+                    success: false,
+                    message: err.message,
+                });
             }
-        }
 
-        uploadedImagePath = null;
-
-        return res.json({
-            success: true,
-            data: updated,
-        });
-    } catch (err) {
-        console.error("Update reward error:", err);
-
-        if (err.name === "ValidationError") {
-            return res.status(400).json({
+            return res.status(500).json({
                 success: false,
-                message: err.message,
+                message: "Failed to create reward.",
             });
         }
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to update reward.",
-        });
     }
-});
+);
 
-// Extract a Cloudinary public ID from a standard Cloudinary delivery URL.
-// If your URLs use custom transformations or unusual folder structures,
-// verify this against your Cloudinary upload configuration.
+// PUT /api/rewards/:id
+// Admin only: Update a reward.
+router.put(
+    "/:id",
+    protect,
+    allowRoles("admin"),
+    upload.single("image"),
+    async (req, res) => {
+        try {
+            if (!mongoose.isValidObjectId(req.params.id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid reward ID.",
+                });
+            }
+
+            const reward = await Reward.findById(req.params.id);
+
+            if (!reward) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Reward not found.",
+                });
+            }
+
+            const { name, points, stocks, claimLimit, claimPeriod } = req.body;
+
+            if (name !== undefined) {
+                if (typeof name !== "string" || !name.trim()) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Reward name cannot be empty.",
+                    });
+                }
+
+                reward.name = name.trim();
+            }
+
+            if (points !== undefined) {
+                const parsedPoints = parseNonNegativeInteger(points);
+
+                if (parsedPoints === null) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Points must be a non-negative whole number.",
+                    });
+                }
+
+                reward.points = parsedPoints;
+            }
+
+            if (stocks !== undefined) {
+                const parsedStocks = parseNonNegativeInteger(stocks);
+
+                if (parsedStocks === null) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Stocks must be a non-negative whole number.",
+                    });
+                }
+
+                reward.stocks = parsedStocks;
+            }
+
+            if (claimLimit !== undefined) {
+                const parsedClaimLimit =
+                    claimLimit === ""
+                        ? null
+                        : parseNonNegativeInteger(claimLimit);
+
+                if (parsedClaimLimit === null) {
+                    return res.status(400).json({
+                        success: false,
+                        message:
+                            "Claim limit must be 0 or a positive whole number.",
+                    });
+                }
+
+                reward.claimLimit = parsedClaimLimit;
+            }
+
+            if (claimPeriod !== undefined) {
+                if (!VALID_CLAIM_PERIODS.includes(claimPeriod)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Invalid claim period.",
+                    });
+                }
+
+                reward.claimPeriod = claimPeriod;
+            }
+
+            const oldImage = reward.image;
+
+            if (req.file) {
+                reward.image = req.file.path;
+            }
+
+            const updated = await reward.save();
+
+            // Remove the old image only after saving the new reward data.
+            if (req.file && oldImage && oldImage !== req.file.path) {
+                try {
+                    const publicId = getCloudinaryPublicId(oldImage);
+
+                    if (publicId) {
+                        await cloudinary.uploader.destroy(publicId);
+                    }
+                } catch (imageError) {
+                    console.error(
+                        "Failed to remove old reward image:",
+                        imageError
+                    );
+                }
+            }
+
+            return res.json({
+                success: true,
+                data: updated,
+            });
+        } catch (err) {
+            console.error("Update reward error:", err);
+
+            if (err.name === "ValidationError") {
+                return res.status(400).json({
+                    success: false,
+                    message: err.message,
+                });
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to update reward.",
+            });
+        }
+    }
+);
+
+// Extract Cloudinary public ID from a standard Cloudinary URL.
 function getCloudinaryPublicId(imageUrl) {
     if (typeof imageUrl !== "string" || !imageUrl) {
         return null;
@@ -327,6 +359,7 @@ function getCloudinaryPublicId(imageUrl) {
         }
 
         const lastPart = publicIdParts[publicIdParts.length - 1];
+
         publicIdParts[publicIdParts.length - 1] =
             lastPart.replace(/\.[^.]+$/, "");
 
@@ -337,54 +370,60 @@ function getCloudinaryPublicId(imageUrl) {
 }
 
 // DELETE /api/rewards/:id
-router.delete("/:id", async (req, res) => {
-    try {
-        if (!mongoose.isValidObjectId(req.params.id)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid reward ID.",
-            });
-        }
-
-        const reward = await Reward.findById(req.params.id);
-
-        if (!reward) {
-            return res.status(404).json({
-                success: false,
-                message: "Reward not found.",
-            });
-        }
-
-        await reward.deleteOne();
-
-        // Image cleanup is best-effort after the database deletion.
-        if (reward.image) {
-            try {
-                const publicId = getCloudinaryPublicId(reward.image);
-
-                if (publicId) {
-                    await cloudinary.uploader.destroy(publicId);
-                }
-            } catch (imageError) {
-                console.error(
-                    "Failed to remove deleted reward image:",
-                    imageError
-                );
+// Admin only: Delete a reward.
+router.delete(
+    "/:id",
+    protect,
+    allowRoles("admin"),
+    async (req, res) => {
+        try {
+            if (!mongoose.isValidObjectId(req.params.id)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid reward ID.",
+                });
             }
+
+            const reward = await Reward.findById(req.params.id);
+
+            if (!reward) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Reward not found.",
+                });
+            }
+
+            await reward.deleteOne();
+
+            // Image cleanup is best-effort after database deletion.
+            if (reward.image) {
+                try {
+                    const publicId = getCloudinaryPublicId(reward.image);
+
+                    if (publicId) {
+                        await cloudinary.uploader.destroy(publicId);
+                    }
+                } catch (imageError) {
+                    console.error(
+                        "Failed to remove deleted reward image:",
+                        imageError
+                    );
+                }
+            }
+
+            return res.json({
+                success: true,
+                message: "Reward deleted.",
+            });
+        } catch (err) {
+            console.error("Delete reward error:", err);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to delete reward.",
+            });
         }
-
-        return res.json({
-            success: true,
-            message: "Reward deleted.",
-        });
-    } catch (err) {
-        console.error("Delete reward error:", err);
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to delete reward.",
-        });
     }
-});
+);
 
 module.exports = router;

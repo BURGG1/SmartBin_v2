@@ -12,6 +12,7 @@ const { sendResetCodeSms } = require("../config/sms");
 
 const generateToken = (payload) => {
   return jwt.sign(payload, process.env.JWT_SECRET, {
+    algorithm: "HS256",
     expiresIn: "12h",
   });
 };

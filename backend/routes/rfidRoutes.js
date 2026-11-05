@@ -21,11 +21,11 @@ const {
     completeDisposal,
 } = require("../controllers/rfidController");
 
-const deviceAuth = require("../middleware/deviceAuth");
-
 const {
+  deviceAuth,
   requireAssignedBin,
 } = require("../middleware/deviceAuth");
+
 // Existing scan and device routes
 router.post(
   "/bin-scan",

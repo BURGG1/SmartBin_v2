@@ -21,5 +21,6 @@ const rfidLogSchema = new mongoose.Schema(
 rfidLogSchema.index({ rfid: 1 });
 rfidLogSchema.index({ scannedAt: -1 });
 rfidLogSchema.index({ binId: 1 });
+rfidLogSchema.index({ household: 1, scannedAt: -1 });
 
 module.exports = mongoose.model("RfidLog", rfidLogSchema);

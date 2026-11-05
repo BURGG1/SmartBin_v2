@@ -381,67 +381,61 @@ const completeDisposal = async (req, res) => {
 // POST /api/rfid/web-scan
 // ─────────────────────────────────────────────────────────────────────────────
 
+
 const webScan = async (req, res) => {
-    try {
-        const rfid = normalizeRfid(req.body.rfid);
+  try {
+    const rfid = normalizeRfid(req.body.rfid);
 
-        if (!rfid) {
-            return res.status(400).json({
-                success: false,
-                message: "rfid is required.",
-            });
-        }
-
-        const household = await Household.findOne({
-            rfid,
-            isActive: true,
-        });
-
-        if (!household) {
-            await logScan({
-                rfid,
-                action: "scan",
-                note: "Unregistered RFID scanned at web desk — pending registration",
-            });
-
-            return res.status(404).json({
-                success: false,
-                message: "RFID not registered.",
-                rfid,
-                canRegister: true,
-            });
-        }
-
-        await logScan({
-            rfid,
-            householdId: household._id,
-            action: "scan",
-            note: "Web desk scan — already registered",
-        });
-
-        return res.json({
-            success: true,
-            message: "RFID already registered.",
-            data: {
-                household: {
-                    id: household._id,
-                    fullname: household.fullname,
-                    address: household.address,
-                    contactNumber: household.contactNumber,
-                    email: household.email,
-                    rfid: household.rfid,
-                },
-            },
-        });
-    } catch (error) {
-        console.error("[webScan]", error);
-
-        return res.status(500).json({
-            success: false,
-            message: error.message,
-        });
+    if (!rfid) {
+      return res.status(400).json({
+        success: false,
+        message: "rfid is required.",
+      });
     }
+
+    const household = await Household.findOne({
+      rfid,
+      isActive: true,
+    });
+
+    if (!household) {
+      await logScan({
+        rfid,
+        action: "scan",
+        note: "Unregistered RFID scanned at web desk — pending registration",
+      });
+
+      return res.status(404).json({
+        success: false,
+        message: "RFID not registered.",
+        canRegister: true,
+      });
+    }
+
+    await logScan({
+      rfid,
+      householdId: household._id,
+      action: "scan",
+      note: "Web desk scan — already registered",
+    });
+
+    return res.json({
+      success: true,
+      message: "RFID already registered.",
+      data: {
+        registered: true,
+      },
+    });
+  } catch (error) {
+    console.error("[webScan]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to check RFID registration.",
+    });
+  }
 };
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. LATEST SCAN
@@ -490,141 +484,159 @@ const getLatestScan = async (req, res) => {
 // GET /api/rfid/check/:rfid
 // ─────────────────────────────────────────────────────────────────────────────
 
+
 const checkRfid = async (req, res) => {
-    try {
-        const rfid = normalizeRfid(req.params.rfid);
-        const existing = await Household.findOne({ rfid });
+  try {
+    const rfid = normalizeRfid(req.params.rfid);
 
-        if (existing) {
-            return res.json({
-                success: true,
-                available: false,
-                message: `RFID is already assigned to ${existing.fullname}`,
-            });
-        }
-
-        return res.json({
-            success: true,
-            available: true,
-            message: "RFID is available.",
-        });
-    } catch (error) {
-        console.error("[checkRfid]", error);
-
-        return res.status(500).json({
-            success: false,
-            message: error.message,
-        });
+    if (!rfid) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid RFID is required.",
+      });
     }
+
+    const existing = await Household.findOne({ rfid }).select("_id");
+
+    return res.json({
+      success: true,
+      available: !existing,
+      message: existing
+        ? "RFID is already registered."
+        : "RFID is available.",
+    });
+  } catch (error) {
+    console.error("[checkRfid]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to check RFID availability.",
+    });
+  }
 };
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. ALL RFID LOGS
 // GET /api/rfid/logs
 // ─────────────────────────────────────────────────────────────────────────────
 
+
 const getRfidLogs = async (req, res) => {
-    try {
-        const {
-            rfid,
-            action,
-            binId,
-            page = 1,
-            limit = 20,
-        } = req.query;
+  try {
+    const {
+      rfid,
+      action,
+      binId,
+      page = 1,
+      limit = 20,
+    } = req.query;
 
-        const query = {};
+    const query = {};
 
-        if (rfid) query.rfid = normalizeRfid(rfid);
-        if (action) query.action = action;
-        if (binId) query.binId = binId;
-
-        const parsedPage = Math.max(
-            1,
-            parseInt(page, 10) || 1
-        );
-
-        const parsedLimit = Math.min(
-            100,
-            Math.max(1, parseInt(limit, 10) || 20)
-        );
-
-        const skip = (parsedPage - 1) * parsedLimit;
-
-        const [logs, total] = await Promise.all([
-            RfidLog.find(query)
-                .populate(
-                    "household",
-                    "fullname address contactNumber email violation"
-                )
-                .sort({ scannedAt: -1, _id: -1 })
-                .skip(skip)
-                .limit(parsedLimit)
-                .lean(),
-
-            RfidLog.countDocuments(query),
-        ]);
-
-        const data = await attachCurrentBinType(logs);
-
-        return res.json({
-            success: true,
-            data,
-            pagination: {
-                total,
-                page: parsedPage,
-                limit: parsedLimit,
-                totalPages: Math.ceil(total / parsedLimit),
-            },
-        });
-    } catch (error) {
-        console.error("[getRfidLogs]", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to retrieve RFID logs.",
-        });
+    if (req.user?.role === "household") {
+      query.household = req.user.id;
     }
+
+    if (rfid) query.rfid = normalizeRfid(rfid);
+    if (action) query.action = action;
+    if (binId) query.binId = binId;
+
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+    const parsedLimit = Math.min(
+      100,
+      Math.max(1, parseInt(limit, 10) || 20)
+    );
+
+    const skip = (parsedPage - 1) * parsedLimit;
+
+    const [logs, total] = await Promise.all([
+      RfidLog.find(query)
+        .populate(
+          "household",
+          req.user?.role === "admin"
+            ? "fullname address contactNumber email violation"
+            : "fullname"
+        )
+        .sort({ scannedAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(parsedLimit)
+        .lean(),
+
+      RfidLog.countDocuments(query),
+    ]);
+
+    const data = await attachCurrentBinType(logs);
+
+    return res.json({
+      success: true,
+      data,
+      pagination: {
+        total,
+        page: parsedPage,
+        limit: parsedLimit,
+        totalPages: Math.ceil(total / parsedLimit),
+      },
+    });
+  } catch (error) {
+    console.error("[getRfidLogs]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve RFID logs.",
+    });
+  }
 };
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. RFID HISTORY FOR ONE CARD
 // GET /api/rfid/logs/:rfid
 // ─────────────────────────────────────────────────────────────────────────────
 
+
 const getRfidHistory = async (req, res) => {
-    try {
-        const rfid = normalizeRfid(req.params.rfid);
+  try {
+    const rfid = normalizeRfid(req.params.rfid);
 
-        if (!rfid) {
-            return res.status(400).json({
-                success: false,
-                message: "A valid RFID is required.",
-            });
-        }
-
-        const logs = await RfidLog.find({ rfid })
-            .populate(
-                "household",
-                "fullname address contactNumber email violation"
-            )
-            .sort({ scannedAt: -1, _id: -1 })
-            .lean();
-
-        const data = await attachCurrentBinType(logs);
-
-        return res.json({
-            success: true,
-            data,
-        });
-    } catch (error) {
-        console.error("[getRfidHistory]", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to retrieve RFID history.",
-        });
+    if (!rfid) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid RFID is required.",
+      });
     }
+
+    const historyQuery = { rfid };
+
+    if (req.user?.role === "household") {
+      historyQuery.household = req.user.id;
+    }
+
+    const logs = await RfidLog.find(historyQuery)
+      .populate(
+        "household",
+        req.user?.role === "admin"
+          ? "fullname address contactNumber email violation"
+          : "fullname"
+      )
+      .sort({ scannedAt: -1, _id: -1 })
+      .limit(100)
+      .lean();
+
+    const data = await attachCurrentBinType(logs);
+
+    return res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error("[getRfidHistory]", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve RFID history.",
+    });
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

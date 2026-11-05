@@ -3,9 +3,8 @@ const express = require("express");
 const router = express.Router();
 
 const { protect, allowRoles } = require("../middleware/authMiddleware");
-const deviceAuth = require("../middleware/deviceAuth");
-
 const {
+  deviceAuth,
   requireMatchingDeviceId,
 } = require("../middleware/deviceAuth");
 

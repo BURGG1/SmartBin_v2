@@ -13,12 +13,20 @@ router.get("/me", protect, async (req, res) => {
     try {
         const Household = require("../models/Household");
         const household = await Household.findById(req.user.id);
+
         if (!household) {
-            return res.status(404).json({ success: false, message: "Household not found." });
+            return res.status(404).json({
+                success: false,
+                message: "Household not found."
+            });
         }
+
         res.json({ success: true, data: household });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
     }
 });
 

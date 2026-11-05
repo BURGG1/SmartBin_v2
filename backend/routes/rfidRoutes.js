@@ -21,11 +21,39 @@ const {
     completeDisposal,
 } = require("../controllers/rfidController");
 
+const deviceAuth = require("../middleware/deviceAuth");
+
+const {
+  requireAssignedBin,
+} = require("../middleware/deviceAuth");
 // Existing scan and device routes
-router.post("/bin-scan", binScan);
-router.post("/scan-bin", binScan);
-router.post("/scan", binScan);
-router.post("/complete-disposal", completeDisposal);
+router.post(
+  "/bin-scan",
+  deviceAuth,
+  requireAssignedBin,
+  binScan
+);
+
+router.post(
+  "/scan-bin",
+  deviceAuth,
+  requireAssignedBin,
+  binScan
+);
+
+router.post(
+  "/scan",
+  deviceAuth,
+  requireAssignedBin,
+  binScan
+);
+
+router.post(
+  "/complete-disposal",
+  deviceAuth,
+  requireAssignedBin,
+  completeDisposal
+);
 router.post("/web-scan", webScan);
 router.get("/latest-scan", getLatestScan);
 router.get("/check/:rfid", checkRfid);
